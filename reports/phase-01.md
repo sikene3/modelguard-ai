@@ -31,8 +31,8 @@ product behavior was implemented.
   `README.md`, `START_HERE.sh`, `FILE_MANIFEST.txt`.
 - Safety/bootstrap: `scripts/bootstrap_repo.sh`, `scripts/check_no_secrets.sh`,
   `scripts/setup_ubuntu.sh`, `scripts/verify_environment.sh`.
-- Documentation alignment: `docs/07_TROUBLESHOOTING_AR.md`,
-  `docs/10_COMMANDS_CHEATSHEET_AR.md`.
+- Documentation alignment: `docs/07_TROUBLESHOOTING.md`,
+  `docs/10_COMMANDS_CHEATSHEET.md`.
 - Package: `src/modelguard/__init__.py`, `src/modelguard/version.py`,
   `src/modelguard/core/config.py`, `src/modelguard/core/__init__.py`, `src/modelguard/py.typed`, and
   package-only `__init__.py` files under `api`, `dashboard`, `data`, `inference`, `monitoring`,

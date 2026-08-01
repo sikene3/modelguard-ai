@@ -21,10 +21,10 @@ Python 3.14.4 and no `uv`; Phase 01 must establish Python 3.12 and the committed
 
 ## Review method and material assumptions
 
-The required documents were read completely in the user-specified order. The requested root path
-`00_REVIEW_NOTES_AR.md` was absent; the manifest-backed file at `docs/00_REVIEW_NOTES_AR.md` was read
+The required documents were read completely in the user-specified order. The requested root-level
+review-notes path was absent; the manifest-backed file now named `docs/00_REVIEW_NOTES.md` was read
 in that fifth position. This path discrepancy was treated as invocation context, not repaired by
-duplicating the document because all repository references already use the canonical `docs/` path.
+duplicating the document because repository references use the canonical `docs/` path.
 
 Afterward, all 97 initial repository paths and all 77 non-empty files (3,235 initial lines) were
 inspected. The parallel workstreams were:
@@ -58,7 +58,7 @@ Model pointers include semantic version plus manifest digest, startup loads once
 rollback forces a controlled ECS deployment. No ad hoc Terraform targeting is allowed.
 
 Primary evidence: `ARCHITECTURE.md`, `prompts/08_TERRAFORM_AWS.md`,
-`prompts/10_AWS_DEPLOYMENT.md`, `docs/08_AWS_DEPLOYMENT_ORDER_AR.md`.
+`prompts/10_AWS_DEPLOYMENT.md`, `docs/08_AWS_DEPLOYMENT_ORDER.md`.
 
 ### P00-02 — Monitoring counts and lateness were not implementable
 
