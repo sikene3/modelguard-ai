@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.venv/
+.uv-cache/
+build/
+dist/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Generated artifacts
+artifacts/*
+!artifacts/.gitkeep
+mlruns/
+reports/generated/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+tfplan
+tfplan.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+!*.tfvars.example
+!*.tfvars.json.example
+!*.auto.tfvars.example
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Codex/session outputs
+.codex/sessions/
+logs/*.log

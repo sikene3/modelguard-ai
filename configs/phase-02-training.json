@@ -1,0 +1,121 @@
+{
+  "baseline": {
+    "missing_bucket": "__MISSING__",
+    "numeric_quantile_method": "linear",
+    "numeric_quantiles": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    "other_bucket": "__OTHER__",
+    "score_edges": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  },
+  "calibration": {
+    "ensemble": true,
+    "method": "sigmoid",
+    "n_jobs": null,
+    "n_splits": 5,
+    "random_state": 20260805,
+    "shuffle": true
+  },
+  "contract_version": "modelguard.training-config.v1",
+  "dataset": {
+    "generator_version": "modelguard.synthetic-independent.v1",
+    "row_count": 5000,
+    "seed": 20260802
+  },
+  "feature_allowlist": [
+    "amount",
+    "transaction_hour",
+    "velocity_1h",
+    "distance_from_home_km",
+    "device_risk_score",
+    "merchant_risk_score",
+    "is_new_device",
+    "country_code",
+    "device_type"
+  ],
+  "logistic_regression": {
+    "C": 1.0,
+    "class_weight": null,
+    "dual": false,
+    "fit_intercept": true,
+    "intercept_scaling": 1.0,
+    "l1_ratio": 0.0,
+    "max_iter": 1000,
+    "n_jobs": null,
+    "penalty": "deprecated",
+    "random_state": 20260806,
+    "solver": "lbfgs",
+    "tol": 0.0001,
+    "verbose": 0,
+    "warm_start": false
+  },
+  "mlflow": {
+    "autolog": false,
+    "experiment_name": "modelguard-phase-02",
+    "tracking_scheme": "file",
+    "tracking_subdirectory": "mlruns"
+  },
+  "model_version": "1.0.0",
+  "preprocessing": {
+    "categorical_imputer": {
+      "add_indicator": false,
+      "copy": true,
+      "fill_value": "__MISSING__",
+      "keep_empty_features": false,
+      "missing_values": "nan",
+      "strategy": "constant"
+    },
+    "column_transformer": {
+      "n_jobs": null,
+      "remainder": "drop",
+      "sparse_threshold": 0.3,
+      "transformer_weights": null,
+      "verbose": false,
+      "verbose_feature_names_out": true
+    },
+    "numeric_imputer": {
+      "add_indicator": false,
+      "copy": true,
+      "fill_value": null,
+      "keep_empty_features": false,
+      "missing_values": "nan",
+      "strategy": "median"
+    },
+    "numeric_scaler": {
+      "copy": true,
+      "with_mean": true,
+      "with_std": true
+    },
+    "one_hot_encoder": {
+      "categories": [
+        ["BR", "DE", "EG", "GB", "IN", "US", "__MISSING__"],
+        ["desktop", "mobile", "tablet", "__MISSING__"]
+      ],
+      "drop": null,
+      "dtype": "float64",
+      "feature_name_combiner": "concat",
+      "handle_unknown": "ignore",
+      "max_categories": null,
+      "min_frequency": null,
+      "sparse_output": true
+    },
+    "pipeline": {
+      "memory": null,
+      "transform_input": null,
+      "verbose": false
+    }
+  },
+  "split": {
+    "strategy": "canonical_stratified_train_validation_test",
+    "test_fraction": 0.15,
+    "train_fraction": 0.7,
+    "train_remainder_seed": 20260803,
+    "validation_fraction": 0.15,
+    "validation_test_seed": 20260804
+  },
+  "threshold": {
+    "comparison": "score >= threshold",
+    "false_negative_cost": 10,
+    "false_positive_cost": 1,
+    "grid_denominator": 1000,
+    "tie_policy": "cost_then_fewer_fn_then_fewer_fp_then_lowest_threshold"
+  }
+}

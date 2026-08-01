@@ -1,0 +1,18 @@
+00  Codex interactive -> GPT-5.6 Sol Ultra -> prompts/00_ULTRA_ARCHITECTURE_REVIEW.md
+01  ./scripts/run_phase.sh 01 xhigh
+02  ./scripts/run_phase.sh 02 xhigh
+03  ./scripts/run_phase.sh 03 xhigh
+04  ./scripts/run_phase.sh 04 xhigh
+05  ./scripts/run_phase.sh 05 max
+06  ./scripts/run_phase.sh 06 max
+07  ./scripts/run_phase.sh 07 xhigh
+08  ./scripts/run_phase.sh 08 max
+09  ./scripts/run_phase.sh 09 max
+10  ./scripts/run_phase.sh 10 max   # human approval for every AWS mutation
+11  ./scripts/run_phase.sh 11 max
+13  ./scripts/run_phase.sh 13 xhigh # portfolio assets before final audit
+12  Codex interactive -> GPT-5.6 Sol Ultra -> prompts/12_ULTRA_FINAL_AUDIT.md
+
+Minimum effort: XHigh. Max handles high-coupling/statistical/cloud work. Ultra is used for the
+independent design review and final audit only. After every phase: run the gate, inspect changes,
+update checklist/report/evidence, then commit manually.

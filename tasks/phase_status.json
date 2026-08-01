@@ -1,0 +1,72 @@
+{
+  "phase_00": {
+    "status": "completed",
+    "commit": null,
+    "report": "reports/phase-00-architecture-review.md"
+  },
+  "phase_01": {
+    "status": "completed",
+    "commit": null,
+    "report": "reports/phase-01.md"
+  },
+  "phase_02": {
+    "status": "completed",
+    "commit": null,
+    "report": "reports/phase-02.md"
+  },
+  "phase_03": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_04": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_05": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_06": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_07": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_08": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_09": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_10": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_11": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_12": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  },
+  "phase_13": {
+    "status": "not_started",
+    "commit": null,
+    "report": null
+  }
+}

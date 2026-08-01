@@ -1,0 +1,108 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modelguard-ai"
+version = "0.1.0"
+description = "Production-style AWS MLOps reliability demo with drift monitoring"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Sayed Mostafa" }]
+dependencies = [
+  "boto3>=1.35,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "jinja2>=3.1,<4",
+  "joblib>=1.4,<2",
+  "mlflow>=2.18,<4",
+  "numpy>=2.0,<3",
+  "pandas>=2.2,<3",
+  "plotly>=5.24,<7",
+  "prometheus-client>=0.21,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "pyarrow>=18,<30",
+  "scikit-learn>=1.6,<2",
+  "scipy>=1.14,<2",
+  "streamlit>=1.41,<2",
+  "structlog>=24.4,<26",
+  "typer>=0.15,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "bandit>=1.8,<2",
+  "mypy>=1.14,<2",
+  "pip-audit>=2.7,<3",
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6,<7",
+  "pytest-mock>=3.14,<4",
+  "ruff>=0.9,<1",
+  "types-boto3>=1.35,<2",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+required-version = ">=0.12,<0.13"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/modelguard"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".venv", "artifacts", "logs", "mlruns"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+warn_unused_configs = true
+exclude = ["artifacts", "mlruns"]
+
+[[tool.mypy.overrides]]
+module = ["joblib", "pandas", "pandas.*", "sklearn", "sklearn.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+  "--cov=modelguard",
+  "--cov-report=term-missing:skip-covered",
+]
+testpaths = ["tests"]
+markers = [
+  "integration: integration tests",
+  "contract: API/event/report contract tests",
+  "smoke: process/container smoke tests",
+]
+filterwarnings = [
+  "ignore:Setting the shape on a NumPy array has been deprecated.*:DeprecationWarning:joblib.numpy_pickle",
+]
+
+[tool.coverage.run]
+source = ["src/modelguard"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 70
+
+[tool.bandit]
+exclude_dirs = ["tests", "artifacts"]
