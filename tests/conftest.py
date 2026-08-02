@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from sklearn.calibration import CalibratedClassifierCV
 
+from modelguard.core.config import AppEnvironment, Settings
 from modelguard.core.serialization import write_json
 from modelguard.training.config import TrainingConfig, load_training_config
 from modelguard.training.pipeline import predict_positive_scores
@@ -17,6 +18,35 @@ from modelguard.training.workflow import (
     generate_data_artifacts,
     train_from_artifacts,
 )
+
+
+@pytest.fixture
+def valid_prediction_payload() -> dict[str, object]:
+    """Canonical Phase 02 smoke row used by API tests."""
+
+    return {
+        "amount": 4200.0,
+        "transaction_hour": 2,
+        "velocity_1h": 8,
+        "distance_from_home_km": 180.0,
+        "device_risk_score": 0.82,
+        "merchant_risk_score": 0.64,
+        "is_new_device": True,
+        "country_code": "EG",
+        "device_type": "mobile",
+    }
+
+
+@pytest.fixture
+def api_settings(audited_workspace: AuditedWorkspace) -> Settings:
+    """Test-mode settings pointing at the session-scoped verified bundle."""
+
+    return Settings(
+        _env_file=None,
+        app_env=AppEnvironment.TEST,
+        model_bundle_path=audited_workspace.result.bundle_path,
+        active_model_version=audited_workspace.config.model_version,
+    )
 
 
 @pytest.fixture(scope="session")

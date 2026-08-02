@@ -22,15 +22,15 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 
 ## API
 
-- [ ] API starts with a valid model bundle.
-- [ ] Readiness fails with an invalid or missing bundle.
-- [ ] Prediction schema rejects invalid values.
-- [ ] Response includes request ID, model version, score, decision, and latency.
-- [ ] AWS access-mode tests prove health-check exemptions, prediction token enforcement over HTTPS,
+- [x] API starts with a valid model bundle.
+- [x] Readiness fails with an invalid or missing bundle.
+- [x] Prediction schema rejects invalid values.
+- [x] Response includes request ID, model version, score, decision, and latency.
+- [x] AWS access-mode tests prove health-check exemptions, prediction token enforcement over HTTPS,
       CIDR-only HTTP fallback behavior, and secret/log redaction.
-- [ ] No raw AWS credentials, tokens, or full environment dumps appear in logs.
-- [ ] API contract tests pass.
-- [ ] Prometheus metrics endpoint exposes request count, latency, predictions, and event-write failures.
+- [x] No raw AWS credentials, tokens, or full environment dumps appear in logs.
+- [x] API contract tests pass.
+- [x] Prometheus metrics endpoint exposes request count, latency, predictions, and event-write failures.
 
 ## Event logging
 

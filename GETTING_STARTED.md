@@ -2,7 +2,8 @@
 
 This repository began as an **execution plan, prompt set, and collection of quality gates**. Its
 current status is documented in `README.md`: repository bootstrap and the audited training workflow
-are complete through Phase 02, while the API and later phases have not been implemented.
+plus the typed inference API are complete through Phase 03. Prediction-event persistence and later
+phases have not been implemented.
 
 ## Correct starting point
 
@@ -14,11 +15,14 @@ make train
 make verify
 ```
 
-Reports for Phases 00–02 are stored under `reports/`. Do not begin Phase 03 before reviewing the
-current tree and commit. When it is time to begin Phase 03, use:
+Then run `make api` in a dedicated terminal. From another terminal, verify `/health/live`,
+`/health/ready`, and `/v1/predict` using the exact examples in `README.md`, then run `make load-test`.
+
+Reports for Phases 00–03 are stored under `reports/`. Do not begin Phase 04 before reviewing the
+current tree and commit. When it is time to begin Phase 04, use:
 
 ```bash
-./scripts/run_phase.sh 03 xhigh
+./scripts/run_phase.sh 04 xhigh
 ```
 
 Read `RUN_ORDER.txt` and `prompts/README.md`. XHigh is the minimum reasoning level, Max is used for

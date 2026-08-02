@@ -1,0 +1,11 @@
+{
+  "amount": 4200.0,
+  "transaction_hour": 2,
+  "velocity_1h": 8,
+  "distance_from_home_km": 180.0,
+  "device_risk_score": 0.82,
+  "merchant_risk_score": 0.64,
+  "is_new_device": true,
+  "country_code": "EG",
+  "device_type": "mobile"
+}

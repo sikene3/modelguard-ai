@@ -11,8 +11,16 @@ TRAINING_CONFIG ?= configs/phase-02-training.json
 TRAINING_OUTPUT_ROOT ?= artifacts
 MODEL_VERSION ?= 1.0.0
 MODEL_BUNDLE ?= $(TRAINING_OUTPUT_ROOT)/model-bundles/$(MODEL_VERSION)
+API_HOST ?= 127.0.0.1
+API_PORT ?= 8000
+API_MAX_CONCURRENCY ?= 64
+API_INFERENCE_WORKERS ?= 1
+API_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS ?= 10
+API_KEEP_ALIVE_SECONDS ?= 5
+LOAD_REQUESTS ?= 100
+LOAD_CONCURRENCY ?= 4
 
-.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model verify clean
+.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -25,6 +33,8 @@ help:
 	@echo "  make train       Generate audited data/splits, train, track, and bundle"
 	@echo "  make inspect-model  Validate bundle metadata without joblib loading"
 	@echo "  make verify-model   Verify bundle and run one trusted local smoke prediction"
+	@echo "  make api         Start the bounded local FastAPI service"
+	@echo "  make load-test   Measure a running local API against Phase 03 targets"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
 
 setup:
@@ -68,6 +78,22 @@ inspect-model:
 verify-model:
 	$(UV_RUN) python -m modelguard.training.cli verify \
 		--bundle "$(MODEL_BUNDLE)" --trusted-origin
+
+api:
+	API_MAX_CONCURRENCY="$(API_MAX_CONCURRENCY)" \
+	API_INFERENCE_WORKERS="$(API_INFERENCE_WORKERS)" \
+	GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS="$(API_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)" \
+	$(UV_RUN) uvicorn modelguard.api.main:app \
+		--host "$(API_HOST)" --port "$(API_PORT)" --workers 1 \
+		--limit-concurrency "$(API_MAX_CONCURRENCY)" \
+		--timeout-keep-alive "$(API_KEEP_ALIVE_SECONDS)" \
+		--timeout-graceful-shutdown "$(API_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)" \
+		--no-access-log
+
+load-test:
+	$(UV_RUN) python scripts/load_test_api.py \
+		--url "http://$(API_HOST):$(API_PORT)" \
+		--requests "$(LOAD_REQUESTS)" --concurrency "$(LOAD_CONCURRENCY)"
 
 verify: lint typecheck test security verify-model
 

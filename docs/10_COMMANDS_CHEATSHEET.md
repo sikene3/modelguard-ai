@@ -28,7 +28,20 @@ make verify-model
 make verify
 ```
 
-The API, dashboard, and monitoring commands belong to later phases and are not implemented yet.
+## Phase 03 API
+
+```bash
+make api
+curl -fsS http://127.0.0.1:8000/health/live
+curl -fsS http://127.0.0.1:8000/health/ready
+curl --fail-with-body -H 'Content-Type: application/json' \
+  --data @examples/prediction-request.json http://127.0.0.1:8000/v1/predict
+make load-test
+uv run pytest tests/unit tests/contract tests/integration -q
+```
+
+Prediction-event persistence, dashboard, and monitoring commands belong to later phases and are not
+implemented yet.
 
 ## Docker
 

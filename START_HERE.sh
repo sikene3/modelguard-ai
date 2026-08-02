@@ -10,12 +10,13 @@ make test
 
 cat <<'EOF'
 
-ModelGuard AI is implemented through the audited Phase 02 training workflow.
+ModelGuard AI is implemented through the typed Phase 03 FastAPI inference service.
 
 Recommended next action:
 1. On a clean clone, run: make train
-2. Run: make inspect-model && make verify
-3. Review reports/phase-02.md before beginning Phase 03.
+2. In one terminal run: make api
+3. Check readiness/prediction, run: make load-test && make verify
+4. Review reports/phase-03.md before beginning Phase 04.
 
-API serving and later product phases are not implemented yet.
+Prediction-event persistence and later product phases are not implemented yet.
 EOF

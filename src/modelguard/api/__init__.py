@@ -1,1 +1,1 @@
-"""API package reserved for Phase 03."""
+"""Typed FastAPI inference service."""
