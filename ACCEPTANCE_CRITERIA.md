@@ -71,11 +71,14 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 
 ## Containers and local integration
 
-- [ ] Containers run as non-root.
-- [ ] Images have health checks and minimal runtime dependencies.
-- [ ] `docker compose up --build` starts the local demo.
-- [ ] Smoke script sends traffic and verifies API/dashboard/monitor behavior.
-- [ ] Trivy reports no unaccepted critical findings.
+Phase 07 images, Compose workflow, smoke/demo/E2E scripts, and zero-exception Trivy gate have run
+successfully on a Docker-capable host. See `reports/phase-07.md`.
+
+- [x] Containers run as non-root.
+- [x] Images have health checks and minimal runtime dependencies.
+- [x] `docker compose up --build` starts the local demo.
+- [x] Smoke script sends traffic and verifies API/dashboard/monitor behavior.
+- [x] Trivy reports no unaccepted critical findings.
 
 ## Terraform and AWS
 

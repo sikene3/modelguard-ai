@@ -32,6 +32,17 @@
 - Read-only root filesystem where the application supports it.
 - Drop unnecessary Linux capabilities.
 - Trivy scanning with documented exceptions and expiry.
+- The local Compose services repeat numeric UID/GID `10001:10001`, use read-only root filesystems,
+  drop all capabilities, and expose ports only on loopback. Image construction removes every
+  setuid/setgid executable before switching to the non-root runtime identity.
+- Model/config files are mounted read-only; the only shared write target is a synthetic named runtime
+  volume. The Docker socket, credentials, `.env`, model bundles, and generated reports are absent
+  from image layers.
+- Critical scan exceptions are exact image/CVE/package records with rationale, owner, and a maximum
+  90-day expiry. Stale, unmatched, malformed, duplicate, and expired records fail the evaluator.
+- Phase 07 uses the official Python 3.12.13 Alpine 3.23 index pinned by digest. The current Trivy
+  release gate scans all three final images and permits no unaccepted critical finding; the committed
+  exception list is empty.
 
 ## AWS
 

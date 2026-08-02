@@ -10,15 +10,14 @@ make test
 
 cat <<'EOF'
 
-ModelGuard AI is implemented through Phase 06 read-only operations dashboard.
+ModelGuard AI is implemented and validated through Phase 07.
 
 Recommended next action:
-1. On a clean clone, run: make train
-2. In one terminal run: make api
-3. Send predictions, stop cleanly, and finalize explicit healthy/drifted monitor windows
-4. In another terminal run: make dashboard
-5. Run: make load-test && make verify
-6. Review reports/phase-06.md before beginning Phase 07.
+1. Review every Phase 07 path, reports/phase-07.md, and checklists/PHASE_07.md.
+2. Confirm the recorded image, Compose, smoke, demo, E2E, Trivy, and quality gates.
+3. Stage only the approved Phase 07 paths and create a manual commit.
+4. Confirm the worktree is clean before considering Phase 08.
 
-Containers and later AWS/delivery phases are not implemented yet.
+Do not begin Phase 08 before that independent review and manual commit.
+Terraform, AWS infrastructure, workflows, and later delivery phases are not implemented yet.
 EOF

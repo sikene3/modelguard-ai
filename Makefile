@@ -25,7 +25,7 @@ LOAD_CONCURRENCY ?= 4
 DASHBOARD_HOST ?= 127.0.0.1
 DASHBOARD_PORT ?= 8501
 
-.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard verify clean
+.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local scan-images shell-check verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -44,6 +44,13 @@ help:
 	@echo "  make monitor      Run one explicit finalized window (MONITOR_WINDOW_END/MONITOR_AS_OF)"
 	@echo "  make monitor-status  Read run health at explicit MONITOR_AS_OF"
 	@echo "  make dashboard    Start the read-only local Streamlit operations dashboard"
+	@echo "  make docker-build Build three provenance-labeled local runtime images"
+	@echo "  make docker-up    Start the local API and dashboard through Compose"
+	@echo "  make smoke-local  Prove API/event/monitor/dashboard container integration"
+	@echo "  make demo-local   Prove the containerized Healthy -> Drifted flow"
+	@echo "  make e2e-local    Prove insufficient/corrupt-bundle/sink-outage scenarios"
+	@echo "  make scan-images  Scan images and enforce bounded Trivy exceptions"
+	@echo "  make shell-check  Run Bash syntax and ShellCheck when it is installed"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
 
 setup:
@@ -123,6 +130,27 @@ dashboard:
 	$(UV_RUN) streamlit run src/modelguard/dashboard/app.py \
 		--server.address "$(DASHBOARD_HOST)" --server.port "$(DASHBOARD_PORT)" \
 		--server.headless true --browser.gatherUsageStats false
+
+docker-build:
+	./scripts/build_local_images.sh
+
+docker-up:
+	bash -c 'source scripts/local_compose_lib.sh && modelguard_compose up -d'
+
+smoke-local:
+	./scripts/smoke_local.sh
+
+demo-local:
+	./scripts/demo_local.sh
+
+e2e-local:
+	./scripts/e2e_local.sh
+
+scan-images:
+	./scripts/scan_local_images.sh
+
+shell-check:
+	./scripts/check_shell.sh
 
 verify: lint typecheck test security verify-model
 

@@ -1071,6 +1071,59 @@ dev = [
     { name = "ruff" },
     { name = "types-boto3" },
 ]
+docker-api = [
+    { name = "boto3" },
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "structlog" },
+    { name = "uvicorn" },
+]
+docker-dashboard = [
+    { name = "boto3" },
+    { name = "jinja2" },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "streamlit" },
+    { name = "structlog" },
+]
+docker-monitor = [
+    { name = "boto3" },
+    { name = "jinja2" },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "structlog" },
+]
+docker-runtime-core = [
+    { name = "boto3" },
+    { name = "jinja2" },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "structlog" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1105,6 +1158,59 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.14,<4" },
     { name = "ruff", specifier = ">=0.9,<1" },
     { name = "types-boto3", specifier = ">=1.35,<2" },
+]
+docker-api = [
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
+    { name = "joblib", specifier = ">=1.4,<2" },
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "prometheus-client", specifier = ">=0.21,<1" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pydantic-settings", specifier = ">=2.7,<3" },
+    { name = "scikit-learn", specifier = ">=1.6,<2" },
+    { name = "scipy", specifier = ">=1.14,<2" },
+    { name = "structlog", specifier = ">=24.4,<26" },
+    { name = "uvicorn", specifier = ">=0.34,<1" },
+]
+docker-dashboard = [
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
+    { name = "joblib", specifier = ">=1.4,<2" },
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "plotly", specifier = ">=5.24,<7" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pydantic-settings", specifier = ">=2.7,<3" },
+    { name = "scikit-learn", specifier = ">=1.6,<2" },
+    { name = "scipy", specifier = ">=1.14,<2" },
+    { name = "streamlit", specifier = ">=1.41,<2" },
+    { name = "structlog", specifier = ">=24.4,<26" },
+]
+docker-monitor = [
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
+    { name = "joblib", specifier = ">=1.4,<2" },
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pydantic-settings", specifier = ">=2.7,<3" },
+    { name = "scikit-learn", specifier = ">=1.6,<2" },
+    { name = "scipy", specifier = ">=1.14,<2" },
+    { name = "structlog", specifier = ">=24.4,<26" },
+]
+docker-runtime-core = [
+    { name = "boto3", specifier = ">=1.35,<2" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
+    { name = "joblib", specifier = ">=1.4,<2" },
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pydantic-settings", specifier = ">=2.7,<3" },
+    { name = "scikit-learn", specifier = ">=1.6,<2" },
+    { name = "scipy", specifier = ">=1.14,<2" },
+    { name = "structlog", specifier = ">=24.4,<26" },
 ]
 
 [[package]]

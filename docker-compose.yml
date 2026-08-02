@@ -1,0 +1,175 @@
+x-build-args: &build-args
+  PYTHON_BASE_IMAGE: python:3.12.13-alpine3.23@sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d
+  SOURCE_REVISION: ${SOURCE_REVISION:-local-uncommitted}
+  UV_LOCK_SHA256: ${UV_LOCK_SHA256:-d91aa5086e9ef4a0fc03802abf77277f988e2aba974c21c8426b5f7ec522a9fd}
+
+x-runtime-security: &runtime-security
+  user: "10001:10001"
+  read_only: true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001,mode=1777
+
+x-local-environment: &local-environment
+  APP_ENV: local
+  LOG_LEVEL: INFO
+  MODEL_BUNDLE_PATH: /model
+  ACTIVE_MODEL_VERSION: 1.0.0
+  MODEL_BUNDLE_TRUSTED_ORIGIN: "true"
+  AWS_EC2_METADATA_DISABLED: "true"
+
+x-model-joblib: &model-joblib
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/model.joblib
+  target: /model/model.joblib
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-manifest: &model-manifest
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/manifest.json
+  target: /model/manifest.json
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-schema: &model-schema
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/input_schema.json
+  target: /model/input_schema.json
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-metrics: &model-metrics
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/metrics.json
+  target: /model/metrics.json
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-threshold: &model-threshold
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/threshold.json
+  target: /model/threshold.json
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-baseline: &model-baseline
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/baseline_profile.json
+  target: /model/baseline_profile.json
+  read_only: true
+  bind:
+    create_host_path: false
+x-model-checksums: &model-checksums
+  type: bind
+  source: ./artifacts/model-bundles/1.0.0/checksums.sha256
+  target: /model/checksums.sha256
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  api:
+    <<: *runtime-security
+    image: modelguard-api:local
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      args: *build-args
+    environment:
+      <<: *local-environment
+      API_ACCESS_MODE: local_open
+      API_MAX_CONCURRENCY: "64"
+      API_INFERENCE_WORKERS: "1"
+      EVENT_SINK: local
+      EVENT_SINK_TIMEOUT_SECONDS: "2.0"
+      LOCAL_EVENT_DIR: /runtime/${DEMO_RUN_ID:-default}/events/${DEMO_EVENT_SET:-active}
+    ports:
+      - "127.0.0.1:${MODELGUARD_API_PORT:-8000}:8000"
+    volumes:
+      - *model-joblib
+      - *model-manifest
+      - *model-schema
+      - *model-metrics
+      - *model-threshold
+      - *model-baseline
+      - *model-checksums
+      - type: volume
+        source: runtime-data
+        target: /runtime
+    stop_grace_period: 20s
+
+  dashboard:
+    <<: *runtime-security
+    image: modelguard-dashboard:local
+    build:
+      context: .
+      dockerfile: docker/dashboard.Dockerfile
+      args: *build-args
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      <<: *local-environment
+      DASHBOARD_REPOSITORY: local
+      LOCAL_REPORT_DIR: /runtime/${DEMO_RUN_ID:-default}/reports
+      MONITORING_CONFIG_PATH: /app/configs/phase-07-monitoring.json
+      DASHBOARD_HISTORY_LIMIT: "24"
+    ports:
+      - "127.0.0.1:${MODELGUARD_DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      - *model-joblib
+      - *model-manifest
+      - *model-schema
+      - *model-metrics
+      - *model-threshold
+      - *model-baseline
+      - *model-checksums
+      - type: bind
+        source: ./configs/phase-07-monitoring.json
+        target: /app/configs/phase-07-monitoring.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: runtime-data
+        target: /runtime
+        read_only: true
+
+  monitor:
+    <<: *runtime-security
+    scale: 0
+    image: modelguard-monitor:local
+    build:
+      context: .
+      dockerfile: docker/monitor.Dockerfile
+      args: *build-args
+    environment:
+      <<: *local-environment
+      EVENT_SINK: disabled
+      LOCAL_EVENT_DIR: /runtime/${DEMO_RUN_ID:-default}/events/${DEMO_EVENT_SET:-active}
+      LOCAL_REPORT_DIR: /runtime/${DEMO_RUN_ID:-default}/reports
+      MIN_MONITORING_SAMPLES: "500"
+    volumes:
+      - *model-joblib
+      - *model-manifest
+      - *model-schema
+      - *model-metrics
+      - *model-threshold
+      - *model-baseline
+      - *model-checksums
+      - type: bind
+        source: ./configs/phase-07-monitoring.json
+        target: /app/configs/phase-07-monitoring.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: runtime-data
+        target: /runtime
+
+volumes:
+  runtime-data:
+    labels:
+      io.modelguard.purpose: local-synthetic-demo

@@ -77,11 +77,20 @@ download rather than a public object URL.
 ## Docker
 
 ```bash
-docker compose up --build -d
+./scripts/build_local_images.sh
+docker compose up -d
 docker compose ps
-docker compose logs -f api
+./scripts/smoke_local.sh
+./scripts/demo_local.sh
+./scripts/e2e_local.sh
+./scripts/scan_local_images.sh
+docker compose logs --tail=100 api dashboard
 docker compose down -v
 ```
+
+The scripts create validated JSON under `artifacts/phase-07-evidence/<run-id>/`; see
+`docs/CONTAINER_LOCAL_DEMO.md`. The monitor is a scale-zero one-shot Compose service and is not a
+long-running process; target it with `docker compose run monitor ...` when invoking it manually.
 
 ## Terraform
 

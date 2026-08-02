@@ -36,11 +36,43 @@ newgrp docker
 docker run --rm hello-world
 ```
 
+Do not work around this by mounting the Docker socket into a project container or running an
+application service as root. After group membership changes, start a fresh login shell. Verify both
+`docker info` and `docker compose version` before running the Phase 07 scripts.
+
+## Docker Compose service is unhealthy
+
+```bash
+docker compose ps
+docker compose logs --tail=100 api dashboard
+```
+
+API liveness with failed readiness normally means the generated seven-file bundle is missing or did
+not verify. Run `make verify-model`, then rebuild/recreate the service. The bundle is mounted rather
+than baked into an image. Dashboard health is `/_stcore/health`; report absence is displayed as
+unavailable evidence and is not itself a process-health failure.
+
+## Local demo report has the wrong scenario state
+
+Do not reuse a hand-written event directory. `smoke_local.sh`, `demo_local.sh`, and `e2e_local.sh`
+create unique named-volume namespaces and validate exact counts. Keep the default minimum counts;
+lowering drift thresholds or the monitoring minimum to force a pass invalidates the evidence.
+
+## Trivy critical finding
+
+Run `./scripts/scan_local_images.sh`, inspect its JSON evidence, and follow the remediation order in
+`docs/CONTAINER_LOCAL_DEMO.md`. Upgrade a locked dependency or pinned base digest first. Temporary
+exceptions require an exact finding/package/image match, rationale, owner, and expiry of at most 90
+days; expired, stale, or unmatched exceptions fail the evaluator.
+
 ## Port already in use
 
 ```bash
-sudo ss -ltnp | grep -E ':8000|:8501|:5000'
+sudo ss -ltnp | grep -E ':8000|:8501|:18081|:18082|:5000'
 ```
+
+Override local Compose ports with `MODELGUARD_API_PORT` and `MODELGUARD_DASHBOARD_PORT`; override
+failure-scenario ports with `E2E_CORRUPT_PORT` and `E2E_SINK_PORT`.
 
 ## Incorrect AWS identity
 

@@ -5,14 +5,16 @@ fraud-risk model, observable inference, and deterministic drift incident handlin
 
 ## Current status
 
-Phase 06 adds a compact, read-only Streamlit operations dashboard over the deterministic Phase 05
-artifacts. It validates strict report/run-status/model-manifest contracts, displays the configured
-active and report-target identities separately, preserves independent
-run/data-quality/drift/performance states, and shows exact reconciliation, distribution evidence,
-and identity-comparable report-backed trends. Missing, malformed, stale, insufficient, unknown, and
-pending-label evidence is never converted into a
-healthy or performance claim. Local files and private S3 use one injected repository interface;
-containers, Firehose/Terraform resources, and deployment remain future phases.
+The Phase 07 implementation packages the API, read-only dashboard, and one-shot monitor as separate
+digest-pinned, non-root images. Docker Compose mounts the verified bundle/configuration read-only,
+shares only a named synthetic runtime volume, and runs without AWS credentials. Repeatable scripts
+cover API health and prediction, closed event creation, healthy and degraded monitor reports,
+dashboard availability, insufficient data, a corrupt bundle, and a fail-open sink outage.
+Machine-readable traffic/smoke/demo/scan evidence is generated under ignored
+`artifacts/phase-07-evidence/` paths.
+The image-build, Compose, smoke/demo/E2E, headless-browser, ShellCheck, and zero-exception Trivy
+gates have passed; see `reports/phase-07.md`. Phase 07 is complete and awaits independent human
+review and a manual commit. Terraform, AWS resources, and deployment remain future phases.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -22,6 +24,8 @@ The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHIT
 - Git, Make, and uv 0.12.x.
 - Python is pinned by `.python-version` and `requires-python` to Python 3.12; developer commands use
   `uv run` and never rely on the host's unversioned `python3` command.
+- Docker Engine and Docker Compose 2 or newer for Phase 07. Trivy is required for the image-security
+  gate; ShellCheck is used automatically when installed.
 
 ```bash
 ./scripts/verify_environment.sh
@@ -42,6 +46,11 @@ make test         # Pytest with branch coverage
 make security     # Bandit, pip-audit, and a basic redacted secret/file check
 make api          # bounded local FastAPI server on 127.0.0.1:8000
 make load-test    # test a separately running local API against explicit load targets
+make docker-build # build the three provenance-labeled local images
+make smoke-local  # verify container health, prediction, events, report, and dashboard
+make demo-local   # run the repeatable Healthy -> Drifted container flow
+make e2e-local    # exercise insufficient data, corrupt bundle, and sink outage
+make scan-images  # capture/evaluate machine-readable critical Trivy findings
 make verify       # quality/security gates plus verification of the generated bundle
 ```
 
@@ -224,6 +233,47 @@ public and never stores or logs a generated presigned URL.
 
 The complete evidence/claim boundary is documented in
 [docs/DASHBOARD_CONTRACT.md](docs/DASHBOARD_CONTRACT.md).
+
+## Containerized local end-to-end demo
+
+Create the immutable bundle once, build the three images with exact source/lock labels, then start
+the API and dashboard:
+
+```bash
+make train                    # omit only when the verified 1.0.0 bundle already exists
+./scripts/build_local_images.sh
+docker compose up -d
+./scripts/smoke_local.sh
+./scripts/demo_local.sh
+./scripts/e2e_local.sh
+./scripts/scan_local_images.sh
+docker compose down -v
+make verify
+```
+
+The build uses separate lock-backed runtime dependency groups and the official
+`python:3.12.13-alpine3.23` index pinned by digest. Final images run as numeric
+`10001:10001`, declare health checks, omit development dependencies and build toolchains, and never
+contain the model bundle, `.env`, credentials, events, or reports. Compose repeats the non-root
+identity, makes root filesystems read-only, drops all Linux capabilities, disables privilege
+escalation by stripping setuid/setgid executables, binds ports to loopback, and mounts neither the
+Docker socket nor any AWS service.
+
+`smoke_local.sh` sends one explicit prediction plus at least 600 deterministic baseline requests,
+gracefully restarts the API to publish its active event file, runs the one-shot monitor, and checks
+for `run=succeeded`, `data_quality=valid`, `drift=healthy`, and `performance=unknown`. It also checks
+image users, health checks, source/lock labels, event metrics, dashboard health, and the absence of
+baked artifacts. `demo_local.sh` uses isolated event streams to prove Healthy → Drifted with two
+distinct immutable report IDs. `e2e_local.sh` proves small-sample honesty, corrupt-bundle readiness,
+and sink fail-open behavior.
+
+Every default run uses a unique directory namespace inside the named volume and writes a validated
+JSON summary under `artifacts/phase-07-evidence/<run-id>/`, so reruns do not delete or mix earlier
+inputs. Phase 07 uses a committed zero-grace local-demo monitoring policy solely to finalize real
+just-sent local traffic; the Phase 05 ten-minute policy remains unchanged.
+
+The complete clean-clone, image, evidence, scenario, cleanup, and Trivy exception contracts are in
+[docs/CONTAINER_LOCAL_DEMO.md](docs/CONTAINER_LOCAL_DEMO.md).
 
 The measured local gate uses 100 requests at concurrency 4 and requires at least 25 requests/second,
 zero errors, and p95 latency at most 250 ms:

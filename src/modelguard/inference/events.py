@@ -302,21 +302,23 @@ class LocalJsonlPredictionEventSink:
     def _open_unique_file(self) -> None:
         if self._file_descriptor is not None:
             return
-        self._directory.mkdir(parents=True, exist_ok=True)
-        if self._directory.is_symlink() or not self._directory.is_dir():
-            raise LocalEventWriteError("local event directory must be a non-symlink directory")
-        timestamp = self._clock().astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        file_id = self._file_id_factory()
-        stem = f"prediction-events-{timestamp}-{file_id}"
-        active_path = self._directory / f"{stem}.jsonl.open"
-        closed_path = self._directory / f"{stem}.jsonl"
-        if closed_path.exists() or closed_path.is_symlink():
-            raise LocalEventWriteError("unique local event file identity already exists")
-        flags = os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            if self._directory.is_symlink() or not self._directory.is_dir():
+                raise LocalEventWriteError("local event directory must be a non-symlink directory")
+            timestamp = self._clock().astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            file_id = self._file_id_factory()
+            stem = f"prediction-events-{timestamp}-{file_id}"
+            active_path = self._directory / f"{stem}.jsonl.open"
+            closed_path = self._directory / f"{stem}.jsonl"
+            if closed_path.exists() or closed_path.is_symlink():
+                raise LocalEventWriteError("unique local event file identity already exists")
+            flags = os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(active_path, flags, 0o600)
+        except LocalEventWriteError:
+            raise
         except OSError as error:
             raise LocalEventWriteError("could not open a unique local event file") from error
         self._file_descriptor = descriptor

@@ -22,11 +22,9 @@ Do not spend a long time scrolling through code.
 ## 0:55–1:30 — Healthy drift state
 
 ```bash
-curl -s http://<api>/health/ready | jq
-uv run python scripts/send_demo_traffic.py --scenario baseline --count 600 \
-  --window-end 2026-01-01T01:00:00Z
-uv run python -m modelguard.monitoring.cli run \
-  --window-end 2026-01-01T01:00:00Z --as-of 2026-01-01T01:10:00Z
+./scripts/build_local_images.sh
+docker compose up -d
+./scripts/smoke_local.sh
 ```
 
 Show the dashboard with separate states: `run=succeeded`, `data_quality=valid`, `drift=healthy`, and
@@ -36,10 +34,7 @@ target count.
 ## 1:30–2:20 — Drift injection
 
 ```bash
-uv run python scripts/send_demo_traffic.py --scenario drifted --count 600 \
-  --window-end 2026-01-01T02:00:00Z
-uv run python -m modelguard.monitoring.cli run \
-  --window-end 2026-01-01T02:00:00Z --as-of 2026-01-01T02:10:00Z
+./scripts/demo_local.sh
 ```
 
 Show:
@@ -48,6 +43,10 @@ Show:
 - `run=succeeded`, `data_quality=valid`, `drift=degraded`, and `performance=unknown` without labels.
 - The HTML incident report.
 - An SNS email or CloudWatch alarm, if configured.
+
+For the Phase 07 local recording, open the final dashboard on `http://127.0.0.1:8501` and show the
+validated `artifacts/phase-07-evidence/<run-id>/demo-summary.json`. SNS/CloudWatch remain later AWS
+evidence and must not be implied by the local run.
 
 ## 2:20–3:10 — Engineering evidence
 

@@ -1,0 +1,40 @@
+{
+  "contract_version": "modelguard.monitoring-config.v1",
+  "false_negative_cost": 10,
+  "false_positive_cost": 1,
+  "finalization_grace_seconds": 0,
+  "js_degraded_threshold": 0.2,
+  "js_warning_threshold": 0.1,
+  "label_schema_version": "modelguard.label.v1",
+  "minimum_accepted_events": 500,
+  "minimum_label_coverage": 0.8,
+  "minimum_labeled_rows": 500,
+  "minimum_negative_labels": 100,
+  "minimum_positive_labels": 20,
+  "missing_bucket": "__MISSING__",
+  "missingness_invalid_threshold": 0.05,
+  "missingness_warning_threshold": 0.02,
+  "other_bucket": "__OTHER__",
+  "performance_degraded_delta": 0.25,
+  "performance_scope_wording": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
+  "performance_warning_delta": 0.1,
+  "psi_degraded_threshold": 0.25,
+  "psi_warning_threshold": 0.1,
+  "rejected_fraction_invalid_threshold": 0.05,
+  "required_categorical_features": [
+    "country_code",
+    "device_type"
+  ],
+  "required_numeric_features": [
+    "amount",
+    "transaction_hour",
+    "velocity_1h",
+    "distance_from_home_km",
+    "device_risk_score",
+    "merchant_risk_score",
+    "is_new_device"
+  ],
+  "smoothing_epsilon": 1e-6,
+  "stale_after_seconds": 7200,
+  "window_seconds": 3600
+}

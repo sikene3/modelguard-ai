@@ -2,7 +2,7 @@
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+cd "$repo_root" || exit 1
 
 required=(git make uv)
 optional=(codex docker terraform aws jq trivy checkov shellcheck)

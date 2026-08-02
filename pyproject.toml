@@ -43,6 +43,32 @@ dev = [
   "ruff>=0.9,<1",
   "types-boto3>=1.35,<2",
 ]
+docker-runtime-core = [
+  "boto3>=1.35,<2",
+  "jinja2>=3.1,<4",
+  "joblib>=1.4,<2",
+  "numpy>=2.0,<3",
+  "pandas>=2.2,<3",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "scikit-learn>=1.6,<2",
+  "scipy>=1.14,<2",
+  "structlog>=24.4,<26",
+]
+docker-api = [
+  { include-group = "docker-runtime-core" },
+  "fastapi>=0.115,<1",
+  "prometheus-client>=0.21,<1",
+  "uvicorn>=0.34,<1",
+]
+docker-dashboard = [
+  { include-group = "docker-runtime-core" },
+  "plotly>=5.24,<7",
+  "streamlit>=1.41,<2",
+]
+docker-monitor = [
+  { include-group = "docker-runtime-core" },
+]
 
 [tool.uv]
 default-groups = ["dev"]
@@ -84,6 +110,7 @@ addopts = [
   "--cov=modelguard",
   "--cov-report=term-missing:skip-covered",
 ]
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
   "integration: integration tests",

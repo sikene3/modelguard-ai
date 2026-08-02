@@ -27,6 +27,7 @@ from modelguard.inference.events import (
     EventSinkWriteResult,
     FirehosePredictionEventSink,
     FirehoseProducerError,
+    LocalEventWriteError,
     LocalJsonlPredictionEventSink,
     PredictionEventV1,
     SerializedPredictionEvent,
@@ -186,6 +187,22 @@ def test_local_sink_uses_single_writer_atomic_lines_and_closed_snapshot(
         for line in path.read_bytes().splitlines(keepends=True):
             assert line.endswith(b"\n")
             PredictionEventV1.model_validate_json(line)
+
+
+def test_local_sink_wraps_directory_creation_failure(
+    tmp_path: Path,
+    valid_prediction_payload: dict[str, object],
+) -> None:
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_text("blocked", encoding="utf-8")
+    sink = LocalJsonlPredictionEventSink(blocked_parent / "events")
+
+    async def exercise() -> None:
+        with pytest.raises(LocalEventWriteError, match="could not open"):
+            await sink.emit(_record(valid_prediction_payload))
+        await sink.close()
+
+    asyncio.run(exercise())
 
 
 class FakeFirehoseClient:
