@@ -110,12 +110,16 @@ async def predict(
     del access
     started = time.perf_counter()
     request_id = get_request_id(request)
-    prediction = await container.predict(prediction_request, request_id=request_id)
-    latency_ms = max((time.perf_counter() - started) * 1_000.0, 0.0)
+    served = await container.predict(
+        prediction_request,
+        request_id=request_id,
+        prediction_started_at=started,
+    )
+    prediction = served.prediction
     return PredictionResponse(
         request_id=request_id,
         risk_score=prediction.risk_score,
         decision=prediction.decision,
         model_version=prediction.model_version,
-        latency_ms=round(latency_ms, 3),
+        latency_ms=served.latency_ms,
     )

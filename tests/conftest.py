@@ -46,6 +46,7 @@ def api_settings(audited_workspace: AuditedWorkspace) -> Settings:
         app_env=AppEnvironment.TEST,
         model_bundle_path=audited_workspace.result.bundle_path,
         active_model_version=audited_workspace.config.model_version,
+        local_event_dir=audited_workspace.root / "test-prediction-events",
     )
 
 

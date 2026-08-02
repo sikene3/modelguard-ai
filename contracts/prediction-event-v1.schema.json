@@ -1,0 +1,136 @@
+{
+  "$id": "https://modelguard.example/contracts/prediction-event-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bundle_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "low_risk",
+        "high_risk"
+      ],
+      "type": "string"
+    },
+    "event_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "event_schema_version": {
+      "const": "modelguard.prediction-event.v1",
+      "type": "string"
+    },
+    "event_timestamp": {
+      "format": "date-time",
+      "pattern": "Z$",
+      "type": "string"
+    },
+    "features": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "maximum": 25000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "country_code": {
+          "enum": [
+            "BR",
+            "DE",
+            "EG",
+            "GB",
+            "IN",
+            "US"
+          ],
+          "type": "string"
+        },
+        "device_risk_score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "device_type": {
+          "enum": [
+            "desktop",
+            "mobile",
+            "tablet"
+          ],
+          "type": "string"
+        },
+        "distance_from_home_km": {
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "is_new_device": {
+          "type": "boolean"
+        },
+        "merchant_risk_score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "transaction_hour": {
+          "maximum": 23,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "velocity_1h": {
+          "maximum": 30,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "amount",
+        "transaction_hour",
+        "velocity_1h",
+        "distance_from_home_km",
+        "device_risk_score",
+        "merchant_risk_score",
+        "is_new_device",
+        "country_code",
+        "device_type"
+      ],
+      "type": "object"
+    },
+    "input_schema_version": {
+      "pattern": "^modelguard\\.input\\.v[1-9][0-9]*$",
+      "type": "string"
+    },
+    "latency_ms": {
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "model_version": {
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    }
+  },
+  "required": [
+    "event_schema_version",
+    "event_id",
+    "request_id",
+    "event_timestamp",
+    "model_version",
+    "bundle_manifest_sha256",
+    "input_schema_version",
+    "features",
+    "score",
+    "decision",
+    "latency_ms"
+  ],
+  "title": "ModelGuard prediction event v1",
+  "type": "object"
+}

@@ -16,7 +16,18 @@ from modelguard.core.config import ApiAccessMode, AppEnvironment, Settings
 
 DecisionLabel = Literal["low_risk", "high_risk"]
 ModelLoadOutcome = Literal["success", "failure"]
-EventSinkOutcome = Literal["success", "timeout", "failure"]
+EventSinkOutcome = Literal[
+    "local_persisted",
+    "firehose_accepted",
+    "disabled_dropped",
+    "timeout",
+    "local_failed",
+    "firehose_producer_failed",
+    "serialization_failed",
+    # Retained for compatibility with the Phase 03 telemetry protocol callers.
+    "success",
+    "failure",
+]
 
 
 class ErrorKind(StrEnum):
@@ -111,7 +122,7 @@ class PrometheusTelemetry:
         )
         self._event_sink = Counter(
             "modelguard_event_sink_operations_total",
-            "Prediction event-sink outcomes.",
+            "Prediction event producer outcomes; acceptance is not downstream delivery.",
             ("outcome",),
             registry=self.registry,
         )
@@ -266,8 +277,14 @@ class EmfTelemetry:
 
     def record_event_sink(self, outcome: EventSinkOutcome, latency_seconds: float) -> None:
         outcome_metric = {
+            "local_persisted": "LocalEventPersisted",
+            "firehose_accepted": "FirehoseProducerAccepted",
+            "disabled_dropped": "EventDroppedDisabled",
+            "local_failed": "LocalEventWriteFailure",
+            "firehose_producer_failed": "FirehoseProducerFailure",
+            "serialization_failed": "EventSerializationFailure",
             "success": "EventSinkSuccess",
-            "timeout": "EventSinkTimeout",
+            "timeout": "EventWriteTimeout",
             "failure": "EventSinkFailure",
         }[outcome]
         self._emit(

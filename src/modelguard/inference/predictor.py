@@ -51,6 +51,10 @@ class Predictor:
     def manifest_sha256(self) -> str:
         return self._bundle.metadata.identity.manifest_sha256
 
+    @property
+    def input_schema_version(self) -> str:
+        return self._bundle.metadata.input_schema.schema_version
+
     def predict(self, features: Mapping[str, object]) -> Prediction:
         """Score one already-validated request in the bundle's canonical feature order."""
 

@@ -1,9 +1,9 @@
 # Getting Started — ModelGuard AI Launch Kit
 
 This repository began as an **execution plan, prompt set, and collection of quality gates**. Its
-current status is documented in `README.md`: repository bootstrap and the audited training workflow
-plus the typed inference API are complete through Phase 03. Prediction-event persistence and later
-phases have not been implemented.
+current status is documented in `README.md`: repository bootstrap, audited training, the typed
+inference API, and versioned prediction-event logging are complete through Phase 04. Drift
+monitoring and later phases have not been implemented.
 
 ## Correct starting point
 
@@ -16,13 +16,15 @@ make verify
 ```
 
 Then run `make api` in a dedicated terminal. From another terminal, verify `/health/live`,
-`/health/ready`, and `/v1/predict` using the exact examples in `README.md`, then run `make load-test`.
+`/health/ready`, and multiple `/v1/predict` requests using the exact examples in `README.md`, stop
+the API cleanly, and parse the resulting closed `artifacts/predictions/*.jsonl` file. Then run
+`make load-test`.
 
-Reports for Phases 00–03 are stored under `reports/`. Do not begin Phase 04 before reviewing the
-current tree and commit. When it is time to begin Phase 04, use:
+Reports for Phases 00–04 are stored under `reports/`. Do not begin Phase 05 before reviewing the
+current tree and commit. When it is time to begin Phase 05, use:
 
 ```bash
-./scripts/run_phase.sh 04 xhigh
+./scripts/run_phase.sh 05 max
 ```
 
 Read `RUN_ORDER.txt` and `prompts/README.md`. XHigh is the minimum reasoning level, Max is used for

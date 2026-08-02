@@ -33,7 +33,8 @@ class EventSink(StrEnum):
     """Configured prediction-event destination."""
 
     LOCAL = "local"
-    FIREHOSE = "firehose"
+    AWS = "aws"
+    DISABLED = "disabled"
 
 
 class ApiAccessMode(StrEnum):
@@ -73,10 +74,14 @@ class Settings(BaseSettings):
     api_max_concurrency: int = Field(default=64, ge=1, le=1_024)
     api_inference_workers: int = Field(default=1, ge=1, le=64)
     api_concurrency_wait_timeout_seconds: float = Field(default=1.0, gt=0.0, le=30.0)
-    event_sink_timeout_seconds: float = Field(default=0.1, gt=0.0, le=30.0)
+    event_sink_timeout_seconds: float = Field(default=0.75, gt=0.0, le=30.0)
     graceful_shutdown_timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
     event_sink: EventSink = EventSink.LOCAL
     local_event_dir: Path = Path("artifacts/predictions")
+    firehose_connect_timeout_seconds: float = Field(default=0.1, gt=0.0, le=5.0)
+    firehose_read_timeout_seconds: float = Field(default=0.2, gt=0.0, le=10.0)
+    firehose_max_attempts: int = Field(default=2, ge=1, le=5)
+    firehose_retry_base_delay_seconds: float = Field(default=0.025, ge=0.0, le=1.0)
     local_report_dir: Path = Path("artifacts/reports")
     min_monitoring_samples: int = Field(default=500, ge=1)
     aws_region: str = "us-east-1"
@@ -119,6 +124,11 @@ class Settings(BaseSettings):
                 raise ValueError("the injected bearer token must contain 32 to 512 UTF-8 bytes")
         elif self.prediction_token_ssm_arn is not None or self.prediction_bearer_token is not None:
             raise ValueError("token settings are allowed only in https_token mode")
+
+        if self.event_sink is EventSink.AWS and not self.firehose_stream_name:
+            raise ValueError("EVENT_SINK=aws requires FIREHOSE_STREAM_NAME")
+        if self.app_env is AppEnvironment.AWS and self.event_sink is EventSink.LOCAL:
+            raise ValueError("AWS deployments cannot use the local prediction-event sink")
         return self
 
 

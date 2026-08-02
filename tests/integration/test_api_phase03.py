@@ -16,11 +16,11 @@ import httpx
 from pydantic import SecretStr
 
 from modelguard.api.main import create_app
-from modelguard.core.config import ApiAccessMode, AppEnvironment, Settings
+from modelguard.core.config import ApiAccessMode, AppEnvironment, EventSink, Settings
 from modelguard.core.logging import configure_json_logging
 from modelguard.core.telemetry import PrometheusTelemetry
+from modelguard.inference.events import EventSinkWriteResult, SerializedPredictionEvent
 from modelguard.inference.loader import VerifiedModelLoader
-from modelguard.inference.predictor import Prediction
 
 
 class RecordingLogger:
@@ -54,10 +54,11 @@ class SlowEventSink:
         self.emit_calls = 0
         self.closed = False
 
-    async def emit(self, prediction: Prediction) -> None:
-        del prediction
+    async def emit(self, record: SerializedPredictionEvent) -> EventSinkWriteResult:
+        del record
         self.emit_calls += 1
         await asyncio.sleep(self.delay_seconds)
+        return EventSinkWriteResult.DISABLED_DROPPED
 
     async def close(self) -> None:
         self.closed = True
@@ -142,6 +143,7 @@ def test_aws_https_token_and_http_cidr_only_route_matrix(
         https_settings = Settings(
             _env_file=None,
             app_env=AppEnvironment.AWS,
+            event_sink=EventSink.DISABLED,
             api_access_mode=ApiAccessMode.HTTPS_BEARER,
             alb_allowed_cidr="203.0.113.8/32",
             prediction_token_ssm_arn=token_arn,
@@ -213,6 +215,7 @@ def test_aws_https_token_and_http_cidr_only_route_matrix(
         fallback_settings = Settings(
             _env_file=None,
             app_env=AppEnvironment.AWS,
+            event_sink=EventSink.DISABLED,
             api_access_mode=ApiAccessMode.HTTP_CIDR_ONLY,
             alb_allowed_cidr="203.0.113.8/32",
             model_bundle_path=api_settings.model_bundle_path,
@@ -261,6 +264,7 @@ def test_token_comparison_runs_for_missing_and_presented_credentials(
     settings = Settings(
         _env_file=None,
         app_env=AppEnvironment.AWS,
+        event_sink=EventSink.DISABLED,
         api_access_mode=ApiAccessMode.HTTPS_BEARER,
         alb_allowed_cidr="203.0.113.8/32",
         prediction_token_ssm_arn=(
@@ -389,7 +393,7 @@ def test_event_sink_timeout_is_observable_fail_open_and_closes_gracefully(
     assert sink.closed is True
     assert 'modelguard_event_sink_operations_total{outcome="timeout"} 1.0' in metrics
     assert 'modelguard_errors_total{kind="event_sink"} 1.0' in metrics
-    assert any(event == "event_sink_timeout" for _, event, _ in logger.entries)
+    assert any(event == "prediction_event_write_timeout" for _, event, _ in logger.entries)
 
 
 def test_application_logs_never_include_token_query_header_or_body(
@@ -406,6 +410,7 @@ def test_application_logs_never_include_token_query_header_or_body(
     settings = Settings(
         _env_file=None,
         app_env=AppEnvironment.AWS,
+        event_sink=EventSink.DISABLED,
         api_access_mode=ApiAccessMode.HTTPS_BEARER,
         alb_allowed_cidr="203.0.113.8/32",
         prediction_token_ssm_arn=(

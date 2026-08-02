@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from modelguard.core.config import ApiAccessMode, AppEnvironment, LogLevel, Settings
+from modelguard.core.config import ApiAccessMode, AppEnvironment, EventSink, LogLevel, Settings
 from modelguard.core.logging import REDACTED, configure_json_logging
 from modelguard.core.telemetry import EmfTelemetry, ErrorKind, PrometheusTelemetry, build_telemetry
 
@@ -23,6 +23,8 @@ def test_prometheus_exposes_required_low_cardinality_signals() -> None:
     )
     telemetry.record_prediction("high_risk")
     telemetry.record_event_sink("timeout", 0.1)
+    telemetry.record_event_sink("local_persisted", 0.001)
+    telemetry.record_event_sink("firehose_producer_failed", 0.2)
     telemetry.record_error(ErrorKind.EVENT_SINK)
 
     metrics = telemetry.render_prometheus().decode("utf-8")
@@ -35,6 +37,8 @@ def test_prometheus_exposes_required_low_cardinality_signals() -> None:
     assert 'modelguard_predictions_total{decision="high_risk"}' in metrics
     assert 'modelguard_model_load_total{outcome="success"}' in metrics
     assert 'modelguard_event_sink_operations_total{outcome="timeout"}' in metrics
+    assert 'modelguard_event_sink_operations_total{outcome="local_persisted"}' in metrics
+    assert 'modelguard_event_sink_operations_total{outcome="firehose_producer_failed"}' in metrics
     assert 'modelguard_errors_total{kind="event_sink"}' in metrics
 
 
@@ -55,7 +59,7 @@ def test_emf_uses_only_fixed_bounded_dimensions_and_metric_names() -> None:
         latency_seconds=0.01,
     )
     telemetry.record_prediction("low_risk")
-    telemetry.record_event_sink("success", 0.001)
+    telemetry.record_event_sink("firehose_accepted", 0.001)
     telemetry.record_error(ErrorKind.AUTH)
 
     assert len(lines) == 5
@@ -71,6 +75,8 @@ def test_emf_uses_only_fixed_bounded_dimensions_and_metric_names() -> None:
         assert dimension_names.isdisjoint(
             {"RequestId", "EventId", "Token", "Feature", "ModelVersion"}
         )
+    assert "FirehoseProducerAccepted" in lines[3]
+    assert "S3" not in lines[3]
 
 
 def test_aws_factory_adds_emf_while_local_factory_does_not() -> None:
@@ -78,6 +84,7 @@ def test_aws_factory_adds_emf_while_local_factory_does_not() -> None:
     aws_settings = Settings(
         _env_file=None,
         app_env=AppEnvironment.AWS,
+        event_sink=EventSink.DISABLED,
         api_access_mode=ApiAccessMode.HTTP_CIDR_ONLY,
         alb_allowed_cidr="203.0.113.8/32",
     )

@@ -1,0 +1,23 @@
+{
+  "bundle_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "decision": "high_risk",
+  "event_id": "00000000-0000-4000-8000-000000000004",
+  "event_schema_version": "modelguard.prediction-event.v1",
+  "event_timestamp": "2026-08-02T12:34:56.789Z",
+  "features": {
+    "amount": 4200.0,
+    "country_code": "EG",
+    "device_risk_score": 0.82,
+    "device_type": "mobile",
+    "distance_from_home_km": 180.0,
+    "is_new_device": true,
+    "merchant_risk_score": 0.64,
+    "transaction_hour": 2,
+    "velocity_1h": 8
+  },
+  "input_schema_version": "modelguard.input.v1",
+  "latency_ms": 14.8,
+  "model_version": "1.0.0",
+  "request_id": "00000000-0000-4000-8000-000000000003",
+  "score": 0.8731
+}

@@ -20,9 +20,9 @@
     "report": "reports/phase-03.md"
   },
   "phase_04": {
-    "status": "not_started",
+    "status": "completed",
     "commit": null,
-    "report": null
+    "report": "reports/phase-04.md"
   },
   "phase_05": {
     "status": "not_started",

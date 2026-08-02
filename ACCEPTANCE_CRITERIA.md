@@ -34,15 +34,15 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 
 ## Event logging
 
-- [ ] Local event sink works without AWS.
-- [ ] AWS event sink uses Firehose and is mock-tested.
-- [ ] Event payload has retry-stable IDs, UTC event timestamp, and exact model/manifest/input-schema
+- [x] Local event sink works without AWS.
+- [x] AWS event sink uses Firehose and is mock-tested.
+- [x] Event payload has retry-stable IDs, UTC event timestamp, and exact model/manifest/input-schema
       identities under a versioned event schema.
-- [ ] Firehose contract is newline JSON, GZIP, physical UTC date/hour prefix, and model identity in
+- [x] Firehose contract is newline JSON, GZIP, physical UTC date/hour prefix, and model identity in
       payload; dynamic model-version partitioning is explicitly deferred.
-- [ ] Producer rejection is logged/counted without crashing prediction and is never mislabeled as
+- [x] Producer rejection is logged/counted without crashing prediction and is never mislabeled as
       S3 delivery; Firehose delivery and S3 freshness use separate signals.
-- [ ] Local MVP events are atomic newline JSONL; closed-window reads are concurrency-safe.
+- [x] Local MVP events are atomic newline JSONL; closed-window reads are concurrency-safe.
 
 ## Drift monitoring
 

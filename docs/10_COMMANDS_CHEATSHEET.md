@@ -28,7 +28,7 @@ make verify-model
 make verify
 ```
 
-## Phase 03 API
+## Phase 03 API and Phase 04 events
 
 ```bash
 make api
@@ -38,10 +38,12 @@ curl --fail-with-body -H 'Content-Type: application/json' \
   --data @examples/prediction-request.json http://127.0.0.1:8000/v1/predict
 make load-test
 uv run pytest tests/unit tests/contract tests/integration -q
+find artifacts/predictions -maxdepth 1 -type f -name '*.jsonl' -print
 ```
 
-Prediction-event persistence, dashboard, and monitoring commands belong to later phases and are not
-implemented yet.
+Local prediction events are written to active `*.jsonl.open` files and published under final
+`*.jsonl` names only on rotation or clean shutdown; the sink never reopens a closed file. Monitoring
+and dashboard commands belong to later phases and are not implemented yet.
 
 ## Docker
 

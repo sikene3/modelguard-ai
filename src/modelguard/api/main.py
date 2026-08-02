@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import FastAPI, Request, status
@@ -20,7 +21,11 @@ from modelguard.api.routes import router
 from modelguard.core.config import AppEnvironment, Settings, load_settings
 from modelguard.core.logging import StructuredLogger, configure_json_logging
 from modelguard.core.telemetry import ErrorKind, Telemetry, build_telemetry
-from modelguard.inference.events import NoOpPredictionEventSink, PredictionEventSink
+from modelguard.inference.events import (
+    FirehoseClient,
+    PredictionEventSink,
+    build_prediction_event_sink,
+)
 from modelguard.inference.loader import (
     ModelLoader,
     ModelLoadError,
@@ -40,7 +45,10 @@ def create_app(
     telemetry: Telemetry | None = None,
     logger: StructuredLogger | None = None,
     event_sink: PredictionEventSink | None = None,
+    firehose_client: FirehoseClient | None = None,
     request_id_factory: Callable[[], UUID] | None = None,
+    event_id_factory: Callable[[], UUID] | None = None,
+    event_clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """Construct an isolated service instance whose dependencies can be tested directly."""
 
@@ -55,16 +63,28 @@ def create_app(
     )
     resolved_telemetry = telemetry or build_telemetry(resolved_settings)
     resolved_loader = model_loader or VerifiedModelLoader()
+    resolved_event_sink = (
+        event_sink
+        if event_sink is not None
+        else build_prediction_event_sink(
+            resolved_settings,
+            firehose_client=firehose_client,
+        )
+    )
     container = ApiContainer(
         settings=resolved_settings,
         telemetry=resolved_telemetry,
         logger=resolved_logger,
-        event_sink=event_sink or NoOpPredictionEventSink(),
+        event_sink=resolved_event_sink,
         inference_executor=ThreadPoolExecutor(
             max_workers=resolved_settings.api_inference_workers,
             thread_name_prefix="modelguard-inference",
         ),
     )
+    if event_id_factory is not None:
+        container.event_id_factory = event_id_factory
+    if event_clock is not None:
+        container.event_clock = event_clock
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

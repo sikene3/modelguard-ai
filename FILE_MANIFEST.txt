@@ -29,6 +29,7 @@ checklists/PHASE_11.md
 checklists/PHASE_12.md
 checklists/PHASE_13.md
 configs/phase-02-training.json
+contracts/prediction-event-v1.schema.json
 docker/.gitkeep
 docs/00_REVIEW_NOTES.md
 docs/01_EXECUTION_ROADMAP.md
@@ -41,6 +42,7 @@ docs/07_TROUBLESHOOTING.md
 docs/08_AWS_DEPLOYMENT_ORDER.md
 docs/09_AGENT_WORKFLOW.md
 docs/10_COMMANDS_CHEATSHEET.md
+docs/PREDICTION_EVENT_CONTRACT.md
 docs/adr/ADR-001-ecs-over-eks.md
 docs/adr/ADR-002-custom-drift-core.md
 docs/adr/ADR-003-firehose-to-s3.md
@@ -76,6 +78,7 @@ reports/phase-00-architecture-review.md
 reports/phase-01.md
 reports/phase-02.md
 reports/phase-03.md
+reports/phase-04.md
 scripts/bootstrap_repo.sh
 scripts/check_no_secrets.sh
 scripts/load_test_api.py
@@ -129,9 +132,12 @@ templates/PULL_REQUEST_TEMPLATE.md
 tests/conftest.py
 tests/contract/.gitkeep
 tests/contract/test_api_contract_phase03.py
+tests/contract/test_prediction_event_contract_phase04.py
+tests/fixtures/contracts/prediction-event-v1.json
 tests/integration/.gitkeep
 tests/integration/test_api_load_phase03.py
 tests/integration/test_api_phase03.py
+tests/integration/test_prediction_logging_phase04.py
 tests/integration/test_training_workflow_phase02.py
 tests/smoke/test_package_import.py
 tests/unit/test_api_schemas_phase03.py
@@ -139,6 +145,7 @@ tests/unit/test_bundle_phase02.py
 tests/unit/test_data_phase02.py
 tests/unit/test_evaluate_baseline_phase02.py
 tests/unit/test_inference_phase03.py
+tests/unit/test_prediction_events_phase04.py
 tests/unit/test_settings.py
 tests/unit/test_split_pipeline_phase02.py
 tests/unit/test_telemetry_logging_phase03.py

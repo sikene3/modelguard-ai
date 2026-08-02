@@ -5,11 +5,13 @@ fraud-risk model, observable inference, and deterministic drift incident handlin
 
 ## Current status
 
-Phase 03 serves the audited Phase 02 model bundle through a typed FastAPI application. Startup checks
-the exact bundle file set, checksums, strict manifests, schema, lineage, configured version, trusted
-origin, and a smoke prediction before readiness succeeds. Liveness remains available when loading
-fails. Prediction events are still a no-op interface seam; persistence, monitoring, dashboard,
-containers, and AWS deployment remain future-phase work.
+Phase 04 serves the audited model and constructs one versioned, privacy-safe event for each
+successful prediction. A configurable sink persists it to local JSONL, submits it to AWS Firehose,
+or observably drops it in disabled mode. Local writes are single-writer, synced, and atomically
+rotated before monitoring can read them. Firehose retries reuse one immutable newline-JSON record
+and have bounded SDK timeouts; producer acceptance is explicitly not labeled as S3 delivery.
+Prediction requests remain successful when event writing fails. Drift monitoring, dashboard,
+containers, Firehose/Terraform resources, and AWS deployment remain future-phase work.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -128,6 +130,34 @@ one-line JSON and deliberately omit request bodies, query strings, authorization
 values, feature values, filesystem paths, and environment dumps. Uvicorn access logs are disabled
 because they can include query strings.
 
+### Versioned prediction events
+
+Local mode is the default and writes active files under `artifacts/predictions/` with a
+`*.jsonl.open` suffix. Graceful shutdown or explicit rotation publishes final `*.jsonl` files that
+the sink never reopens; monitoring must read only a frozen enumeration of those closed files. Each
+successful prediction
+creates a distinct event UUID and one canonical newline-terminated JSON record containing the
+request UUID, UTC timestamp, complete model/manifest/input-schema identity, the exact approved
+synthetic feature allowlist, score, decision, and the same frozen latency returned by the API.
+
+After stopping the API, inspect and parse the closed local file without tailing an active writer:
+
+```bash
+find artifacts/predictions -maxdepth 1 -type f -name '*.jsonl' -print
+uv run python -c \
+  'import json, pathlib; p=next(pathlib.Path("artifacts/predictions").glob("*.jsonl")); print([json.loads(line)["event_id"] for line in p.open()])'
+```
+
+Set `EVENT_SINK=disabled` only when an intentional, observable drop mode is needed. AWS application
+mode permits `EVENT_SINK=aws` (with `FIREHOSE_STREAM_NAME`) or `disabled`; it rejects local event
+persistence. A successful Firehose `PutRecord` is logged and measured only as producer acceptance.
+GZIP S3 delivery under physical UTC arrival-time date/hour prefixes, native Firehose delivery
+signals, and S3-prefix freshness are downstream contracts and are not claimed by the API.
+
+The complete schema, retry semantics, local rotation rules, Firehose physical contract, and Phase 05
+handoff are documented in
+[`docs/PREDICTION_EVENT_CONTRACT.md`](docs/PREDICTION_EVENT_CONTRACT.md).
+
 The measured local gate uses 100 requests at concurrency 4 and requires at least 25 requests/second,
 zero errors, and p95 latency at most 250 ms:
 
@@ -137,9 +167,9 @@ make load-test
 
 ### AWS access-mode contract
 
-Phase 03 implements the application boundary but does not create AWS clients or infrastructure.
-Every later AWS ALB must use an explicit restricted `ALB_ALLOWED_CIDR`; settings reject a missing,
-world-open, or noncanonical CIDR.
+Phase 03 implements the API access boundary, and Phase 04 adds a lazily constructed, event-only
+Firehose client. Neither phase creates AWS infrastructure. Every later AWS ALB must use an explicit
+restricted `ALB_ALLOWED_CIDR`; settings reject a missing, world-open, or noncanonical CIDR.
 
 - `https_token` requires ALB-provided HTTPS, then checks `Authorization: Bearer` in constant time.
   ECS must inject `PREDICTION_BEARER_TOKEN` from the separately configured pre-created SSM
@@ -178,9 +208,11 @@ curl --fail-with-body \
 
 Copy `.env.example` to `.env` only when local, non-secret overrides are needed. Defaults load without
 AWS credentials or network access. Request bodies are capped at 16 KiB, request admission at 64,
-model inference workers at one, concurrency waiting at one second, the no-op event-sink call at 100
+model inference workers at one, concurrency waiting at one second, the event-write operation at 750
 ms, and graceful shutdown at ten seconds. `make api` also applies Uvicorn connection concurrency,
-keep-alive, and graceful-shutdown bounds. The locked Phase 05 monitoring minimum is
+keep-alive, and graceful-shutdown bounds. Local event persistence is enabled by default. Firehose
+uses explicit 100 ms connect and 200 ms read bounds, two total producer attempts, and a 25 ms base
+retry delay inside that event-write boundary. The locked Phase 05 monitoring minimum is
 `MIN_MONITORING_SAMPLES=500`; small windows will later be classified as insufficient data rather
 than healthy.
 
@@ -189,6 +221,7 @@ than healthy.
 ```text
 src/modelguard/       training, inference, API, configuration, logging, and telemetry packages
 tests/                unit, API contract, integration/load, and smoke test roots
+contracts/            portable versioned JSON Schemas
 scripts/              bootstrap, validation, and safety helpers
 prompts/              phase implementation contracts
 checklists/           phase completion gates

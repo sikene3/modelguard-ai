@@ -222,6 +222,8 @@ freshness heartbeat. The Phase 08 alarm matrix must name a producible source for
 ├── PROJECT_SPEC.md
 ├── ARCHITECTURE.md
 ├── ACCEPTANCE_CRITERIA.md
+├── contracts/
+│   └── prediction-event-v1.schema.json
 ├── pyproject.toml
 ├── uv.lock
 ├── Makefile
