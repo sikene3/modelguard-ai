@@ -96,9 +96,10 @@ values are never logged. None of those values is a metric dimension.
 
 ## Monitoring handoff
 
-Because the S3 path is based on Firehose arrival time rather than payload event time, Phase 05 must
-enumerate every physical UTC hour prefix overlapping the target start through `window_end + grace`,
-freeze that input enumeration, parse/validate events, and then apply the authoritative half-open
-payload filter `event_timestamp in [window_start, window_end)`. Grace delays finalization; it is not
-a claim that individual row lateness was measured. Terraform, Firehose resources, the monitor, and
-alarms remain outside Phase 04.
+Because the S3 path is based on Firehose arrival time rather than payload event time, Phase 05 now
+freezes an injected local or version-pinned S3 input enumeration, parses/validates events, and
+applies the authoritative half-open payload filter
+`event_timestamp in [window_start, window_end)`. Grace delays finalization; it is not a claim that
+individual row lateness was measured. The exact monitoring behavior is documented in
+`docs/MONITORING_CONTRACT.md`; Terraform, Firehose resources, and CloudWatch alarms remain later
+phases.

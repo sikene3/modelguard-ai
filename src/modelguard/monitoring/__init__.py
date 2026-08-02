@@ -1,1 +1,5 @@
-"""Monitoring package reserved for Phase 05."""
+"""Deterministic drift, data-quality, delayed-performance, and report monitoring."""
+
+from modelguard.monitoring.config import MonitoringConfig
+
+__all__ = ["MonitoringConfig"]

@@ -2,8 +2,8 @@
 
 This repository began as an **execution plan, prompt set, and collection of quality gates**. Its
 current status is documented in `README.md`: repository bootstrap, audited training, the typed
-inference API, and versioned prediction-event logging are complete through Phase 04. Drift
-monitoring and later phases have not been implemented.
+inference API, versioned prediction-event logging, and deterministic drift/data-quality/delayed-label
+monitoring are complete through Phase 05. The dashboard and later phases have not been implemented.
 
 ## Correct starting point
 
@@ -18,13 +18,13 @@ make verify
 Then run `make api` in a dedicated terminal. From another terminal, verify `/health/live`,
 `/health/ready`, and multiple `/v1/predict` requests using the exact examples in `README.md`, stop
 the API cleanly, and parse the resulting closed `artifacts/predictions/*.jsonl` file. Then run
-`make load-test`.
+`make load-test` and the explicit baseline/drifted monitor demo in `README.md`.
 
-Reports for Phases 00–04 are stored under `reports/`. Do not begin Phase 05 before reviewing the
-current tree and commit. When it is time to begin Phase 05, use:
+Reports for Phases 00–05 are stored under `reports/`. Do not begin Phase 06 before reviewing the
+current tree and commit. When it is time to begin Phase 06, use:
 
 ```bash
-./scripts/run_phase.sh 05 max
+./scripts/run_phase.sh 06 xhigh
 ```
 
 Read `RUN_ORDER.txt` and `prompts/README.md`. XHigh is the minimum reasoning level, Max is used for

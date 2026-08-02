@@ -93,10 +93,12 @@ class ApiContainer:
         features = request.feature_values()
         try:
             future = self.inference_executor.submit(predictor.predict, features)
-            # Await the worker without polling the event loop. If the requester disconnects, keep
-            # the admission slot until already-running CPU work completes so cancellation cannot
-            # create an unbounded executor backlog.
-            prediction = await asyncio.wrap_future(future)
+            # Inspect the thread-safe concurrent future from the event-loop thread. Polling avoids
+            # depending on a cross-thread loop wakeup after native training-library lifecycles,
+            # while the admission slot still bounds both running and queued inference work.
+            while not future.done():
+                await asyncio.sleep(0.001)
+            prediction = future.result()
         except asyncio.CancelledError:
             if not future.cancel():
                 while not future.done():

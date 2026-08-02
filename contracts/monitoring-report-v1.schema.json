@@ -1,0 +1,1061 @@
+{
+  "$defs": {
+    "BaselineIdentity": {
+      "additionalProperties": false,
+      "description": "Baseline identity derived only from an exactly verified target manifest.",
+      "properties": {
+        "baseline_contract_version": {
+          "const": "modelguard.baseline-profile.v1",
+          "title": "Baseline Contract Version",
+          "type": "string"
+        },
+        "baseline_profile_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Baseline Profile Sha256",
+          "type": "string"
+        },
+        "input_schema_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Schema Sha256",
+          "type": "string"
+        },
+        "training_membership_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Training Membership Sha256",
+          "type": "string"
+        },
+        "training_row_count": {
+          "exclusiveMinimum": 0,
+          "title": "Training Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "baseline_contract_version",
+        "baseline_profile_sha256",
+        "input_schema_sha256",
+        "training_membership_sha256",
+        "training_row_count"
+      ],
+      "title": "BaselineIdentity",
+      "type": "object"
+    },
+    "ClassificationFaults": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicting_event_id_groups": {
+          "minimum": 0,
+          "title": "Conflicting Event Id Groups",
+          "type": "integer"
+        },
+        "conflicting_event_id_records": {
+          "minimum": 0,
+          "title": "Conflicting Event Id Records",
+          "type": "integer"
+        },
+        "conflicting_identity_records": {
+          "minimum": 0,
+          "title": "Conflicting Identity Records",
+          "type": "integer"
+        },
+        "parse_or_schema_failures": {
+          "minimum": 0,
+          "title": "Parse Or Schema Failures",
+          "type": "integer"
+        },
+        "unknown_identity_records": {
+          "minimum": 0,
+          "title": "Unknown Identity Records",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "parse_or_schema_failures",
+        "unknown_identity_records",
+        "conflicting_identity_records",
+        "conflicting_event_id_groups",
+        "conflicting_event_id_records"
+      ],
+      "title": "ClassificationFaults",
+      "type": "object"
+    },
+    "DataQualityAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "rejected_fraction": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Fraction"
+        },
+        "state": {
+          "$ref": "#/$defs/DataQualityState"
+        }
+      },
+      "required": [
+        "state",
+        "reasons"
+      ],
+      "title": "DataQualityAssessment",
+      "type": "object"
+    },
+    "DataQualityReport": {
+      "additionalProperties": false,
+      "properties": {
+        "assessment": {
+          "$ref": "#/$defs/DataQualityAssessment"
+        },
+        "maximum_missingness_delta": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Maximum Missingness Delta",
+          "type": "number"
+        }
+      },
+      "required": [
+        "assessment",
+        "maximum_missingness_delta"
+      ],
+      "title": "DataQualityReport",
+      "type": "object"
+    },
+    "DataQualityState": {
+      "enum": [
+        "valid",
+        "warning",
+        "invalid",
+        "insufficient_data"
+      ],
+      "title": "DataQualityState",
+      "type": "string"
+    },
+    "DriftEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "missingness": {
+          "items": {
+            "$ref": "#/$defs/MissingnessSignal"
+          },
+          "title": "Missingness",
+          "type": "array"
+        },
+        "signals": {
+          "items": {
+            "$ref": "#/$defs/DriftSignal"
+          },
+          "title": "Signals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "signals",
+        "missingness"
+      ],
+      "title": "DriftEvaluation",
+      "type": "object"
+    },
+    "DriftReport": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation": {
+          "$ref": "#/$defs/DriftEvaluation"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/DriftState"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "evaluation"
+      ],
+      "title": "DriftReport",
+      "type": "object"
+    },
+    "DriftSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_proportions": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Baseline Proportions",
+          "type": "array"
+        },
+        "current_proportions": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Current Proportions",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "numeric_psi",
+            "categorical_js_distance",
+            "prediction_psi",
+            "decision_js_distance"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "required": {
+          "const": true,
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/DriftState"
+        },
+        "universe": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Universe",
+          "type": "array"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "state",
+        "reason",
+        "baseline_proportions",
+        "current_proportions",
+        "universe"
+      ],
+      "title": "DriftSignal",
+      "type": "object"
+    },
+    "DriftState": {
+      "enum": [
+        "healthy",
+        "warning",
+        "degraded",
+        "unknown"
+      ],
+      "title": "DriftState",
+      "type": "string"
+    },
+    "EventClassificationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "classified_record_multiset_hash": {
+          "$ref": "#/$defs/HashRecord"
+        },
+        "counts": {
+          "$ref": "#/$defs/RecordCounts"
+        },
+        "faults": {
+          "$ref": "#/$defs/ClassificationFaults"
+        },
+        "frozen_raw_snapshot_hash": {
+          "$ref": "#/$defs/HashRecord"
+        },
+        "max_accepted_event_timestamp": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Max Accepted Event Timestamp"
+        },
+        "observed_event_carried_identities": {
+          "items": {
+            "$ref": "#/$defs/ObservedIdentity"
+          },
+          "title": "Observed Event Carried Identities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "counts",
+        "faults",
+        "frozen_raw_snapshot_hash",
+        "classified_record_multiset_hash",
+        "observed_event_carried_identities",
+        "max_accepted_event_timestamp"
+      ],
+      "title": "EventClassificationSummary",
+      "type": "object"
+    },
+    "EventIdentity": {
+      "additionalProperties": false,
+      "description": "The complete identity carried by every valid prediction event.",
+      "properties": {
+        "bundle_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Bundle Manifest Sha256",
+          "type": "string"
+        },
+        "event_schema_version": {
+          "pattern": "^modelguard\\.prediction-event\\.v[1-9][0-9]*$",
+          "title": "Event Schema Version",
+          "type": "string"
+        },
+        "input_schema_version": {
+          "pattern": "^modelguard\\.input\\.v[1-9][0-9]*$",
+          "title": "Input Schema Version",
+          "type": "string"
+        },
+        "model_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "title": "Model Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_schema_version",
+        "model_version",
+        "bundle_manifest_sha256",
+        "input_schema_version"
+      ],
+      "title": "EventIdentity",
+      "type": "object"
+    },
+    "HashRecord": {
+      "additionalProperties": false,
+      "description": "A digest plus the rules needed to reproduce its identity.",
+      "properties": {
+        "algorithm": {
+          "const": "sha256",
+          "default": "sha256",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "canonicalization_version": {
+          "title": "Canonicalization Version",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "exclusions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclusions",
+          "type": "array"
+        },
+        "ordering": {
+          "title": "Ordering",
+          "type": "string"
+        }
+      },
+      "required": [
+        "digest",
+        "canonicalization_version",
+        "ordering",
+        "exclusions"
+      ],
+      "title": "HashRecord",
+      "type": "object"
+    },
+    "LabelCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicting": {
+          "minimum": 0,
+          "title": "Conflicting",
+          "type": "integer"
+        },
+        "duplicate": {
+          "minimum": 0,
+          "title": "Duplicate",
+          "type": "integer"
+        },
+        "joined": {
+          "minimum": 0,
+          "title": "Joined",
+          "type": "integer"
+        },
+        "missing": {
+          "minimum": 0,
+          "title": "Missing",
+          "type": "integer"
+        },
+        "negative_joined": {
+          "minimum": 0,
+          "title": "Negative Joined",
+          "type": "integer"
+        },
+        "orphan": {
+          "minimum": 0,
+          "title": "Orphan",
+          "type": "integer"
+        },
+        "positive_joined": {
+          "minimum": 0,
+          "title": "Positive Joined",
+          "type": "integer"
+        },
+        "raw": {
+          "minimum": 0,
+          "title": "Raw",
+          "type": "integer"
+        },
+        "rejected": {
+          "minimum": 0,
+          "title": "Rejected",
+          "type": "integer"
+        },
+        "unique_valid": {
+          "minimum": 0,
+          "title": "Unique Valid",
+          "type": "integer"
+        },
+        "unknown_schema_version": {
+          "minimum": 0,
+          "title": "Unknown Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "raw",
+        "rejected",
+        "duplicate",
+        "conflicting",
+        "unique_valid",
+        "joined",
+        "orphan",
+        "missing",
+        "positive_joined",
+        "negative_joined",
+        "unknown_schema_version"
+      ],
+      "title": "LabelCounts",
+      "type": "object"
+    },
+    "LabeledPerformanceMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "ap_lift": {
+          "minimum": 0.0,
+          "title": "Ap Lift",
+          "type": "number"
+        },
+        "average_precision": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Average Precision",
+          "type": "number"
+        },
+        "brier_score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Brier Score",
+          "type": "number"
+        },
+        "confusion_counts": {
+          "$ref": "#/$defs/PerformanceConfusionCounts"
+        },
+        "evaluation_scope": {
+          "const": "labeled_subset_only",
+          "default": "labeled_subset_only",
+          "title": "Evaluation Scope",
+          "type": "string"
+        },
+        "f1": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "F1",
+          "type": "number"
+        },
+        "held_out_synthetic_reference_cost_per_event": {
+          "minimum": 0.0,
+          "title": "Held Out Synthetic Reference Cost Per Event",
+          "type": "number"
+        },
+        "log_loss": {
+          "minimum": 0.0,
+          "title": "Log Loss",
+          "type": "number"
+        },
+        "policy_description": {
+          "const": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
+          "default": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
+          "title": "Policy Description",
+          "type": "string"
+        },
+        "precision": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Precision",
+          "type": "number"
+        },
+        "prevalence": {
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Prevalence",
+          "type": "number"
+        },
+        "recall": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Recall",
+          "type": "number"
+        },
+        "roc_auc": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Roc Auc",
+          "type": "number"
+        },
+        "row_count": {
+          "exclusiveMinimum": 0,
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "synthetic_cost": {
+          "minimum": 0,
+          "title": "Synthetic Cost",
+          "type": "integer"
+        },
+        "synthetic_cost_delta": {
+          "title": "Synthetic Cost Delta",
+          "type": "number"
+        },
+        "synthetic_cost_per_event": {
+          "minimum": 0.0,
+          "title": "Synthetic Cost Per Event",
+          "type": "number"
+        },
+        "threshold": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Threshold",
+          "type": "number"
+        }
+      },
+      "required": [
+        "row_count",
+        "threshold",
+        "average_precision",
+        "prevalence",
+        "ap_lift",
+        "roc_auc",
+        "brier_score",
+        "log_loss",
+        "precision",
+        "recall",
+        "f1",
+        "confusion_counts",
+        "synthetic_cost",
+        "synthetic_cost_per_event",
+        "held_out_synthetic_reference_cost_per_event",
+        "synthetic_cost_delta"
+      ],
+      "title": "LabeledPerformanceMetrics",
+      "type": "object"
+    },
+    "MissingnessSignal": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute_delta": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Absolute Delta",
+          "type": "number"
+        },
+        "baseline_rate": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Baseline Rate",
+          "type": "number"
+        },
+        "current_rate": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Current Rate",
+          "type": "number"
+        },
+        "feature": {
+          "title": "Feature",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "valid",
+            "warning",
+            "invalid"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feature",
+        "baseline_rate",
+        "current_rate",
+        "absolute_delta",
+        "state"
+      ],
+      "title": "MissingnessSignal",
+      "type": "object"
+    },
+    "MonitoringIdentities": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_derived_from_verified_manifest": {
+          "$ref": "#/$defs/BaselineIdentity"
+        },
+        "event_carried_target": {
+          "$ref": "#/$defs/EventIdentity"
+        },
+        "known_non_target_identities": {
+          "items": {
+            "$ref": "#/$defs/EventIdentity"
+          },
+          "title": "Known Non Target Identities",
+          "type": "array"
+        },
+        "monitoring_config_hash": {
+          "$ref": "#/$defs/HashRecord"
+        },
+        "monitoring_config_version": {
+          "const": "modelguard.monitoring-config.v1",
+          "title": "Monitoring Config Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_carried_target",
+        "baseline_derived_from_verified_manifest",
+        "monitoring_config_version",
+        "monitoring_config_hash",
+        "known_non_target_identities"
+      ],
+      "title": "MonitoringIdentities",
+      "type": "object"
+    },
+    "MonitoringStates": {
+      "additionalProperties": false,
+      "properties": {
+        "data_quality": {
+          "$ref": "#/$defs/DataQualityState"
+        },
+        "drift": {
+          "$ref": "#/$defs/DriftState"
+        },
+        "performance": {
+          "$ref": "#/$defs/PerformanceState"
+        },
+        "run": {
+          "$ref": "#/$defs/RunState"
+        }
+      },
+      "required": [
+        "run",
+        "data_quality",
+        "drift",
+        "performance"
+      ],
+      "title": "MonitoringStates",
+      "type": "object"
+    },
+    "MonitoringWindow": {
+      "additionalProperties": false,
+      "description": "One finalized UTC event-time half-open window.",
+      "properties": {
+        "delivery_lateness_metric": {
+          "const": "not_claimed",
+          "default": "not_claimed",
+          "title": "Delivery Lateness Metric",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Duration Seconds",
+          "type": "integer"
+        },
+        "eligible_at": {
+          "format": "date-time",
+          "title": "Eligible At",
+          "type": "string"
+        },
+        "end": {
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        },
+        "finalization_grace_seconds": {
+          "minimum": 0,
+          "title": "Finalization Grace Seconds",
+          "type": "integer"
+        },
+        "semantics": {
+          "const": "event_time_utc_half_open_[start,end)",
+          "default": "event_time_utc_half_open_[start,end)",
+          "title": "Semantics",
+          "type": "string"
+        },
+        "start": {
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "duration_seconds",
+        "finalization_grace_seconds",
+        "eligible_at"
+      ],
+      "title": "MonitoringWindow",
+      "type": "object"
+    },
+    "ObservedIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "enum": [
+            "target",
+            "known_non_target",
+            "unknown",
+            "conflicting"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "count": {
+          "exclusiveMinimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "identity": {
+          "$ref": "#/$defs/EventIdentity"
+        }
+      },
+      "required": [
+        "identity",
+        "count",
+        "classification"
+      ],
+      "title": "ObservedIdentity",
+      "type": "object"
+    },
+    "PerformanceConfusionCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "false_negatives": {
+          "minimum": 0,
+          "title": "False Negatives",
+          "type": "integer"
+        },
+        "false_positives": {
+          "minimum": 0,
+          "title": "False Positives",
+          "type": "integer"
+        },
+        "true_negatives": {
+          "minimum": 0,
+          "title": "True Negatives",
+          "type": "integer"
+        },
+        "true_positives": {
+          "minimum": 0,
+          "title": "True Positives",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "true_negatives",
+        "false_positives",
+        "false_negatives",
+        "true_positives"
+      ],
+      "title": "PerformanceConfusionCounts",
+      "type": "object"
+    },
+    "PerformanceEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "adequacy_requirements": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "title": "Adequacy Requirements",
+          "type": "object"
+        },
+        "counts": {
+          "$ref": "#/$defs/LabelCounts"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage"
+        },
+        "interpretation": {
+          "const": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
+          "default": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
+          "title": "Interpretation",
+          "type": "string"
+        },
+        "label_record_multiset_hash": {
+          "$ref": "#/$defs/HashRecord"
+        },
+        "label_schema_version": {
+          "const": "modelguard.label.v1",
+          "title": "Label Schema Version",
+          "type": "string"
+        },
+        "label_source_configured": {
+          "title": "Label Source Configured",
+          "type": "boolean"
+        },
+        "limitation": {
+          "const": "partial-label selection bias may make the labeled subset unrepresentative",
+          "default": "partial-label selection bias may make the labeled subset unrepresentative",
+          "title": "Limitation",
+          "type": "string"
+        },
+        "metrics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LabeledPerformanceMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/PerformanceState"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "label_source_configured",
+        "label_schema_version",
+        "counts",
+        "adequacy_requirements",
+        "label_record_multiset_hash",
+        "metrics"
+      ],
+      "title": "PerformanceEvaluation",
+      "type": "object"
+    },
+    "PerformanceState": {
+      "enum": [
+        "healthy",
+        "warning",
+        "degraded",
+        "pending_labels",
+        "unknown"
+      ],
+      "title": "PerformanceState",
+      "type": "string"
+    },
+    "RecordCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_target": {
+          "minimum": 0,
+          "title": "Accepted Target",
+          "type": "integer"
+        },
+        "duplicate": {
+          "minimum": 0,
+          "title": "Duplicate",
+          "type": "integer"
+        },
+        "known_non_target": {
+          "minimum": 0,
+          "title": "Known Non Target",
+          "type": "integer"
+        },
+        "outside_window": {
+          "minimum": 0,
+          "title": "Outside Window",
+          "type": "integer"
+        },
+        "raw": {
+          "minimum": 0,
+          "title": "Raw",
+          "type": "integer"
+        },
+        "rejected": {
+          "minimum": 0,
+          "title": "Rejected",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "raw",
+        "rejected",
+        "outside_window",
+        "known_non_target",
+        "duplicate",
+        "accepted_target"
+      ],
+      "title": "RecordCounts",
+      "type": "object"
+    },
+    "ReportIdentityContract": {
+      "additionalProperties": false,
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/HashRecord"
+        },
+        "label_digest_count": {
+          "minimum": 0,
+          "title": "Label Digest Count",
+          "type": "integer"
+        },
+        "selected_record_digest_count": {
+          "minimum": 0,
+          "title": "Selected Record Digest Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hash",
+        "selected_record_digest_count",
+        "label_digest_count"
+      ],
+      "title": "ReportIdentityContract",
+      "type": "object"
+    },
+    "RunState": {
+      "enum": [
+        "never_run",
+        "succeeded",
+        "failed",
+        "stale"
+      ],
+      "title": "RunState",
+      "type": "string"
+    }
+  },
+  "$id": "https://modelguard.example/contracts/monitoring-report-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One immutable successful monitoring result with four independent states.",
+  "properties": {
+    "data_quality": {
+      "$ref": "#/$defs/DataQualityReport"
+    },
+    "drift": {
+      "$ref": "#/$defs/DriftReport"
+    },
+    "identities": {
+      "$ref": "#/$defs/MonitoringIdentities"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "performance": {
+      "$ref": "#/$defs/PerformanceEvaluation"
+    },
+    "records": {
+      "$ref": "#/$defs/EventClassificationSummary"
+    },
+    "report_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "report_identity": {
+      "$ref": "#/$defs/ReportIdentityContract"
+    },
+    "report_schema_version": {
+      "const": "modelguard.monitoring-report.v1",
+      "default": "modelguard.monitoring-report.v1",
+      "title": "Report Schema Version",
+      "type": "string"
+    },
+    "states": {
+      "$ref": "#/$defs/MonitoringStates"
+    },
+    "window": {
+      "$ref": "#/$defs/MonitoringWindow"
+    }
+  },
+  "required": [
+    "report_id",
+    "report_identity",
+    "window",
+    "identities",
+    "states",
+    "records",
+    "data_quality",
+    "drift",
+    "performance",
+    "limitations"
+  ],
+  "title": "MonitoringReport",
+  "type": "object"
+}

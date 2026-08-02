@@ -202,14 +202,26 @@ async def _run_serial_worker[ResultT](
     except Exception:
         worker_gate.release()
         raise
-    future.add_done_callback(lambda _: worker_gate.release())
+    release_when_done = False
     try:
-        return await asyncio.wrap_future(future)
+        # Polling avoids depending on a cross-thread event-loop wakeup. Some model-training/native
+        # library lifecycles can leave that wakeup path unreliable, while the concurrent future's
+        # completion state remains safe to inspect from the event-loop thread.
+        while not future.done():
+            await asyncio.sleep(0.001)
+        return future.result()
     except asyncio.CancelledError:
         # A running thread cannot be force-stopped. Leave it as the sole in-flight operation; the
         # gate makes later writes fail fast instead of growing the executor queue.
+        release_when_done = True
+        future.add_done_callback(lambda _: worker_gate.release())
         future.cancel()
         raise
+    finally:
+        # Normal completion (including a worker exception) releases on the event-loop thread. This
+        # avoids relying on a cross-thread done callback before the awaiting coroutine can proceed.
+        if not release_when_done:
+            worker_gate.release()
 
 
 async def _wait_for_serial_worker(worker_gate: BoundedSemaphore) -> None:

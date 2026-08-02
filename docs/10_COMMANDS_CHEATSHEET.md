@@ -42,8 +42,25 @@ find artifacts/predictions -maxdepth 1 -type f -name '*.jsonl' -print
 ```
 
 Local prediction events are written to active `*.jsonl.open` files and published under final
-`*.jsonl` names only on rotation or clean shutdown; the sink never reopens a closed file. Monitoring
-and dashboard commands belong to later phases and are not implemented yet.
+`*.jsonl` names only on rotation or clean shutdown; the sink never reopens a closed file.
+
+## Phase 05 deterministic monitoring
+
+```bash
+uv run python scripts/generate_monitoring_fixture.py \
+  --scenario baseline --window-end 2026-01-01T01:00:00Z
+uv run python -m modelguard.monitoring.cli run \
+  --window-end 2026-01-01T01:00:00Z --as-of 2026-01-01T01:10:00Z
+uv run python scripts/generate_monitoring_fixture.py \
+  --scenario drifted --window-end 2026-01-01T02:00:00Z
+uv run python -m modelguard.monitoring.cli run \
+  --window-end 2026-01-01T02:00:00Z --as-of 2026-01-01T02:10:00Z
+make export-monitor-schema
+make monitor-status MONITOR_AS_OF=2026-01-01T04:10:00Z
+```
+
+Generated monitoring history/latest/run-status/alert artifacts live under ignored
+`artifacts/reports/`. The dashboard remains a later phase.
 
 ## Docker
 

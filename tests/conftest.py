@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from uuid import UUID
 
 import pandas as pd
 import pytest
@@ -11,6 +13,10 @@ from sklearn.calibration import CalibratedClassifierCV
 
 from modelguard.core.config import AppEnvironment, Settings
 from modelguard.core.serialization import write_json
+from modelguard.inference.events import ApprovedSyntheticFeaturesV1, PredictionEventV1
+from modelguard.inference.predictor import RiskDecision
+from modelguard.monitoring.events import EventIdentity, target_identity_from_bundle
+from modelguard.training.bundle import ValidatedBundleMetadata, inspect_bundle
 from modelguard.training.config import TrainingConfig, load_training_config
 from modelguard.training.pipeline import predict_positive_scores
 from modelguard.training.workflow import (
@@ -74,6 +80,53 @@ class AuditedWorkspace:
     result: TrainingResult
     stage_events: tuple[str, ...]
     score_calls: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]
+
+
+@pytest.fixture
+def monitoring_metadata(audited_workspace: AuditedWorkspace) -> ValidatedBundleMetadata:
+    return inspect_bundle(audited_workspace.result.bundle_path)
+
+
+@pytest.fixture
+def monitoring_target(monitoring_metadata: ValidatedBundleMetadata) -> EventIdentity:
+    return target_identity_from_bundle(monitoring_metadata)
+
+
+@pytest.fixture
+def monitoring_event_factory(
+    valid_prediction_payload: dict[str, object],
+    monitoring_target: EventIdentity,
+) -> object:
+    """Create strict deterministic events while allowing identity/time/ID overrides."""
+
+    def factory(
+        index: int,
+        timestamp: datetime,
+        *,
+        identity: EventIdentity = monitoring_target,
+        event_id: UUID | None = None,
+        score: float = 0.2,
+        features: dict[str, object] | None = None,
+        decision: RiskDecision | None = None,
+    ) -> PredictionEventV1:
+        return PredictionEventV1(
+            event_schema_version=identity.event_schema_version,
+            event_id=event_id or UUID(int=index + 1),
+            request_id=UUID(int=10_000 + index),
+            event_timestamp=timestamp,
+            model_version=identity.model_version,
+            bundle_manifest_sha256=identity.bundle_manifest_sha256,
+            input_schema_version=identity.input_schema_version,
+            features=ApprovedSyntheticFeaturesV1.model_validate(
+                features or valid_prediction_payload
+            ),
+            score=score,
+            decision=decision
+            or (RiskDecision.HIGH_RISK if score >= 0.075 else RiskDecision.LOW_RISK),
+            latency_ms=1.0,
+        )
+
+    return factory
 
 
 @pytest.fixture(scope="session")

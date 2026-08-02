@@ -8,6 +8,9 @@ export UV_CACHE_DIR
 PIP_AUDIT_CACHE_DIR ?= .cache/pip-audit
 PIP_AUDIT_REQUIREMENTS ?= .cache/audit-requirements.txt
 TRAINING_CONFIG ?= configs/phase-02-training.json
+MONITORING_CONFIG ?= configs/phase-05-monitoring.json
+MONITOR_WINDOW_END ?=
+MONITOR_AS_OF ?=
 TRAINING_OUTPUT_ROOT ?= artifacts
 MODEL_VERSION ?= 1.0.0
 MODEL_BUNDLE ?= $(TRAINING_OUTPUT_ROOT)/model-bundles/$(MODEL_VERSION)
@@ -20,7 +23,7 @@ API_KEEP_ALIVE_SECONDS ?= 5
 LOAD_REQUESTS ?= 100
 LOAD_CONCURRENCY ?= 4
 
-.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test verify clean
+.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -35,6 +38,9 @@ help:
 	@echo "  make verify-model   Verify bundle and run one trusted local smoke prediction"
 	@echo "  make api         Start the bounded local FastAPI service"
 	@echo "  make load-test   Measure a running local API against Phase 03 targets"
+	@echo "  make export-monitor-schema  Re-export the strict Phase 05 report JSON Schema"
+	@echo "  make monitor      Run one explicit finalized window (MONITOR_WINDOW_END/MONITOR_AS_OF)"
+	@echo "  make monitor-status  Read run health at explicit MONITOR_AS_OF"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
 
 setup:
@@ -94,6 +100,21 @@ load-test:
 	$(UV_RUN) python scripts/load_test_api.py \
 		--url "http://$(API_HOST):$(API_PORT)" \
 		--requests "$(LOAD_REQUESTS)" --concurrency "$(LOAD_CONCURRENCY)"
+
+export-monitor-schema:
+	$(UV_RUN) python scripts/export_monitoring_report_schema.py \
+		--output contracts/monitoring-report-v1.schema.json
+
+monitor:
+	@test -n "$(MONITOR_WINDOW_END)" || { echo "MONITOR_WINDOW_END is required (UTC ...Z)" >&2; exit 2; }
+	@test -n "$(MONITOR_AS_OF)" || { echo "MONITOR_AS_OF is required (UTC ...Z)" >&2; exit 2; }
+	$(UV_RUN) python -m modelguard.monitoring.cli run \
+		--config "$(MONITORING_CONFIG)" --window-end "$(MONITOR_WINDOW_END)" \
+		--as-of "$(MONITOR_AS_OF)"
+
+monitor-status:
+	@test -n "$(MONITOR_AS_OF)" || { echo "MONITOR_AS_OF is required (UTC ...Z)" >&2; exit 2; }
+	$(UV_RUN) python -m modelguard.monitoring.cli status --as-of "$(MONITOR_AS_OF)"
 
 verify: lint typecheck test security verify-model
 

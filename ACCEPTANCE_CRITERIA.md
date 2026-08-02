@@ -46,19 +46,19 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 
 ## Drift monitoring
 
-- [ ] Repeated stationary traffic remains healthy at a sufficient sample size.
-- [ ] Injected drift reliably triggers warning/degraded status.
-- [ ] Small samples produce `insufficient_data`.
-- [ ] JSON report validates against a documented schema.
-- [ ] HTML report is generated and readable.
-- [ ] Monitor does not claim accuracy degradation without labels.
-- [ ] State transitions are deduplicated to prevent repeated alert spam.
-- [ ] UTC windows/finalization grace/frozen snapshots/target identity/dedup are tested, including
+- [x] Repeated stationary traffic remains healthy at a sufficient sample size.
+- [x] Injected drift reliably triggers warning/degraded status.
+- [x] Small samples produce `insufficient_data`.
+- [x] JSON report validates against a documented schema.
+- [x] HTML report is generated and readable.
+- [x] Monitor does not claim accuracy degradation without labels.
+- [x] State transitions are deduplicated to prevent repeated alert spam.
+- [x] UTC windows/finalization grace/frozen snapshots/target identity/dedup are tested, including
       exact `raw = rejected + outside_window + known_non_target + duplicate + accepted_target`.
-- [ ] Run/data-quality/drift/performance states are independent; performance is label-backed only.
-- [ ] Adequate-label performance state uses the versioned locked-threshold synthetic-cost delta
+- [x] Run/data-quality/drift/performance states are independent; performance is label-backed only.
+- [x] Adequate-label performance state uses the versioned locked-threshold synthetic-cost delta
       policy; all public wording limits conclusions to the labeled subset and synthetic reference.
-- [ ] Report identity is independent of enumeration/file boundaries; immutable history, monotonic
+- [x] Report identity is independent of enumeration/file boundaries; immutable history, monotonic
       latest status, restart safety, and conditional alert deduplication are tested.
 
 ## Dashboard

@@ -5,13 +5,13 @@ fraud-risk model, observable inference, and deterministic drift incident handlin
 
 ## Current status
 
-Phase 04 serves the audited model and constructs one versioned, privacy-safe event for each
-successful prediction. A configurable sink persists it to local JSONL, submits it to AWS Firehose,
-or observably drops it in disabled mode. Local writes are single-writer, synced, and atomically
-rotated before monitoring can read them. Firehose retries reuse one immutable newline-JSON record
-and have bounded SDK timeouts; producer acceptance is explicitly not labeled as S3 delivery.
-Prediction requests remain successful when event writing fails. Drift monitoring, dashboard,
-containers, Firehose/Terraform resources, and AWS deployment remain future-phase work.
+Phase 05 adds deterministic monitoring over the Phase 04 event stream. It freezes one explicit UTC
+window and exact model/manifest/schema identity, reconciles every raw row into an exclusive class,
+evaluates frozen-bin PSI/JS drift and separate missingness, optionally joins strict delayed labels,
+and publishes immutable JSON plus escaped offline HTML. Run health, data quality, drift, and
+label-backed performance remain four independent states. Stationary traffic stays healthy, shifted
+traffic degrades drift, tiny windows are insufficient/unknown, and absent labels keep performance
+unknown. Dashboard, containers, Firehose/Terraform resources, and deployment remain future phases.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -158,6 +158,37 @@ The complete schema, retry semantics, local rotation rules, Firehose physical co
 handoff are documented in
 [`docs/PREDICTION_EVENT_CONTRACT.md`](docs/PREDICTION_EVENT_CONTRACT.md).
 
+## Deterministic monitoring
+
+After the verified bundle exists, generate and finalize explicit stationary and shifted windows:
+
+```bash
+uv run python scripts/generate_monitoring_fixture.py \
+  --scenario baseline --window-end 2026-01-01T01:00:00Z
+uv run python -m modelguard.monitoring.cli run \
+  --window-end 2026-01-01T01:00:00Z --as-of 2026-01-01T01:10:00Z
+uv run python scripts/generate_monitoring_fixture.py \
+  --scenario drifted --window-end 2026-01-01T02:00:00Z
+uv run python -m modelguard.monitoring.cli run \
+  --window-end 2026-01-01T02:00:00Z --as-of 2026-01-01T02:10:00Z
+```
+
+The CLI prints the independent states, report ID, immutable JSON/HTML paths, checksums, and whether
+the newer-window-only `latest.json` pointer advanced. The default paths are
+`artifacts/predictions/` and `artifacts/reports/`. Tests pass all four `--target-*` fields explicitly;
+the quickstart convenience derives and freezes the same exact tuple from the verified bundle.
+
+The monitor uses `[start,end)` event time, a ten-minute finalization grace, and no row-level
+delivery-lateness claim. The minimum is 500 accepted target events. No label source means
+performance `unknown`; a configured inadequate source is `pending_labels`; only adequate strict v1
+labels compute metrics and vote using the locked synthetic-cost delta. Drift never stands in for
+accuracy or performance.
+
+The full math, classification/state precedence, label contract, report identity exclusions,
+conditional alert semantics, and AWS injected boundaries are documented in
+[docs/MONITORING_CONTRACT.md](docs/MONITORING_CONTRACT.md). The portable report schema is
+[contracts/monitoring-report-v1.schema.json](contracts/monitoring-report-v1.schema.json).
+
 The measured local gate uses 100 requests at concurrency 4 and requires at least 25 requests/second,
 zero errors, and p95 latency at most 250 ms:
 
@@ -213,21 +244,21 @@ ms, and graceful shutdown at ten seconds. `make api` also applies Uvicorn connec
 keep-alive, and graceful-shutdown bounds. Local event persistence is enabled by default. Firehose
 uses explicit 100 ms connect and 200 ms read bounds, two total producer attempts, and a 25 ms base
 retry delay inside that event-write boundary. The locked Phase 05 monitoring minimum is
-`MIN_MONITORING_SAMPLES=500`; small windows will later be classified as insufficient data rather
+`MIN_MONITORING_SAMPLES=500`; small windows are classified as insufficient data rather
 than healthy.
 
 ## Repository layout
 
 ```text
-src/modelguard/       training, inference, API, configuration, logging, and telemetry packages
-tests/                unit, API contract, integration/load, and smoke test roots
+src/modelguard/       training, inference, API, deterministic monitoring, and telemetry packages
+tests/                unit, contract, integration/load/monitoring, and smoke test roots
 contracts/            portable versioned JSON Schemas
 scripts/              bootstrap, validation, and safety helpers
 prompts/              phase implementation contracts
 checklists/           phase completion gates
 reports/              phase evidence reports
 artifacts/            ignored generated datasets, evidence, and immutable local bundles
-configs/              committed versioned training behavior
+configs/              committed versioned training and monitoring behavior
 mlruns/               ignored local MLflow file store created by Phase 02
 ```
 
