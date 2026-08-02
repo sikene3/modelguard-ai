@@ -22,8 +22,10 @@ API_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS ?= 10
 API_KEEP_ALIVE_SECONDS ?= 5
 LOAD_REQUESTS ?= 100
 LOAD_CONCURRENCY ?= 4
+DASHBOARD_HOST ?= 127.0.0.1
+DASHBOARD_PORT ?= 8501
 
-.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status verify clean
+.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -41,6 +43,7 @@ help:
 	@echo "  make export-monitor-schema  Re-export the strict Phase 05 report JSON Schema"
 	@echo "  make monitor      Run one explicit finalized window (MONITOR_WINDOW_END/MONITOR_AS_OF)"
 	@echo "  make monitor-status  Read run health at explicit MONITOR_AS_OF"
+	@echo "  make dashboard    Start the read-only local Streamlit operations dashboard"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
 
 setup:
@@ -115,6 +118,11 @@ monitor:
 monitor-status:
 	@test -n "$(MONITOR_AS_OF)" || { echo "MONITOR_AS_OF is required (UTC ...Z)" >&2; exit 2; }
 	$(UV_RUN) python -m modelguard.monitoring.cli status --as-of "$(MONITOR_AS_OF)"
+
+dashboard:
+	$(UV_RUN) streamlit run src/modelguard/dashboard/app.py \
+		--server.address "$(DASHBOARD_HOST)" --server.port "$(DASHBOARD_PORT)" \
+		--server.headless true --browser.gatherUsageStats false
 
 verify: lint typecheck test security verify-model
 

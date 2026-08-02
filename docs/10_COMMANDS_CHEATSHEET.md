@@ -60,7 +60,19 @@ make monitor-status MONITOR_AS_OF=2026-01-01T04:10:00Z
 ```
 
 Generated monitoring history/latest/run-status/alert artifacts live under ignored
-`artifacts/reports/`. The dashboard remains a later phase.
+`artifacts/reports/`.
+
+## Phase 06 operations dashboard
+
+```bash
+make dashboard
+uv run pytest tests/unit/test_dashboard_repository_parsing_phase06.py -q
+uv run pytest tests/smoke/test_dashboard_startup_phase06.py -q
+```
+
+Local mode opens at `http://127.0.0.1:8501` and reads only the configured model/report/policy
+artifacts. S3 mode requires private model/report buckets and returns a short-lived HTTPS report
+download rather than a public object URL.
 
 ## Docker
 

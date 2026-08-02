@@ -63,11 +63,11 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 
 ## Dashboard
 
-- [ ] Shows separate run/data-quality/drift/performance status and timestamp.
-- [ ] Shows active model identity separately from report target identity and accepted target volume.
-- [ ] Shows top drifting features and distributions.
-- [ ] Handles missing/stale reports honestly.
-- [ ] Loads from local storage and S3 through the same repository interface.
+- [x] Shows separate run/data-quality/drift/performance status and timestamp.
+- [x] Shows active model identity separately from report target identity and accepted target volume.
+- [x] Shows top drifting features and distributions.
+- [x] Handles missing/stale reports honestly.
+- [x] Loads from local storage and S3 through the same repository interface.
 
 ## Containers and local integration
 

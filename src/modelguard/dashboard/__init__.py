@@ -1,1 +1,1 @@
-"""Dashboard package reserved for Phase 06."""
+"""Read-only Streamlit operations dashboard and artifact repositories."""

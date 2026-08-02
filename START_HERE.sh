@@ -10,14 +10,15 @@ make test
 
 cat <<'EOF'
 
-ModelGuard AI is implemented through Phase 04 versioned prediction-event logging.
+ModelGuard AI is implemented through Phase 06 read-only operations dashboard.
 
 Recommended next action:
 1. On a clean clone, run: make train
 2. In one terminal run: make api
-3. Send multiple predictions, stop cleanly, and parse artifacts/predictions/*.jsonl
-4. Run: make load-test && make verify
-5. Review reports/phase-04.md before beginning Phase 05.
+3. Send predictions, stop cleanly, and finalize explicit healthy/drifted monitor windows
+4. In another terminal run: make dashboard
+5. Run: make load-test && make verify
+6. Review reports/phase-06.md before beginning Phase 07.
 
-Drift monitoring and later product phases are not implemented yet.
+Containers and later AWS/delivery phases are not implemented yet.
 EOF

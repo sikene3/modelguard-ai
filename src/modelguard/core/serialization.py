@@ -77,14 +77,24 @@ def _reject_non_finite_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
-def load_strict_json(path: Path) -> Any:
-    """Parse JSON while rejecting duplicate keys and NaN/Infinity extensions."""
+def parse_strict_json_bytes(payload: bytes) -> Any:
+    """Parse UTF-8 JSON while rejecting duplicate keys and non-finite extensions."""
 
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("JSON artifact must be valid UTF-8") from error
     return json.loads(
-        path.read_text(encoding="utf-8"),
+        text,
         object_pairs_hook=_reject_duplicate_keys,
         parse_constant=_reject_non_finite_constant,
     )
+
+
+def load_strict_json(path: Path) -> Any:
+    """Parse JSON while rejecting duplicate keys and NaN/Infinity extensions."""
+
+    return parse_strict_json_bytes(path.read_bytes())
 
 
 def load_json_model[ArtifactModelT: StrictArtifactModel](

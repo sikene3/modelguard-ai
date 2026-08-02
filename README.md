@@ -5,13 +5,14 @@ fraud-risk model, observable inference, and deterministic drift incident handlin
 
 ## Current status
 
-Phase 05 adds deterministic monitoring over the Phase 04 event stream. It freezes one explicit UTC
-window and exact model/manifest/schema identity, reconciles every raw row into an exclusive class,
-evaluates frozen-bin PSI/JS drift and separate missingness, optionally joins strict delayed labels,
-and publishes immutable JSON plus escaped offline HTML. Run health, data quality, drift, and
-label-backed performance remain four independent states. Stationary traffic stays healthy, shifted
-traffic degrades drift, tiny windows are insufficient/unknown, and absent labels keep performance
-unknown. Dashboard, containers, Firehose/Terraform resources, and deployment remain future phases.
+Phase 06 adds a compact, read-only Streamlit operations dashboard over the deterministic Phase 05
+artifacts. It validates strict report/run-status/model-manifest contracts, displays the configured
+active and report-target identities separately, preserves independent
+run/data-quality/drift/performance states, and shows exact reconciliation, distribution evidence,
+and identity-comparable report-backed trends. Missing, malformed, stale, insufficient, unknown, and
+pending-label evidence is never converted into a
+healthy or performance claim. Local files and private S3 use one injected repository interface;
+containers, Firehose/Terraform resources, and deployment remain future phases.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -189,6 +190,41 @@ conditional alert semantics, and AWS injected boundaries are documented in
 [docs/MONITORING_CONTRACT.md](docs/MONITORING_CONTRACT.md). The portable report schema is
 [contracts/monitoring-report-v1.schema.json](contracts/monitoring-report-v1.schema.json).
 
+## Read-only operations dashboard
+
+After at least one local monitoring report exists, start Streamlit in a dedicated terminal:
+
+```bash
+make dashboard
+```
+
+Open `http://127.0.0.1:8501`. The page takes one actual UTC snapshot on each Streamlit rerun and
+shows the persisted report completion timestamp, report age, window age, and accepted-event age. It
+does not call itself real-time and does not reinterpret distribution drift as accuracy or model
+performance.
+
+The dashboard includes:
+
+- separate run, data-quality, drift, and label-backed performance cards;
+- the configured active model identity beside the immutable report target identity;
+- event/input-schema, baseline, configuration, window, and report identities;
+- exact `raw = rejected + outside_window + known_non_target + duplicate + accepted_target` counts;
+- monitor-computed top feature scores/states and exact policy thresholds only when the policy hash
+  matches the report;
+- numeric/categorical baseline-versus-window distributions and prediction score/decision history
+  restricted to reports with matching target, baseline, and policy identities;
+- an offline HTML download in local mode, or a short-lived HTTPS presigned download in S3 mode.
+
+Local mode reads `MODEL_BUNDLE_PATH`, `LOCAL_REPORT_DIR`, and `MONITORING_CONFIG_PATH`. AWS mode is
+an implementation boundary only in Phase 06: set `DASHBOARD_REPOSITORY=s3`, `MODEL_BUCKET`, and
+`REPORT_BUCKET`; injected fake-client tests prove the same read contract without network calls.
+Phase 08 must wire private-bucket IAM and persist `monitoring/run-status.json` alongside the existing
+report keys before claiming deployed AWS run health. The dashboard never makes report buckets
+public and never stores or logs a generated presigned URL.
+
+The complete evidence/claim boundary is documented in
+[docs/DASHBOARD_CONTRACT.md](docs/DASHBOARD_CONTRACT.md).
+
 The measured local gate uses 100 requests at concurrency 4 and requires at least 25 requests/second,
 zero errors, and p95 latency at most 250 ms:
 
@@ -245,12 +281,13 @@ keep-alive, and graceful-shutdown bounds. Local event persistence is enabled by 
 uses explicit 100 ms connect and 200 ms read bounds, two total producer attempts, and a 25 ms base
 retry delay inside that event-write boundary. The locked Phase 05 monitoring minimum is
 `MIN_MONITORING_SAMPLES=500`; small windows are classified as insufficient data rather
-than healthy.
+than healthy. Dashboard JSON/HTML reads are size-bounded; S3 reads use short client timeouts and
+private report links expire after five minutes by default.
 
 ## Repository layout
 
 ```text
-src/modelguard/       training, inference, API, deterministic monitoring, and telemetry packages
+src/modelguard/       training, inference, API, monitoring, dashboard, and telemetry packages
 tests/                unit, contract, integration/load/monitoring, and smoke test roots
 contracts/            portable versioned JSON Schemas
 scripts/              bootstrap, validation, and safety helpers

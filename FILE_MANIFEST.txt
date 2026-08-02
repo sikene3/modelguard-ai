@@ -3,6 +3,7 @@
 .github/workflows/.gitkeep
 .gitignore
 .python-version
+.streamlit/config.toml
 ACCEPTANCE_CRITERIA.md
 AGENTS.md
 ARCHITECTURE.md
@@ -44,6 +45,7 @@ docs/07_TROUBLESHOOTING.md
 docs/08_AWS_DEPLOYMENT_ORDER.md
 docs/09_AGENT_WORKFLOW.md
 docs/10_COMMANDS_CHEATSHEET.md
+docs/DASHBOARD_CONTRACT.md
 docs/MONITORING_CONTRACT.md
 docs/PREDICTION_EVENT_CONTRACT.md
 docs/adr/ADR-001-ecs-over-eks.md
@@ -78,12 +80,16 @@ prompts/README.md
 pyproject.toml
 reports/.gitkeep
 reports/evidence/phase-05/README.md
+reports/evidence/phase-06/README.md
+reports/evidence/phase-06/degraded-dashboard.png
+reports/evidence/phase-06/healthy-dashboard.png
 reports/phase-00-architecture-review.md
 reports/phase-01.md
 reports/phase-02.md
 reports/phase-03.md
 reports/phase-04.md
 reports/phase-05.md
+reports/phase-06.md
 scripts/bootstrap_repo.sh
 scripts/check_no_secrets.sh
 scripts/export_monitoring_report_schema.py
@@ -108,6 +114,11 @@ src/modelguard/core/logging.py
 src/modelguard/core/serialization.py
 src/modelguard/core/telemetry.py
 src/modelguard/dashboard/__init__.py
+src/modelguard/dashboard/app.py
+src/modelguard/dashboard/config.py
+src/modelguard/dashboard/parsing.py
+src/modelguard/dashboard/presentation.py
+src/modelguard/dashboard/repository.py
 src/modelguard/data/__init__.py
 src/modelguard/data/generator.py
 src/modelguard/data/schema.py
@@ -160,9 +171,11 @@ tests/integration/test_monitoring_cli_phase05.py
 tests/integration/test_monitoring_phase05.py
 tests/integration/test_prediction_logging_phase04.py
 tests/integration/test_training_workflow_phase02.py
+tests/smoke/test_dashboard_startup_phase06.py
 tests/smoke/test_package_import.py
 tests/unit/test_api_schemas_phase03.py
 tests/unit/test_bundle_phase02.py
+tests/unit/test_dashboard_repository_parsing_phase06.py
 tests/unit/test_data_phase02.py
 tests/unit/test_evaluate_baseline_phase02.py
 tests/unit/test_inference_phase03.py
