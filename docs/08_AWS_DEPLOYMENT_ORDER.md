@@ -1,114 +1,98 @@
-# AWS Deployment Order
+# AWS deployment order
 
-## 1. Verify the account and Region
+The authoritative Phase 08 architecture, IAM table, activation barriers, alarm sources, costs, and
+teardown inventory are in [TERRAFORM_AWS.md](TERRAFORM_AWS.md). This page is the short operator
+sequence. Phase 08 performs validation only; every plan/apply step below belongs to Phase 10.
 
-```bash
-aws sts get-caller-identity
-export AWS_REGION=us-east-1
+## 1. Human/SSO bootstrap
+
+1. Copy `infrastructure/bootstrap/bootstrap.auto.tfvars.example` to a Git-ignored tfvars file.
+2. Verify the exact STS account and configured Region using short-lived AWS SSO credentials.
+3. Create, display, review, and manually apply a saved bootstrap plan.
+4. Preserve bootstrap state in an approved encrypted location.
+5. Record the state bucket, state KMS key, backend key, permission boundary, and CI role ARNs.
+
+Bootstrap is retained and owns state/OIDC/CI roles/boundary. Demo state must never import or mutate
+those resources.
+
+## 2. Configure the guarded backend and noncommitted inputs
+
+Copy `infrastructure/environments/demo/backend.hcl.example` to an absolute, Git-ignored path and
+replace it with exact bootstrap outputs. It must retain KMS encryption and `use_lockfile=true`.
+
+Copy `demo.auto.tfvars.example` to an absolute, Git-ignored path. Supply the restricted ALB CIDR,
+bounded AutoDestroyDate, exact boundary, and confirmed human budget destination. For preferred
+`https_token`, include only the ACM certificate ARN and pre-created SecureString ARN. Never fetch or
+place token bytes in Terraform, shell history, a plan, an output, or evidence.
+The SecureString must use the AWS-managed SSM key for this phase. Activate the `Project` cost
+allocation tag before relying on the mandatory tagged budget.
+
+## 3. Reviewed prerequisite saved plan
+
+Keep:
+
+```hcl
+deployment_stage          = "prerequisites"
+activate_services         = false
+runtime_contract_verified = false
 ```
 
-Use a separate demo account or environment whenever possible.
+Omit all image references. Initialize with the reviewed backend file, save only
+`prerequisites.tfplan`, display it, and seal it with `scripts/terraform_demo_guard.py`. Verify the
+same manifest immediately before the Phase 10 apply. The plan must show API/dashboard count zero,
+schedule disabled, and no alarm actions. Never use `terraform -target`.
 
-## 2. Bootstrap state, OIDC, and the permission boundary
+The supported Phase 10 apply entry point is `scripts/safe_apply.sh` with
+`PLAN_STAGE=prerequisites`; it consumes the already reviewed plan and identity manifest and refuses
+arbitrary filenames. It does not create or target a plan.
 
-```bash
-cd infrastructure/bootstrap
-terraform init
-terraform plan
-terraform apply
+## 4. Publish and verify immutable prerequisites
+
+Build and scan each Git-SHA image once, push one immutable provenance tag, and resolve each ECR
+digest. Publish the seven-file bundle create-only, read it back, record every S3 VersionId, and
+promote the exact `{model_version, manifest_sha256, bundle VersionIds}` pointer outside Terraform.
+
+Use SSM metadata APIs—not `GetParameter`—to verify that the configured token ARN names a
+SecureString. Verify ACM, ECR digests, bundle/pointer identity, and the confirmed budget destination.
+Run the digest-pinned runtime contract tests for API model bootstrap, dashboard S3 access, and the
+one-shot monitor `aws-run` interface.
+
+The current local monitor image does not implement `aws-run`. Keep
+`runtime_contract_verified=false` until a later phase adds and tests that AWS one-shot orchestration;
+the Phase 08 activation guard therefore prevents the present image from being scheduled.
+
+## 5. Reviewed activation saved plan
+
+Set:
+
+```hcl
+deployment_stage          = "activation"
+activate_services         = true
+runtime_contract_verified = true
+api_image_ref              = "<api-repository>@sha256:<digest>"
+dashboard_image_ref        = "<dashboard-repository>@sha256:<digest>"
+monitor_image_ref          = "<monitor-repository>@sha256:<digest>"
 ```
 
-A human operator performs this step with a short-lived SSO identity. The bootstrap layer owns only
-the state resources, OIDC roles, and permission boundary; the demo deployment cannot modify them.
-Record the required outputs, and never place secrets in Git-tracked files.
+Save only `activation.tfplan`, display/review it, seal its identity, and verify that exact file just
+before apply. The plan must show desired count one, schedule and alarms enabled, exact in-project
+digest references, and a non-sentinel active pointer.
 
-## 3. Apply prerequisites with runtimes disabled
+Apply only through the same manual script with `PLAN_STAGE=activation`. Its typed confirmation and
+second immediate identity verification are mandatory.
 
-Use a saved, reviewed plan that creates the VPC, ECR repositories, S3 buckets, Firehose delivery
-stream, pointer locations, and other prerequisites with `activate_services=false`. The desired count
-for the API and dashboard must be zero, and the monitor schedule must remain disabled. Do not use
-`terraform -target`.
+## 6. Smoke, evidence, and guarded destroy
 
-```bash
-terraform -chdir=infrastructure/environments/demo init -reconfigure
-terraform -chdir=infrastructure/environments/demo fmt -check -recursive
-terraform -chdir=infrastructure/environments/demo validate
-terraform -chdir=infrastructure/environments/demo plan \
-  -var='activate_services=false' -out=prerequisites.tfplan
-terraform -chdir=infrastructure/environments/demo show prerequisites.tfplan
-terraform -chdir=infrastructure/environments/demo apply prerequisites.tfplan
-```
+After Phase 10 activation, verify both health routes, authenticated HTTPS prediction (or explicitly
+disclosed credential-free HTTP fallback), Firehose delivery, one successful monitor heartbeat,
+dashboard evidence, and every alarm source.
 
-## 4. Build, scan, push, and resolve image digests
+After capture, run `scripts/safe_destroy.sh` with its explicit account/Region/backend/tfvars/date
+inputs. It creates and binds `destroy.tfplan`, requires two manual confirmations, verifies the saved
+plan, applies it, then runs tag and service-specific orphan queries through
+`scripts/verify_aws_teardown.sh`. Retain the JSON evidence and repeat the read-only verifier after an
+eventual-consistency delay.
 
-```bash
-aws ecr get-login-password --region "$AWS_REGION" \
-  | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-
-GIT_SHA=$(git rev-parse --short=12 HEAD)
-docker build -f docker/api.Dockerfile -t modelguard-api:$GIT_SHA .
-trivy image modelguard-api:$GIT_SHA
-docker tag modelguard-api:$GIT_SHA "$API_ECR_URI:$GIT_SHA"
-docker push "$API_ECR_URI:$GIT_SHA"
-API_IMAGE_DIGEST=$(aws ecr describe-images --repository-name modelguard-api \
-  --image-ids imageTag="$GIT_SHA" --query 'imageDetails[0].imageDigest' --output text)
-```
-
-Repeat this process once for the dashboard and monitor images, or use a protected workflow. The tag
-records provenance; activation uses `repository@sha256:...` and does not rebuild an image.
-
-## 5. Publish, verify, and point to the model
-
-```bash
-make train
-uv run python -m modelguard.training.cli publish \
-  --bundle artifacts/model-bundles/1.0.0 \
-  --target s3
-```
-
-Reject overwrites, verify the bytes stored in S3, and then perform a controlled promotion of the
-`{model_version, manifest_sha256}` value in SSM. In `https_token` mode, create or verify the SSM
-SecureString manually outside Terraform and pass only its ARN. Never expose the value in shell
-history, a Terraform plan, or evidence artifacts.
-
-## 6. Apply the activation plan with image digests
-
-```bash
-terraform -chdir=infrastructure/environments/demo plan \
-  -var='activate_services=true' \
-  -var="api_image_ref=$API_ECR_URI@$API_IMAGE_DIGEST" \
-  -var="dashboard_image_ref=$DASHBOARD_ECR_URI@$DASHBOARD_IMAGE_DIGEST" \
-  -var="monitor_image_ref=$MONITOR_ECR_URI@$MONITOR_IMAGE_DIGEST" \
-  -out=activation.tfplan
-terraform -chdir=infrastructure/environments/demo show activation.tfplan
-terraform -chdir=infrastructure/environments/demo apply activation.tfplan
-```
-
-Before applying, prove that every digest exists, the bundle and pointer are valid, the budget
-destination has been confirmed, and the token ARN is valid when required. Every plan must remain
-bound to the same commit, account, Region, and backend.
-
-## 7. Run smoke tests
-
-```bash
-curl -fsS "$API_URL/health/live"
-curl -fsS "$API_URL/health/ready"
-./scripts/smoke_aws.sh
-```
-
-## 8. Run the demo and capture evidence
-
-Send baseline traffic, then drifted traffic, and run the monitor task. Capture the required
-screenshots, logs, and report.
-
-## 9. Perform a guarded destroy and verify cleanup
-
-```bash
-CONFIRM_DESTROY=YES ./scripts/safe_destroy.sh
-```
-
-Review the tagged inventory and affected services afterward to confirm deletion of the ALB, ECS
-services, NAT gateway, EIP, Firehose stream, Scheduler resources, logs, alarms, data buckets and
-object versions, ECR repositories, SNS resources, budget, and token parameter. Report retained
-bootstrap resources separately. Final bootstrap cleanup requires its own plan and safeguards and
-must not occur while remote state is still in use.
+State bucket/KMS, OIDC, CI roles, and the permission boundary remain intentionally. The pre-created
+ACM certificate and SecureString also remain because demo state never owned them. Final bootstrap
+cleanup is a separate guarded human/SSO plan after state is archived and no backend user remains.

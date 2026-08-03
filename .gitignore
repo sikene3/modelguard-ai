@@ -42,6 +42,9 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 *.auto.tfvars
+**/backend.hcl
+*.tfplan.identity.json
+*.preflight.json
 !*.tfvars.example
 !*.tfvars.json.example
 !*.auto.tfvars.example

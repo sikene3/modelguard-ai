@@ -37,6 +37,10 @@ def build_monitor_completion_emf(
         if latest_event is not None
         else 0.0
     )
+    report_freshness_seconds = max(
+        (normalized_as_of - report.window.end).total_seconds(),
+        0.0,
+    )
     metrics: dict[str, tuple[float, str]] = {
         "MonitorCompletions": (1.0, "Count"),
         "RawRecords": (float(counts.raw), "Count"),
@@ -47,6 +51,7 @@ def build_monitor_completion_emf(
         "AcceptedTargetRecords": (float(counts.accepted_target), "Count"),
         "AcceptedEventFreshnessSeconds": (freshness_seconds, "Seconds"),
         "AcceptedEventFreshnessAvailable": (1.0 if freshness_available else 0.0, "Count"),
+        "ReportFreshnessSeconds": (report_freshness_seconds, "Seconds"),
     }
     payload: dict[str, Any] = {
         "_aws": {
@@ -64,6 +69,7 @@ def build_monitor_completion_emf(
         "Service": "monitor",
         "Environment": environment.value,
         "FreshnessSemantics": "accepted_event_time_not_row_delivery_lateness",
+        "ReportFreshnessSemantics": "monitor_as_of_minus_finalized_window_end",
     }
     payload.update({name: value for name, (value, _) in metrics.items()})
     return payload

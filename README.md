@@ -11,10 +11,13 @@ shares only a named synthetic runtime volume, and runs without AWS credentials. 
 cover API health and prediction, closed event creation, healthy and degraded monitor reports,
 dashboard availability, insufficient data, a corrupt bundle, and a fail-open sink outage.
 Machine-readable traffic/smoke/demo/scan evidence is generated under ignored
-`artifacts/phase-07-evidence/` paths.
-The image-build, Compose, smoke/demo/E2E, headless-browser, ShellCheck, and zero-exception Trivy
-gates have passed; see `reports/phase-07.md`. Phase 07 is complete and awaits independent human
-review and a manual commit. Terraform, AWS resources, and deployment remain future phases.
+`artifacts/phase-07-evidence/` paths. Phase 08 now defines the separate retained AWS bootstrap and
+disposable demo Terraform architecture, guarded two-plan activation, alarm sources, and verified
+teardown inventory. No AWS plan, apply, or destroy has run. Both Terraform roots validate against
+the locked AWS provider, Checkov passes with only documented resource-local exceptions, and the
+complete local quality/security gate passes. Phase 08 is technically complete but still requires
+independent review and a manual commit before Phase 09. See
+[`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md) and `reports/phase-08.md`.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -24,8 +27,9 @@ The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHIT
 - Git, Make, and uv 0.12.x.
 - Python is pinned by `.python-version` and `requires-python` to Python 3.12; developer commands use
   `uv run` and never rely on the host's unversioned `python3` command.
-- Docker Engine and Docker Compose 2 or newer for Phase 07. Trivy is required for the image-security
-  gate; ShellCheck is used automatically when installed.
+- Docker Engine and Docker Compose 2 or newer for Phase 07. Terraform 1.10 or newer and Checkov are
+  required for the Phase 08 infrastructure gate. Trivy is required for the image-security gate;
+  ShellCheck is used automatically when installed.
 
 ```bash
 ./scripts/verify_environment.sh
@@ -224,12 +228,12 @@ The dashboard includes:
   restricted to reports with matching target, baseline, and policy identities;
 - an offline HTML download in local mode, or a short-lived HTTPS presigned download in S3 mode.
 
-Local mode reads `MODEL_BUNDLE_PATH`, `LOCAL_REPORT_DIR`, and `MONITORING_CONFIG_PATH`. AWS mode is
-an implementation boundary only in Phase 06: set `DASHBOARD_REPOSITORY=s3`, `MODEL_BUCKET`, and
-`REPORT_BUCKET`; injected fake-client tests prove the same read contract without network calls.
-Phase 08 must wire private-bucket IAM and persist `monitoring/run-status.json` alongside the existing
-report keys before claiming deployed AWS run health. The dashboard never makes report buckets
-public and never stores or logs a generated presigned URL.
+Local mode reads `MODEL_BUNDLE_PATH`, `LOCAL_REPORT_DIR`, and `MONITORING_CONFIG_PATH`. AWS mode sets
+`DASHBOARD_REPOSITORY=s3`, `MODEL_BUCKET`, and `REPORT_BUCKET`; injected fake-client tests prove the
+same read contract without network calls. Phase 08 now scopes dashboard reads and monitor writes to
+the private `monitoring/` prefix, including `monitoring/run-status.json`. The activation barrier
+remains off until Phase 10 digest-pinned runtime tests prove that deployed contract. The dashboard
+never makes report buckets public and never stores or logs a generated presigned URL.
 
 The complete evidence/claim boundary is documented in
 [docs/DASHBOARD_CONTRACT.md](docs/DASHBOARD_CONTRACT.md).

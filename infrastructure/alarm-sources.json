@@ -1,0 +1,104 @@
+{
+  "schema_version": "modelguard.terraform-alarm-sources.v1",
+  "alarms": [
+    {
+      "key": "alb_api_5xx",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.alb_api_5xx",
+      "source_kind": "native",
+      "namespace": "AWS/ApplicationELB",
+      "metric": "HTTPCode_Target_5XX_Count",
+      "producer": "Application Load Balancer API target group",
+      "missing_data": "notBreaching"
+    },
+    {
+      "key": "alb_api_latency",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.alb_api_latency",
+      "source_kind": "native",
+      "namespace": "AWS/ApplicationELB",
+      "metric": "TargetResponseTime",
+      "producer": "Application Load Balancer API target group",
+      "missing_data": "notBreaching"
+    },
+    {
+      "key": "alb_healthy_hosts",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.alb_healthy_hosts",
+      "source_kind": "native",
+      "namespace": "AWS/ApplicationELB",
+      "metric": "HealthyHostCount",
+      "producer": "Application Load Balancer API and dashboard target groups",
+      "missing_data": "breaching"
+    },
+    {
+      "key": "firehose_delivery",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.firehose_delivery",
+      "source_kind": "native",
+      "namespace": "AWS/Firehose",
+      "metric": "DeliveryToS3.Success",
+      "producer": "Kinesis Data Firehose extended S3 delivery",
+      "missing_data": "notBreaching"
+    },
+    {
+      "key": "scheduler_submission_failures",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.scheduler_submission_failures",
+      "source_kind": "native",
+      "namespace": "AWS/Scheduler",
+      "metric": "TargetErrorCount",
+      "producer": "EventBridge Scheduler target submission",
+      "missing_data": "notBreaching"
+    },
+    {
+      "key": "api_event_write_failures",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.api_event_write_failures",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "EventSinkErrors",
+      "producer": "src/modelguard/core/telemetry.py EmfTelemetry.record_error",
+      "missing_data": "notBreaching"
+    },
+    {
+      "key": "monitor_completion",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.monitor_completion",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "MonitorCompletions",
+      "producer": "src/modelguard/monitoring/telemetry.py build_monitor_completion_emf",
+      "missing_data": "breaching"
+    },
+    {
+      "key": "monitor_input",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.monitor_input",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "RawRecords",
+      "producer": "src/modelguard/monitoring/telemetry.py build_monitor_completion_emf",
+      "missing_data": "breaching"
+    },
+    {
+      "key": "monitor_rejected",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.monitor_rejected",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "RejectedRecords",
+      "producer": "src/modelguard/monitoring/telemetry.py build_monitor_completion_emf",
+      "missing_data": "breaching"
+    },
+    {
+      "key": "monitor_predictions",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.monitor_predictions",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "AcceptedTargetRecords",
+      "producer": "src/modelguard/monitoring/telemetry.py build_monitor_completion_emf",
+      "missing_data": "breaching"
+    },
+    {
+      "key": "monitor_report_freshness",
+      "terraform_resource": "aws_cloudwatch_metric_alarm.monitor_report_freshness",
+      "source_kind": "emf",
+      "namespace": "ModelGuardAI",
+      "metric": "ReportFreshnessSeconds",
+      "producer": "src/modelguard/monitoring/telemetry.py build_monitor_completion_emf",
+      "missing_data": "breaching"
+    }
+  ]
+}

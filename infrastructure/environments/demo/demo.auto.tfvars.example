@@ -1,0 +1,35 @@
+aws_account_id        = "123456789012"
+aws_region            = "us-east-1"
+owner_tag             = "portfolio-owner"
+auto_destroy_date     = "2026-08-09"
+backend_bucket_name   = "modelguard-ai-terraform-state-123456789012-us-east-1"
+permission_boundary_arn = "arn:aws:iam::123456789012:policy/modelguard-ai/bootstrap/modelguard-ai-workload-boundary"
+
+# Always replace this in a Git-ignored demo.auto.tfvars. The committed placeholder is deliberately
+# unconfirmable and a normal plan refuses it.
+budget_notification_email     = "replace-with-confirmed-human-address"
+budget_notification_confirmed = false
+
+alb_allowed_cidr = "203.0.113.10/32"
+
+# Preferred mode. These are references only; token bytes never enter Terraform. The pre-created
+# SecureString must use alias/aws/ssm for the Phase 08 boundary.
+api_access_mode         = "https_token"
+acm_certificate_arn     = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+prediction_token_ssm_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/modelguard-ai/demo/secrets/prediction-token"
+
+# Prerequisite saved plan: leave these exact defaults and omit image references.
+deployment_stage = "prerequisites"
+activate_services = false
+runtime_contract_verified = false
+
+# Activation saved plan only: set deployment_stage=activation, activate_services=true, and resolve
+# all three values from ECR DescribeImages. Never use mutable tags.
+# Set runtime_contract_verified=true only after the digest-pinned image contract tests pass.
+# api_image_ref       = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/api@sha256:<64-hex>"
+# dashboard_image_ref = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/dashboard@sha256:<64-hex>"
+# monitor_image_ref   = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/monitor@sha256:<64-hex>"
+
+# Optional drift subscription is separate from the mandatory budget destination and must also live
+# only in the ignored file.
+# drift_notification_email = "confirmed-operator-address"

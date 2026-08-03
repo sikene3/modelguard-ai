@@ -82,22 +82,22 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 
 ## Terraform and AWS
 
-- [ ] `terraform fmt -check`, `validate`, and Checkov pass with documented exceptions only.
-- [ ] Separate least-privilege plan/deploy/execution/service/delivery/scheduler roles are scoped.
-- [ ] Bootstrap owns OIDC roles and a mandatory permission boundary that demo deploy cannot alter;
+- [x] `terraform fmt -check`, `validate`, and Checkov pass with documented exceptions only.
+- [x] Separate least-privilege plan/deploy/execution/service/delivery/scheduler roles are scoped.
+- [x] Bootstrap owns OIDC roles and a mandatory permission boundary that demo deploy cannot alter;
       exact-subject trust and bounded `iam:PassRole` are evidenced.
 - [ ] GitHub Actions uses OIDC, not stored AWS access keys.
-- [ ] ALB requires explicit restricted CIDR; private tasks have no public IP.
-- [ ] Two AZs, one documented NAT, S3 endpoint, state bootstrap, budget alert, alarm matrix, and
+- [x] ALB requires explicit restricted CIDR; private tasks have no public IP.
+- [x] Two AZs, one documented NAT, S3 endpoint, state bootstrap, budget alert, alarm matrix, and
       guarded verified destroy are implemented.
-- [ ] A confirmed, noncommitted human budget destination is required; drift SNS subscription remains
+- [x] A confirmed, noncommitted human budget destination is required; drift SNS subscription remains
       optional, and budget alerts are documented as non-enforcing.
-- [ ] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
+- [x] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
       image/model/token prerequisites, then uses a second reviewed digest-pinned activation plan.
-- [ ] ECS deployment circuit breaker/rollback is enabled.
+- [x] ECS deployment circuit breaker/rollback is enabled.
 - [ ] Scheduled monitor task can read inputs and write reports.
-- [ ] SNS notification is optional and configured without committing an email.
-- [ ] CloudWatch logs and alarms exist; every alarm has a tested native-service or bounded EMF source,
+- [x] SNS notification is optional and configured without committing an email.
+- [x] CloudWatch logs and alarms exist; every alarm has a tested native-service or bounded EMF source,
       and scheduler submission is not treated as monitor completion.
 - [ ] `terraform destroy` removes the demo environment without orphaned resources.
 

@@ -378,7 +378,9 @@ def test_emf_has_only_bounded_dimensions_counts_and_non_delivery_freshness(
     assert metric["Dimensions"] == [["Service", "Environment"]]
     assert emf["Service"] == "monitor"
     assert emf["AcceptedTargetRecords"] == 1.0
+    assert emf["ReportFreshnessSeconds"] == 600.0
     assert emf["FreshnessSemantics"] == "accepted_event_time_not_row_delivery_lateness"
+    assert emf["ReportFreshnessSemantics"] == "monitor_as_of_minus_finalized_window_end"
     assert report.report_id not in serialized
     assert monitoring_target.bundle_manifest_sha256 not in serialized
     assert "event_id" not in serialized.casefold()

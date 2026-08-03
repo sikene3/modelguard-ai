@@ -1,0 +1,9 @@
+aws_account_id      = "123456789012"
+aws_region          = "us-east-1"
+owner_tag           = "portfolio-owner"
+bootstrap_review_date = "2026-08-16"
+github_repository   = "replace-owner/modelguard-ai"
+
+# These names produce exact, alternative OIDC subjects. They must be protected GitHub environments.
+github_deploy_environment  = "demo"
+github_destroy_environment = "demo-destroy"
