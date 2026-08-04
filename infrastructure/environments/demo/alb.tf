@@ -1,7 +1,7 @@
 resource "aws_lb" "this" {
-  # checkov:skip=CKV_AWS_150:Deletion protection conflicts with the explicitly temporary, saved-plan and inventory-verified destroy contract.
-  # checkov:skip=CKV2_AWS_20:The conditional synthetic-only HTTP mode intentionally forwards rather than redirects; preferred https_token mode creates the HTTPS redirect.
-  # checkov:skip=CKV2_AWS_28:A WAF is disproportionate for a short-lived synthetic demo already restricted to one explicit non-world source CIDR.
+  # checkov:skip=CKV_AWS_150:Deletion protection conflicts with the explicitly temporary, saved-plan and inventory-verified destroy contract. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV2_AWS_20:The conditional synthetic-only HTTP mode intentionally forwards rather than redirects; preferred https_token mode creates the HTTPS redirect. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV2_AWS_28:A WAF is disproportionate for a short-lived synthetic demo already restricted to one explicit non-world source CIDR. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name               = local.name_prefix
   internal           = false
@@ -28,7 +28,7 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "api" {
-  # checkov:skip=CKV_AWS_378:TLS terminates at the ALB; this private hop is restricted from the ALB security group to the exact API port.
+  # checkov:skip=CKV_AWS_378:TLS terminates at the ALB; this private hop is restricted from the ALB security group to the exact API port. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${local.name_prefix}-api"
   port        = 8000
@@ -54,7 +54,7 @@ resource "aws_lb_target_group" "api" {
 }
 
 resource "aws_lb_target_group" "dashboard" {
-  # checkov:skip=CKV_AWS_378:TLS terminates at the ALB; this private hop is restricted from the ALB security group to the exact dashboard port.
+  # checkov:skip=CKV_AWS_378:TLS terminates at the ALB; this private hop is restricted from the ALB security group to the exact dashboard port. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${local.name_prefix}-dashboard"
   port        = 8501
@@ -81,8 +81,8 @@ resource "aws_lb_target_group" "dashboard" {
 
 # The HTTP fallback is intentionally restricted and synthetic-only. It sends no reusable token.
 resource "aws_lb_listener" "http_demo" {
-  # checkov:skip=CKV_AWS_2:This listener exists only for the documented CIDR-only synthetic HTTP fallback; preferred mode uses HTTPS and sends no token over HTTP.
-  # checkov:skip=CKV_AWS_103:TLS policy is inapplicable to the disclosed token-free HTTP fallback; the HTTPS listener enforces TLS 1.2 or newer.
+  # checkov:skip=CKV_AWS_2:This listener exists only for the documented CIDR-only synthetic HTTP fallback; preferred mode uses HTTPS and sends no token over HTTP. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_103:TLS policy is inapplicable to the disclosed token-free HTTP fallback; the HTTPS listener enforces TLS 1.2 or newer. [owner=modelguard-maintainers; expires=2026-10-31]
 
   count = var.api_access_mode == "http_cidr_only" ? 1 : 0
 

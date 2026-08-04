@@ -21,9 +21,10 @@ Then run:
   make verify
 
 uv will select Python 3.12 from the committed .python-version and lock contract. Docker, AWS CLI,
-Terraform, Trivy, Checkov, and Codex are later-phase/manual prerequisites. If installing any of
-them from a remote artifact, verify the publisher, fixed version, signature or checksum, and the
-artifact bytes before execution.
+Terraform, and Codex remain later-phase/manual prerequisites. Phase 09.1 installs actionlint,
+ShellCheck, Trivy, and Gitleaks from checksum-verified release archives and Checkov from one exact
+OCI digest under the ignored repository-local cache. After Docker is available, run
+`make security-tools-bootstrap`; do not install those scanners globally.
 
 No changes were made.
 EOF

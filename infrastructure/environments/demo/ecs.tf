@@ -1,5 +1,5 @@
 resource "aws_ecs_cluster" "this" {
-  # checkov:skip=CKV_AWS_65:Paid Container Insights is deliberately disabled; no alarm claims its metrics and the tested native/EMF matrix covers this temporary demo.
+  # checkov:skip=CKV_AWS_65:Paid Container Insights is deliberately disabled; no alarm claims its metrics and the tested native/EMF matrix covers this temporary demo. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name = local.name_prefix
 

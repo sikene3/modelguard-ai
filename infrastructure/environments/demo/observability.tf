@@ -64,8 +64,8 @@ resource "aws_sns_topic_policy" "alerts" {
 }
 
 resource "aws_cloudwatch_log_group" "application" {
-  # checkov:skip=CKV_AWS_158:Short-lived synthetic logs use AWS-managed encryption so verified teardown leaves no customer key pending deletion.
-  # checkov:skip=CKV_AWS_338:One-year retention contradicts the temporary-demo cost and cleanup contract; the bounded retention variable is documented and validated.
+  # checkov:skip=CKV_AWS_158:Short-lived synthetic logs use AWS-managed encryption so verified teardown leaves no customer key pending deletion. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_338:One-year retention contradicts the temporary-demo cost and cleanup contract; the bounded retention variable is documented and validated. [owner=modelguard-maintainers; expires=2026-10-31]
 
   for_each = toset(["api", "dashboard", "monitor"])
 
@@ -76,8 +76,8 @@ resource "aws_cloudwatch_log_group" "application" {
 }
 
 resource "aws_cloudwatch_log_group" "firehose" {
-  # checkov:skip=CKV_AWS_158:Short-lived synthetic logs use AWS-managed encryption so verified teardown leaves no customer key pending deletion.
-  # checkov:skip=CKV_AWS_338:One-year retention contradicts the temporary-demo cost and cleanup contract; the bounded retention variable is documented and validated.
+  # checkov:skip=CKV_AWS_158:Short-lived synthetic logs use AWS-managed encryption so verified teardown leaves no customer key pending deletion. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_338:One-year retention contradicts the temporary-demo cost and cleanup contract; the bounded retention variable is documented and validated. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name              = "/${var.project_name}/${var.environment}/firehose"
   retention_in_days = var.log_retention_days
@@ -104,7 +104,7 @@ locals {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_api_5xx" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-alb-api-5xx"
   alarm_description   = "Native ALB target 5xx responses; source AWS/ApplicationELB HTTPCode_Target_5XX_Count."
@@ -129,7 +129,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_api_5xx" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_api_latency" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-alb-api-latency"
   alarm_description   = "Native ALB target latency; source AWS/ApplicationELB TargetResponseTime."
@@ -154,7 +154,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_api_latency" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_healthy_hosts" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   for_each = {
     api       = aws_lb_target_group.api.arn_suffix
@@ -184,7 +184,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_healthy_hosts" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "firehose_delivery" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-firehose-delivery"
   alarm_description   = "Native Firehose S3 delivery success percentage; producer acceptance is a separate API EMF signal."
@@ -208,7 +208,7 @@ resource "aws_cloudwatch_metric_alarm" "firehose_delivery" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "scheduler_submission_failures" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-scheduler-target-errors"
   alarm_description   = "Native Scheduler submission TargetErrorCount; submission failure is explicitly not monitor completion."
@@ -232,7 +232,7 @@ resource "aws_cloudwatch_metric_alarm" "scheduler_submission_failures" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "api_event_write_failures" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-api-event-write-failures"
   alarm_description   = "Bounded API EMF EventSinkErrors emitted for serialization, timeout, and Firehose producer failures."
@@ -253,7 +253,7 @@ resource "aws_cloudwatch_metric_alarm" "api_event_write_failures" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "monitor_completion" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-monitor-completion"
   alarm_description   = "One bounded EMF MonitorCompletions heartbeat per successful run; missing data breaches."
@@ -274,7 +274,7 @@ resource "aws_cloudwatch_metric_alarm" "monitor_completion" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "monitor_input" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-monitor-input"
   alarm_description   = "One bounded EMF RawRecords input count per successful run; low or missing data breaches."
@@ -295,7 +295,7 @@ resource "aws_cloudwatch_metric_alarm" "monitor_input" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "monitor_rejected" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-monitor-rejected"
   alarm_description   = "One bounded EMF RejectedRecords count per successful run; excess or missing data breaches."
@@ -316,7 +316,7 @@ resource "aws_cloudwatch_metric_alarm" "monitor_rejected" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "monitor_predictions" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-monitor-predictions"
   alarm_description   = "One bounded EMF AcceptedTargetRecords prediction count per successful run; low or missing data breaches."
@@ -337,7 +337,7 @@ resource "aws_cloudwatch_metric_alarm" "monitor_predictions" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "monitor_report_freshness" {
-  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan.
+  # checkov:skip=CKV_AWS_319:Actions are intentionally disabled only in the prerequisite plan and enabled by the guarded activation plan. [owner=modelguard-maintainers; expires=2026-10-31]
 
   alarm_name          = "${local.name_prefix}-monitor-report-freshness"
   alarm_description   = "One bounded EMF ReportFreshnessSeconds value per successful run; stale or missing data breaches."

@@ -172,7 +172,8 @@ Afterward, run:
 terraform fmt -recursive infrastructure
 terraform -chdir=infrastructure/environments/demo init -backend=false
 terraform -chdir=infrastructure/environments/demo validate
-checkov -d infrastructure
+make security-tools-bootstrap
+make security-scan
 ```
 
 ---

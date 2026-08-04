@@ -10,10 +10,10 @@ locals {
 # SSE-S3 avoids a KMS key that would remain pending deletion after the temporary demo is destroyed.
 # The data is synthetic and every bucket is private, versioned, lifecycle-bounded, and TLS-only.
 resource "aws_s3_bucket" "this" {
-  # checkov:skip=CKV_AWS_145:Private synthetic demo data uses mandatory SSE-S3 so verified teardown leaves no customer key pending deletion.
-  # checkov:skip=CKV_AWS_144:Cross-Region replication is intentionally outside the single-Region temporary demo scope; versioning and finite retention are enabled.
-  # checkov:skip=CKV_AWS_18:Models, predictions, and reports log to audit; the audit sink cannot safely server-log to itself.
-  # checkov:skip=CKV2_AWS_62:Bucket event notifications are not part of this Firehose/monitor contract and would add an unconsumed event path.
+  # checkov:skip=CKV_AWS_145:Private synthetic demo data uses mandatory SSE-S3 so verified teardown leaves no customer key pending deletion. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_144:Cross-Region replication is intentionally outside the single-Region temporary demo scope; versioning and finite retention are enabled. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_18:Models, predictions, and reports log to audit; the audit sink cannot safely server-log to itself. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV2_AWS_62:Bucket event notifications are not part of this Firehose/monitor contract and would add an unconsumed event path. [owner=modelguard-maintainers; expires=2026-10-31]
 
   for_each = var.buckets
 
@@ -204,7 +204,7 @@ resource "aws_s3_bucket_logging" "this" {
 }
 
 resource "aws_ecr_repository" "this" {
-  # checkov:skip=CKV_AWS_136:AWS-managed AES256 avoids a disposable key lingering after teardown; repositories are private, immutable, scanned, and contain no secrets.
+  # checkov:skip=CKV_AWS_136:AWS-managed AES256 avoids a disposable key lingering after teardown; repositories are private, immutable, scanned, and contain no secrets. [owner=modelguard-maintainers; expires=2026-10-31]
 
   for_each = var.ecr_repository_names
 

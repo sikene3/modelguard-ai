@@ -1,0 +1,75 @@
+{
+  "schema_version": "modelguard.security-tools.v1",
+  "platform": "linux-x86_64",
+  "tools": {
+    "actionlint": {
+      "kind": "archive",
+      "version": "1.7.9",
+      "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.9/actionlint_1.7.9_linux_amd64.tar.gz",
+      "sha256": "233b280d05e100837f4af1433c7b40a5dcb306e3aa68fb4f17f8a7f45a7df7b4",
+      "archive_member": "actionlint",
+      "version_args": ["-version"]
+    },
+    "shellcheck": {
+      "kind": "archive",
+      "version": "0.11.0",
+      "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz",
+      "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198",
+      "archive_member": "shellcheck-v0.11.0/shellcheck",
+      "version_args": ["--version"]
+    },
+    "checkov": {
+      "kind": "oci",
+      "version": "3.3.9",
+      "image": "docker.io/bridgecrew/checkov:3.3.9@sha256:3617c42277657f23ed75a554f10bce3a46867251c1c0ea2e5a1df3bad24e336f",
+      "platform": "linux/amd64",
+      "version_args": ["--version"]
+    },
+    "trivy": {
+      "kind": "archive",
+      "version": "0.70.0",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz",
+      "sha256": "8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9",
+      "archive_member": "trivy",
+      "version_args": ["--version"]
+    },
+    "gitleaks": {
+      "kind": "archive",
+      "version": "8.30.1",
+      "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz",
+      "sha256": "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+      "archive_member": "gitleaks",
+      "version_args": ["version"]
+    }
+  },
+  "github_actions": {
+    "actions/checkout": {
+      "version": "6.0.2",
+      "commit": "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+    },
+    "actions/upload-artifact": {
+      "version": "7.0.1",
+      "commit": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    },
+    "actions/download-artifact": {
+      "version": "8.0.1",
+      "commit": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    },
+    "astral-sh/setup-uv": {
+      "version": "8.1.0",
+      "commit": "08807647e7069bb48b6ef5acd8ec9567f424441b"
+    },
+    "hashicorp/setup-terraform": {
+      "version": "3.1.2",
+      "commit": "b9cd54a3c349d3f38e8881555d616ced269862dd"
+    },
+    "aws-actions/configure-aws-credentials": {
+      "version": "6.1.2",
+      "commit": "acca2b1b2070338fb9fd1ca27ecee81d687e58e5"
+    },
+    "github/codeql-action/upload-sarif": {
+      "version": "4.37.5",
+      "commit": "d1ba80a13dd99fba24a470575428917156a28b43"
+    }
+  }
+}

@@ -16,7 +16,7 @@ locals {
 }
 
 resource "aws_vpc" "this" {
-  # checkov:skip=CKV2_AWS_11:Short-lived synthetic demo omits paid VPC Flow Logs; ALB, application, and native service logs cover this evidence boundary.
+  # checkov:skip=CKV2_AWS_11:Short-lived synthetic demo omits paid VPC Flow Logs; ALB, application, and native service logs cover this evidence boundary. [owner=modelguard-maintainers; expires=2026-10-31]
 
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
@@ -195,7 +195,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 }
 
 resource "aws_security_group" "api" {
-  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the API ECS service network configuration; the Phase 08 static test does.
+  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the API ECS service network configuration; the Phase 08 static test does. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${var.name_prefix}-api"
   description = "API task ingress only from the ALB"
@@ -205,7 +205,7 @@ resource "aws_security_group" "api" {
 }
 
 resource "aws_security_group" "dashboard" {
-  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the dashboard ECS service network configuration; the Phase 08 static test does.
+  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the dashboard ECS service network configuration; the Phase 08 static test does. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${var.name_prefix}-dashboard"
   description = "Dashboard task ingress only from the ALB"
@@ -215,7 +215,7 @@ resource "aws_security_group" "dashboard" {
 }
 
 resource "aws_security_group" "monitor" {
-  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the Scheduler ECS network configuration; the Phase 08 static test does.
+  # checkov:skip=CKV2_AWS_5:Checkov cannot trace this module output into the Scheduler ECS network configuration; the Phase 08 static test does. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${var.name_prefix}-monitor"
   description = "One-shot monitor task with no inbound rules"
@@ -273,7 +273,7 @@ locals {
 resource "aws_vpc_security_group_egress_rule" "task_https" {
   for_each = local.task_security_groups
 
-  # checkov:skip=CKV_AWS_382:Required 443-only AWS/ECR egress through the documented single-NAT MVP path.
+  # checkov:skip=CKV_AWS_382:Required 443-only AWS/ECR egress through the documented single-NAT MVP path. [owner=modelguard-maintainers; expires=2026-10-31]
 
   security_group_id = each.value
   description       = "HTTPS to AWS services through S3 endpoint or single NAT"

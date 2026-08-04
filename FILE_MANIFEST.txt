@@ -1,6 +1,7 @@
 .codex/config.toml
 .dockerignore
 .env.example
+.github/actionlint.yaml
 .github/oidc-subject-template.json
 .github/secret-scanning-allowlist.json
 .github/workflows/.gitkeep
@@ -35,6 +36,7 @@ checklists/PHASE_06.md
 checklists/PHASE_07.md
 checklists/PHASE_08.md
 checklists/PHASE_09.md
+checklists/PHASE_09_1.md
 checklists/PHASE_10.md
 checklists/PHASE_11.md
 checklists/PHASE_12.md
@@ -148,6 +150,7 @@ reports/phase-05.md
 reports/phase-06.md
 reports/phase-07.md
 reports/phase-08.md
+reports/phase-09-1.md
 reports/phase-09.md
 scripts/__init__.py
 scripts/bootstrap_repo.sh
@@ -171,8 +174,13 @@ scripts/render_ci_terraform.py
 scripts/run_phase.sh
 scripts/safe_apply.sh
 scripts/safe_destroy.sh
+scripts/sanitize_sarif.py
 scripts/scan_local_images.sh
 scripts/secret_scan_policy.py
+scripts/security_gate_runner.py
+scripts/security_policy.py
+scripts/security_scan.sh
+scripts/security_tools.py
 scripts/setup_ubuntu.sh
 scripts/smoke_aws.sh
 scripts/smoke_local.sh
@@ -182,6 +190,8 @@ scripts/verify_aws_teardown.sh
 scripts/verify_deployment_inputs.py
 scripts/verify_environment.sh
 scripts/verify_release_runtime.sh
+security/security-tools.lock.json
+security/trivy-ignore.yaml
 src/modelguard/__init__.py
 src/modelguard/api/__init__.py
 src/modelguard/api/dependencies.py
@@ -269,6 +279,7 @@ tests/unit/test_monitoring_performance_phase05.py
 tests/unit/test_monitoring_reports_phase05.py
 tests/unit/test_phase07_local_containers.py
 tests/unit/test_phase08_terraform.py
+tests/unit/test_phase091_release_gates.py
 tests/unit/test_phase09_cicd.py
 tests/unit/test_prediction_events_phase04.py
 tests/unit/test_settings.py

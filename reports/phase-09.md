@@ -1,5 +1,10 @@
 # Phase 09 report — GitHub Actions CI/CD and DevSecOps
 
+> Phase 09.1 supersedes this report's original local scanner-availability and scanner-invocation
+> boundary. See `reports/phase-09-1.md` and `checklists/PHASE_09_1.md` for the pinned repository-local
+> toolchain, real scanner results, shared local/CI commands, and current residual live gates. The
+> original Phase 09 command evidence below is retained as historical evidence, not a current claim.
+
 ## Outcome
 
 Phase 09 implements five reviewable GitHub Actions workflows for quality/security CI, container
@@ -207,7 +212,7 @@ dependency set above preserves the tested local tracking contract and removes th
 server stack. The final complete `make verify` passed Ruff, Mypy, 255 tests, coverage, Bandit, strict
 hashed pip-audit, the repository secret/file check, and trusted-model verification.
 
-### Workflow and infrastructure validation boundary
+### Original workflow and infrastructure validation boundary (superseded by Phase 09.1)
 
 ```text
 Unique-key PyYAML parse plus `bash -n` of all five `.github/workflows/*.yml` files

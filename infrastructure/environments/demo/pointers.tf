@@ -2,7 +2,7 @@
 # sentinel cannot be mistaken for a model identity. Later values contain exact semantic version,
 # manifest SHA-256, bundle prefix, and every S3 VersionId.
 resource "aws_ssm_parameter" "active_model" {
-  # checkov:skip=CKV2_AWS_34:This pointer is public integrity metadata, not a credential; String avoids misleading secret/decryption semantics.
+  # checkov:skip=CKV2_AWS_34:This pointer is public integrity metadata, not a credential; String avoids misleading secret/decryption semantics. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "/${var.project_name}/${var.environment}/models/active"
   description = "Promotion-owned exact active model identity and versioned bundle pointer"
@@ -18,7 +18,7 @@ resource "aws_ssm_parameter" "active_model" {
 }
 
 resource "aws_ssm_parameter" "previous_model" {
-  # checkov:skip=CKV2_AWS_34:This pointer is public integrity metadata, not a credential; String avoids misleading secret/decryption semantics.
+  # checkov:skip=CKV2_AWS_34:This pointer is public integrity metadata, not a credential; String avoids misleading secret/decryption semantics. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "/${var.project_name}/${var.environment}/models/previous"
   description = "Promotion-owned exact previous model identity and versioned bundle pointer"

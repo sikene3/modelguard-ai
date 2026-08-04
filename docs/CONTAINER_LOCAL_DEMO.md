@@ -13,15 +13,17 @@ three images, while `docker compose up -d` starts only the two services that sho
 
 ## Clean-clone sequence
 
-Requirements are Git, Make, uv 0.12.x, Python 3.12, Docker Engine, Docker Compose 2 or newer, and curl. Trivy
-is required for the image-security gate. ShellCheck is optional but is enforced automatically when
-installed.
+Requirements are Git, Make, uv 0.12.x, Python 3.12, Docker Engine, Docker Compose 2 or newer, and
+curl. Run `make security-tools-bootstrap` once to install the checksum-verified Trivy and ShellCheck
+binaries under the ignored repository cache. Global scanner packages are neither used nor accepted
+as release evidence.
 
 ```bash
 git clone <repository-url> modelguard-ai-launch-kit
 cd modelguard-ai-launch-kit
 ./scripts/verify_environment.sh
 make setup
+make security-tools-bootstrap
 make train
 
 ./scripts/build_local_images.sh
@@ -112,12 +114,10 @@ evidence, and returns nonzero on any HTTP or contract failure. It never sends re
 
 ## Trivy gate and exception process
 
-Run the raw commands when interactive detail is useful:
+Verify the pinned local scanner before an image release:
 
 ```bash
-trivy image modelguard-api:local
-trivy image modelguard-dashboard:local
-trivy image modelguard-monitor:local
+make security-tools-check
 ```
 
 The release gate is stricter and machine-readable:
@@ -126,9 +126,12 @@ The release gate is stricter and machine-readable:
 ./scripts/scan_local_images.sh
 ```
 
-It creates one critical-severity JSON scan per image and evaluates them against
-`configs/trivy-exceptions.json`. No exception exists initially. An unaccepted critical finding fails
-the command.
+It resolves each local tag to its exact `sha256:` image ID and passes only that immutable identity to
+the shared repository scanner. Every HIGH or CRITICAL vulnerability fails. CycloneDX evidence and
+sanitized SARIF are generated under an ignored evidence directory; downloaded databases, scanner
+caches, and generated reports are never committed. The image exception registry remains
+`configs/trivy-exceptions.json` and is empty; any future entry must pass the same owned, justified,
+expiring policy as all other scanner suppressions.
 
 Remediate in this order:
 
@@ -137,7 +140,8 @@ Remediate in this order:
 2. Upgrade the locked application dependency or refresh the pinned official base-image digest,
    rebuild all affected images once, and rerun the full smoke/demo and scan gates.
 3. If no fixed artifact exists and the local synthetic exposure is acceptably bounded, add a
-   temporary exact exception only after human review.
+   temporary exact exception only after human review and rerun `make security-scan` plus the exact
+   image scans.
 
 Every exception must match the exact image, vulnerability ID, and package name and must include a
 substantive rationale, accountable owner, and ISO `expires_on` date. The evaluator rejects duplicate,

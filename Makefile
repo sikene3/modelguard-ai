@@ -25,7 +25,7 @@ LOAD_CONCURRENCY ?= 4
 DASHBOARD_HOST ?= 127.0.0.1
 DASHBOARD_PORT ?= 8501
 
-.PHONY: help setup format lint typecheck test security generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local scan-images shell-check verify clean
+.PHONY: help setup format lint typecheck test security security-tools-bootstrap security-tools-check security-scan release-gates generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local scan-images shell-check verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -35,6 +35,10 @@ help:
 	@echo "  make typecheck   Run mypy"
 	@echo "  make test        Run pytest and enforce coverage"
 	@echo "  make security    Run Bandit, pip-audit, and the basic secret/file check"
+	@echo "  make security-tools-bootstrap  Install the checksum/digest-pinned local scanners"
+	@echo "  make security-tools-check  Verify every cached scanner against the lock"
+	@echo "  make security-scan  Run actionlint, ShellCheck, Checkov, Gitleaks, and Trivy"
+	@echo "  make release-gates  Run the full verification and reproducible security gates"
 	@echo "  make train       Generate audited data/splits, train, track, and bundle"
 	@echo "  make inspect-model  Validate bundle metadata without joblib loading"
 	@echo "  make verify-model   Verify bundle and run one trusted local smoke prediction"
@@ -50,7 +54,7 @@ help:
 	@echo "  make demo-local   Prove the containerized Healthy -> Drifted flow"
 	@echo "  make e2e-local    Prove insufficient/corrupt-bundle/sink-outage scenarios"
 	@echo "  make scan-images  Scan images and enforce bounded Trivy exceptions"
-	@echo "  make shell-check  Run Bash syntax and ShellCheck when it is installed"
+	@echo "  make shell-check  Run Bash syntax and the verified repository-local ShellCheck"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
 
 setup:
@@ -72,6 +76,10 @@ typecheck:
 		scripts/plan_evidence.py \
 		scripts/render_ci_terraform.py \
 		scripts/release_manifest.py \
+		scripts/sanitize_sarif.py \
+		scripts/security_gate_runner.py \
+		scripts/security_policy.py \
+		scripts/security_tools.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py
 
@@ -87,6 +95,10 @@ security:
 		scripts/plan_evidence.py \
 		scripts/render_ci_terraform.py \
 		scripts/release_manifest.py \
+		scripts/sanitize_sarif.py \
+		scripts/security_gate_runner.py \
+		scripts/security_policy.py \
+		scripts/security_tools.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))
@@ -95,6 +107,17 @@ security:
 	$(UV_RUN) pip-audit --strict --require-hashes --disable-pip --progress-spinner=off \
 		--cache-dir $(PIP_AUDIT_CACHE_DIR) --requirement $(PIP_AUDIT_REQUIREMENTS)
 	./scripts/check_no_secrets.sh
+
+security-tools-bootstrap:
+	uv run --frozen --no-sync python -m scripts.security_tools bootstrap
+
+security-tools-check:
+	uv run --frozen --no-sync python -m scripts.security_tools check
+
+security-scan: security-tools-check
+	./scripts/security_scan.sh repository
+
+release-gates: verify security-scan
 
 generate-data:
 	$(UV_RUN) python -m modelguard.training.cli generate \
@@ -113,6 +136,7 @@ verify-model:
 		--bundle "$(MODEL_BUNDLE)" --trusted-origin
 
 api:
+	# Keep explicit process bounds separate from the public Make target name.
 	API_MAX_CONCURRENCY="$(API_MAX_CONCURRENCY)" \
 	API_INFERENCE_WORKERS="$(API_INFERENCE_WORKERS)" \
 	GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS="$(API_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)" \

@@ -33,17 +33,19 @@
 
 ## Evidence
 
-- Commands: See `reports/phase-09.md` for the exact local gate and skipped network/GitHub checks.
+- Commands: See `reports/phase-09.md` for the original closure and `reports/phase-09-1.md` for the
+  superseding reproducible scanner gate and exact local results.
 - Test results: 255 passed; 84.72% branch coverage. Phase 09 focus: 39 passed; combined Phase 08/09
   security contracts: 56 passed; the targeted KMS/bearer selection passed all 23 cases; strict hashed
   pip-audit found no known vulnerabilities after the audited dependency repair.
 - Artifact paths: Workflow-only ignored paths under `artifacts/ci/`,
   `artifacts/container-security/`, `artifacts/image-release/`, and `artifacts/deploy/`; repository
-  evidence is recorded in `reports/phase-09.md`, `tasks/phase_status.json`, and the 277-path
-  `FILE_MANIFEST.txt`.
+  evidence is recorded in `reports/phase-09.md`, `reports/phase-09-1.md`,
+  `checklists/PHASE_09_1.md`, `tasks/phase_status.json`, and `FILE_MANIFEST.txt`.
 - Commit: Controlled by the final independent closure gate; its hash is reported separately because
   a commit cannot contain its own identity.
-- Residual risks: No GitHub/OIDC/AWS workflow has executed. Provider-backed Terraform validation,
-  actionlint, yamllint, ShellCheck, Trivy, Gitleaks, and Checkov were unavailable locally and remain
+- Residual risks: No GitHub/OIDC/AWS workflow has executed. Phase 09.1 ran actionlint, yamllint,
+  ShellCheck, Checkov, Gitleaks, and Trivy locally through the pinned repository toolchain; live
+  GitHub expression/SARIF/OIDC/artifact behavior and provider-backed Terraform validation remain
   mandatory release-runner gates. Phase 10 runtime activation remains fail-closed until API bundle
   hydration, dashboard AWS config, and monitor `aws-run` exist.

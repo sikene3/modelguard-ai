@@ -78,7 +78,7 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Images have health checks and minimal runtime dependencies.
 - [x] `docker compose up --build` starts the local demo.
 - [x] Smoke script sends traffic and verifies API/dashboard/monitor behavior.
-- [x] Trivy reports no unaccepted critical findings.
+- [x] Trivy reports no unaccepted HIGH or CRITICAL findings for exact immutable image IDs.
 
 ## Terraform and AWS
 
@@ -90,6 +90,14 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] GitHub Actions uses customized exact-subject OIDC, not stored AWS access keys; IAM is updated
       before the matching repository subject template, and live claim exchange remains a Phase 10
       execution check.
+- [x] actionlint, ShellCheck, Checkov, Gitleaks, and Trivy share one repository-owned fail-closed
+      local/CI gate and one exact version/checksum-or-digest lock; missing tools and scanner nonzero
+      exits fail the release gate.
+- [x] Release scans cover every workflow, tracked shell plus embedded workflow Bash, Terraform,
+      Dockerfiles, GitHub Actions, full Git history, the current worktree, repository files/config,
+      and the exact build-produced image identities.
+- [x] Security jobs have no AWS identity or deployment authority; supported scanner evidence is
+      sanitized SARIF, and no raw secret match, cache, database, state, or saved plan is uploaded.
 - [x] ALB requires explicit restricted CIDR; private tasks have no public IP.
 - [x] Two AZs, one documented NAT, S3 endpoint, state bootstrap, budget alert, alarm matrix, and
       guarded verified destroy are implemented.

@@ -98,7 +98,11 @@ aws elbv2 describe-target-groups \
 aws ec2 describe-vpcs \
   --filters Name=tag:Project,Values=modelguard-ai Name=tag:Environment,Values=demo \
   --query 'Vpcs[].VpcId' --output json > "$inventory_dir/vpcs.json"
-# The backticks delimit a JMESPath literal; single quotes intentionally prevent shell expansion.
+# security-suppression:
+# finding=SC2016
+# justification=The JMESPath literal is static and intentionally single-quoted.
+# owner=modelguard-maintainers
+# expires=2026-10-31
 # shellcheck disable=SC2016
 aws ec2 describe-nat-gateways \
   --filter Name=tag:Project,Values=modelguard-ai Name=tag:Environment,Values=demo \

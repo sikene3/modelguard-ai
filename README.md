@@ -11,6 +11,9 @@ quality/security evidence, full-history secret scanning, credentialless Terrafor
 trusted non-applying plans, build-once image scanning/publication, and a protected two-plan demo
 deployment with customized legacy/immutable OIDC subjects, notification-PII-free saved plans,
 immutable ECR digests, smoke checks, and separate ECS/model rollback targets.
+Phase 09.1 makes the five release scanners reproducible: one reviewed lock pins actionlint,
+ShellCheck, Checkov, Trivy, and Gitleaks; the same repository scripts enforce them locally and in
+GitHub Actions; and only sanitized SARIF is eligible for Code Scanning upload.
 
 No GitHub workflow or AWS plan/apply/destroy has run from this tree. The deployment remains
 deliberately fail-closed because the current API/dashboard/monitor images do not yet satisfy the AWS
@@ -26,13 +29,16 @@ The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHIT
 - Git, Make, and uv 0.12.x.
 - Python is pinned by `.python-version` and `requires-python` to Python 3.12; developer commands use
   `uv run` and never rely on the host's unversioned `python3` command.
-- Docker Engine and Docker Compose 2 or newer for Phase 07. Terraform 1.10 or newer and Checkov are
-  required for the infrastructure gate. Trivy is required for the image-security gate. Pinned CI
-  jobs enforce actionlint and yamllint; the repository shell check uses ShellCheck when installed.
+- Docker Engine and Docker Compose 2 or newer for Phase 07 and the repository-local Checkov OCI
+  image. Terraform 1.10 or newer remains required for provider-backed infrastructure validation.
+  The five security scanners are installed only under ignored `.cache/security-tools/` from the
+  checksums or OCI digest in `security/security-tools.lock.json`; no global scanner install is used.
 
 ```bash
 ./scripts/verify_environment.sh
 uv sync --all-groups --locked
+make security-tools-bootstrap
+make security-tools-check
 uv run python -c 'import modelguard; print(modelguard.__version__)'
 ```
 
@@ -47,19 +53,25 @@ make lint         # formatting and lint checks
 make typecheck    # strict Mypy checks for src/ and deployment-control helpers
 make test         # Pytest with branch coverage
 make security     # Bandit, pip-audit, and a basic redacted secret/file check
+make security-tools-bootstrap # install the exact repository-local scanner toolchain
+make security-tools-check     # verify cached scanner versions and artifact identities
+make security-scan # actionlint, ShellCheck, Checkov, Gitleaks, and Trivy
+make release-gates # make verify plus every reproducible security scan
 make api          # bounded local FastAPI server on 127.0.0.1:8000
 make load-test    # test a separately running local API against explicit load targets
 make docker-build # build the three provenance-labeled local images
 make smoke-local  # verify container health, prediction, events, report, and dashboard
 make demo-local   # run the repeatable Healthy -> Drifted container flow
 make e2e-local    # exercise insufficient data, corrupt bundle, and sink outage
-make scan-images  # capture/evaluate machine-readable critical Trivy findings
+make scan-images  # scan exact local image IDs for HIGH/CRITICAL findings
 make verify       # quality/security gates plus verification of the generated bundle
 ```
 
-The repository-level shell secret check is basic defense in depth. CI additionally runs a pinned,
-fully redacted Gitleaks scan over fetched repository history with exact, owned, expiring exceptions;
-neither replaces human review of staged changes.
+The repository-level shell secret check is basic defense in depth. `make security-scan` additionally
+runs pinned Gitleaks against complete Git history and an approved current-worktree snapshot with
+100% value redaction and exact, owned, expiring exceptions; neither replaces human review of staged
+changes. See [docs/CICD_SECURITY.md](docs/CICD_SECURITY.md) for tool pins, suppression policy, SARIF
+handling, and update procedure.
 
 ## Audited local training
 

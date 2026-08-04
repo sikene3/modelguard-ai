@@ -1,5 +1,6 @@
 name: Publish immutable images
 
+# checkov:skip=CKV_GHA_7:Strict inputs gate privileged work. [owner=modelguard-maintainers; expires=2026-10-31]
 on:
   workflow_call:
     inputs:
@@ -43,23 +44,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Protected build, scan, push, and digest resolution
+  build-scan:
+    name: Credentialless build and exact-digest image scans
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: demo
     permissions:
       contents: read
-      id-token: write
+      security-events: write
     outputs:
-      api_ref: ${{ steps.manifest.outputs.api_ref }}
-      dashboard_ref: ${{ steps.manifest.outputs.dashboard_ref }}
-      monitor_ref: ${{ steps.manifest.outputs.monitor_ref }}
-      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+      transfer_manifest_sha256: ${{ steps.transfer.outputs.manifest_sha256 }}
     env:
-      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       PROVENANCE_TAG: git-${{ inputs.source_commit }}
     steps:
@@ -72,8 +66,6 @@ jobs:
           test "$CONFIRMATION" = "PUBLISH modelguard-ai images"
           test "$SOURCE_COMMIT" = "$WORKFLOW_COMMIT"
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
-          [[ "$AWS_REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -87,17 +79,18 @@ jobs:
           enable-cache: true
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
+      - name: Install only the checksum-verified Trivy binary
+        run: uv run --frozen --no-sync python -m scripts.security_tools bootstrap --tool trivy
       - name: Refuse any release stage that bypasses a digest-pinned base
         run: >-
           uv run --frozen --no-sync python -m scripts.release_manifest verify-source
           --repository-root .
-      - name: Build all three release images exactly once
+      - name: Build all three release images exactly once without cloud credentials
         run: |
-          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           lock_sha="$(sha256sum uv.lock | awk '{print $1}')"
-          mkdir -p artifacts/image-release
+          mkdir -p artifacts/image-build
           for component in api dashboard monitor; do
-            image_ref="${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
+            image_ref="modelguard-release-${component}:${PROVENANCE_TAG}"
             docker build --pull \
               --file "docker/${component}.Dockerfile" \
               --build-arg "SOURCE_REVISION=${SOURCE_COMMIT}" \
@@ -105,59 +98,140 @@ jobs:
               --tag "$image_ref" .
             docker image inspect "$image_ref" | \
               jq '[.[] | {Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}]' \
-                >"artifacts/image-release/inspect-${component}.json"
+                >"artifacts/image-build/inspect-${component}.json"
           done
-      - name: Scan API once and create its CycloneDX SBOM
-        id: scan_api
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/api:${{ env.PROVENANCE_TAG }}
-          format: cyclonedx
-          output: artifacts/image-release/api.cdx.json
-          exit-code: "1"
-          ignore-unfixed: false
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
-          version: v0.70.0
-      - name: Scan dashboard once and create its CycloneDX SBOM
-        id: scan_dashboard
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/dashboard:${{ env.PROVENANCE_TAG }}
-          format: cyclonedx
-          output: artifacts/image-release/dashboard.cdx.json
-          exit-code: "1"
-          ignore-unfixed: false
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
-          version: v0.70.0
-      - name: Scan monitor once and create its CycloneDX SBOM
-        id: scan_monitor
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/monitor:${{ env.PROVENANCE_TAG }}
-          format: cyclonedx
-          output: artifacts/image-release/monitor.cdx.json
-          exit-code: "1"
-          ignore-unfixed: false
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
-          version: v0.70.0
-      - name: Require all three image scans before registry access
-        env:
-          API_SCAN_OUTCOME: ${{ steps.scan_api.outcome }}
-          DASHBOARD_SCAN_OUTCOME: ${{ steps.scan_dashboard.outcome }}
-          MONITOR_SCAN_OUTCOME: ${{ steps.scan_monitor.outcome }}
+      - name: Scan each exact content-addressed image and create CycloneDX evidence
         run: |
-          test "$API_SCAN_OUTCOME" = "success"
-          test "$DASHBOARD_SCAN_OUTCOME" = "success"
-          test "$MONITOR_SCAN_OUTCOME" = "success"
+          for component in api dashboard monitor; do
+            image_ref="modelguard-release-${component}:${PROVENANCE_TAG}"
+            image_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
+            ./scripts/security_scan.sh image \
+              --image "$image_id" \
+              --component "$component" \
+              --output-dir artifacts/image-build
+          done
+      - name: Seal the scanned image transfer identity
+        id: transfer
+        run: |
+          docker save --output artifacts/image-build/images.tar \
+            "modelguard-release-api:${PROVENANCE_TAG}" \
+            "modelguard-release-dashboard:${PROVENANCE_TAG}" \
+            "modelguard-release-monitor:${PROVENANCE_TAG}"
+          archive_sha="$(sha256sum artifacts/image-build/images.tar | awk '{print $1}')"
+          api_id="$(docker image inspect --format '{{.Id}}' "modelguard-release-api:${PROVENANCE_TAG}")"
+          dashboard_id="$(docker image inspect --format '{{.Id}}' \
+            "modelguard-release-dashboard:${PROVENANCE_TAG}")"
+          monitor_id="$(docker image inspect --format '{{.Id}}' \
+            "modelguard-release-monitor:${PROVENANCE_TAG}")"
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq object uses only explicitly bound arguments.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
+          # shellcheck disable=SC2016
+          jq -n \
+            --arg source_commit "$SOURCE_COMMIT" \
+            --arg archive_sha256 "$archive_sha" \
+            --arg api_id "$api_id" \
+            --arg dashboard_id "$dashboard_id" \
+            --arg monitor_id "$monitor_id" \
+            '{
+              schema_version:"modelguard.image-build-transfer.v1",
+              source_commit:$source_commit,
+              archive_sha256:$archive_sha256,
+              image_ids:{api:$api_id,dashboard:$dashboard_id,monitor:$monitor_id}
+            }' >artifacts/image-build/build-transfer.json
+          manifest_sha="$(sha256sum artifacts/image-build/build-transfer.json | awk '{print $1}')"
+          echo "manifest_sha256=${manifest_sha}" >>"$GITHUB_OUTPUT"
+      - name: Upload only sanitized image SARIF to GitHub Code Scanning
+        if: ${{ always() && hashFiles('artifacts/security/sarif/*.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
+        with:
+          sarif_file: artifacts/security/sarif
+          category: release-images-${{ inputs.source_commit }}
+          wait-for-processing: true
+      - name: Upload the one-day same-run scanned image transfer
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-build-transfer-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-build/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Protected digest-preserving ECR publication
+    needs: build-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: demo
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    outputs:
+      api_ref: ${{ steps.manifest.outputs.api_ref }}
+      dashboard_ref: ${{ steps.manifest.outputs.dashboard_ref }}
+      monitor_ref: ${{ steps.manifest.outputs.monitor_ref }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      PROVENANCE_TAG: git-${{ inputs.source_commit }}
+      TRANSFER_MANIFEST_SHA256: ${{ needs.build-scan.outputs.transfer_manifest_sha256 }}
+    steps:
+      - name: Refuse an unreviewed source, confirmation, account, or Region
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$CONFIRMATION" = "PUBLISH modelguard-ai images"
+          test "$SOURCE_COMMIT" = "$WORKFLOW_COMMIT"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$AWS_REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]
+          [[ "$TRANSFER_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+      - name: Check out the exact source commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Download only this run's scanned image transfer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: >-
+            image-build-transfer-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-release
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Verify and load only the exact scanned image transfer
+        run: |
+          transfer=artifacts/image-release/build-transfer.json
+          test "$(sha256sum "$transfer" | awk '{print $1}')" = "$TRANSFER_MANIFEST_SHA256"
+          test "$(jq -r .schema_version "$transfer")" = "modelguard.image-build-transfer.v1"
+          test "$(jq -r .source_commit "$transfer")" = "$SOURCE_COMMIT"
+          test "$(sha256sum artifacts/image-release/images.tar | awk '{print $1}')" = \
+            "$(jq -r .archive_sha256 "$transfer")"
+          docker load --input artifacts/image-release/images.tar >/dev/null
+          for component in api dashboard monitor; do
+            image_ref="modelguard-release-${component}:${PROVENANCE_TAG}"
+            actual_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
+            expected_id="$(jq -r --arg component "$component" \
+              '.image_ids[$component]' "$transfer")"
+            test "$actual_id" = "$expected_id"
+            test "$(jq -r '.[0].Id' "artifacts/image-release/inspect-${component}.json")" = \
+              "$expected_id"
+          done
+          rm -f artifacts/image-release/images.tar artifacts/image-release/build-transfer.json
       - name: Assume the protected-environment deploy role through OIDC
         uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
         with:
@@ -166,7 +240,6 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
-          # ECR digest job outputs contain this non-secret provenance value.
           mask-aws-account-id: false
       - name: Verify account, repositories, and create-only tags
         run: |
@@ -181,15 +254,18 @@ jobs:
               exit 1
             fi
           done
-      - name: Authenticate to ECR only after all scans pass
+      - name: Authenticate to ECR only after the image transfer is verified
         run: |
           registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
-      - name: Push each already-scanned image without rebuilding
+      - name: Tag and push each already-scanned image without rebuilding
         run: |
           registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           for component in api dashboard monitor; do
-            docker push "${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
+            local_ref="modelguard-release-${component}:${PROVENANCE_TAG}"
+            remote_ref="${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
+            docker tag "$local_ref" "$remote_ref"
+            docker push "$remote_ref"
             aws ecr describe-images \
               --repository-name "modelguard-ai/demo/${component}" \
               --image-ids "imageTag=${PROVENANCE_TAG}" \
@@ -216,15 +292,6 @@ jobs:
           path: artifacts/image-release/
           if-no-files-found: error
           retention-days: 30
-      - name: Upload partial scan evidence after a refusal
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: >-
-            refused-image-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/image-release/
-          if-no-files-found: warn
-          retention-days: 14
       - name: End the ECR registry session
         if: ${{ always() }}
         run: docker logout "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" || true

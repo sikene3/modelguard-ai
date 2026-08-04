@@ -8,6 +8,10 @@ on:
       - ".streamlit/**"
       - "pyproject.toml"
       - "uv.lock"
+      - "security/**"
+      - "scripts/security_*.py"
+      - "scripts/security_scan.sh"
+      - "scripts/sanitize_sarif.py"
       - ".github/workflows/container-security.yml"
   push:
     branches: [main]
@@ -17,6 +21,10 @@ on:
       - ".streamlit/**"
       - "pyproject.toml"
       - "uv.lock"
+      - "security/**"
+      - "scripts/security_*.py"
+      - "scripts/security_scan.sh"
+      - "scripts/sanitize_sarif.py"
       - ".github/workflows/container-security.yml"
   workflow_dispatch:
 
@@ -28,6 +36,9 @@ jobs:
     name: Build and scan ${{ matrix.component }} once
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +48,16 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Install only the checksum-verified Trivy binary
+        run: uv run --frozen --no-sync python -m scripts.security_tools bootstrap --tool trivy
       - name: Build the digest-based release Dockerfile once
         env:
           COMPONENT: ${{ matrix.component }}
@@ -52,18 +73,24 @@ jobs:
           docker image inspect "modelguard-${COMPONENT}:scan-${SOURCE_COMMIT}" | \
             jq '[.[] | {Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}]' \
               >"artifacts/container-security/${COMPONENT}/image-inspect.json"
-      - name: Generate CycloneDX SBOM and enforce the vulnerability gate
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Scan the exact content-addressed image and generate CycloneDX evidence
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          image_id="$(docker image inspect \
+            --format '{{.Id}}' "modelguard-${COMPONENT}:scan-${SOURCE_COMMIT}")"
+          ./scripts/security_scan.sh image \
+            --image "$image_id" \
+            --component "$COMPONENT" \
+            --output-dir "artifacts/container-security/${COMPONENT}"
+      - name: Upload only sanitized image SARIF to GitHub Code Scanning
+        if: ${{ always() && hashFiles('artifacts/security/sarif/*.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
         with:
-          image-ref: modelguard-${{ matrix.component }}:scan-${{ github.sha }}
-          format: cyclonedx
-          output: artifacts/container-security/${{ matrix.component }}/${{ matrix.component }}.cdx.json
-          exit-code: "1"
-          ignore-unfixed: false
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          vuln-type: os,library
-          version: v0.70.0
+          sarif_file: artifacts/security/sarif
+          category: trivy-image-${{ matrix.component }}-${{ github.sha }}
+          wait-for-processing: true
       - name: Upload image metadata, SBOM, and vulnerability evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

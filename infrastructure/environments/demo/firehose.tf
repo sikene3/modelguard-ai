@@ -1,5 +1,5 @@
 resource "aws_kinesis_firehose_delivery_stream" "predictions" {
-  # checkov:skip=CKV_AWS_241:AWS-owned Firehose encryption avoids a disposable customer key lingering after teardown; payloads are synthetic and destination S3 encryption is mandatory.
+  # checkov:skip=CKV_AWS_241:AWS-owned Firehose encryption avoids a disposable customer key lingering after teardown; payloads are synthetic and destination S3 encryption is mandatory. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name        = "${local.name_prefix}-predictions"
   destination = "extended_s3"

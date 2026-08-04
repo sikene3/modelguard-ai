@@ -164,8 +164,12 @@ terraform -chdir=infrastructure/bootstrap init -backend=false
 terraform -chdir=infrastructure/bootstrap validate
 terraform -chdir=infrastructure/environments/demo init -backend=false
 terraform -chdir=infrastructure/environments/demo validate
-checkov -d infrastructure
+make security-tools-bootstrap
+make security-scan
 ```
+
+The shared Checkov invocation uses the exact locked OCI digest and covers Terraform, Dockerfiles,
+and GitHub Actions. It must not be replaced with an unpinned global `checkov` command.
 
 Initialization generates one reviewed `.terraform.lock.hcl` in each root. Both lock files pin the
 same signed hashicorp/aws version and checksum set; commit them, but never commit `.terraform/`

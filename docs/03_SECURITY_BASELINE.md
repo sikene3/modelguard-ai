@@ -33,17 +33,18 @@
 - No compiler/build toolchain in runtime images where practical.
 - Read-only root filesystem where the application supports it.
 - Drop unnecessary Linux capabilities.
-- Trivy scanning with documented exceptions and expiry.
+- Checksum-pinned Trivy scanning of repository files/configuration and exact image IDs, with HIGH and
+  CRITICAL findings blocking and only documented, owned, expiring exceptions.
 - The local Compose services repeat numeric UID/GID `10001:10001`, use read-only root filesystems,
   drop all capabilities, and expose ports only on loopback. Image construction removes every
   setuid/setgid executable before switching to the non-root runtime identity.
 - Model/config files are mounted read-only; the only shared write target is a synthetic named runtime
   volume. The Docker socket, credentials, `.env`, model bundles, and generated reports are absent
   from image layers.
-- Critical scan exceptions are exact image/CVE/package records with rationale, owner, and a maximum
+- Image scan exceptions are exact image/CVE/package records with rationale, owner, and a maximum
   90-day expiry. Stale, unmatched, malformed, duplicate, and expired records fail the evaluator.
 - Phase 07 uses the official Python 3.12.13 Alpine 3.23 index pinned by digest. The current Trivy
-  release gate scans all three final images and permits no unaccepted critical finding; the committed
+  release gate scans all three final images and permits no unaccepted HIGH or CRITICAL finding; the committed
   exception list is empty.
 
 ## AWS
@@ -68,7 +69,11 @@
 
 ## CI/CD
 
-- Ruff, Mypy, Pytest, Bandit, pip-audit, Trivy, and Checkov.
+- Ruff, Mypy, Pytest, Bandit, hashed pip-audit, actionlint, ShellCheck, Checkov, Gitleaks, and Trivy.
+- One version-controlled lock pins every release scanner by exact version plus archive SHA-256 or OCI
+  digest. Local and CI execution use the same repository-owned scripts and ignored local cache.
+- Scanner failures are blocking. Sanitized SARIF is uploaded where supported; raw matches, caches,
+  vulnerability databases, environment dumps, saved plans, and secrets are never scan artifacts.
 - Untrusted pull requests cannot obtain AWS credentials.
 - Apply/deploy is manual or protected.
 - Actions and release base images are pinned; one scanned Git-SHA image is deployed by digest.

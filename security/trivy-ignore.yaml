@@ -1,0 +1,22 @@
+{
+  "misconfigurations": [
+    {
+      "id": "AWS-0053",
+      "paths": ["infrastructure/environments/demo/alb.tf"],
+      "statement": "owner=modelguard-maintainers; justification=The temporary internet-facing ALB accepts traffic only from one explicit non-world CIDR.",
+      "expired_at": "2026-10-31T23:59:59Z"
+    },
+    {
+      "id": "AWS-0054",
+      "paths": ["infrastructure/environments/demo/alb.tf"],
+      "statement": "owner=modelguard-maintainers; justification=The conditional HTTP listener is a token-free restricted-CIDR synthetic fallback; HTTPS remains preferred.",
+      "expired_at": "2026-10-31T23:59:59Z"
+    },
+    {
+      "id": "AWS-0132",
+      "paths": ["infrastructure/modules/data_plane/main.tf"],
+      "statement": "owner=modelguard-maintainers; justification=Mandatory SSE-S3 avoids leaving a disposable customer key pending deletion after verified teardown.",
+      "expired_at": "2026-10-31T23:59:59Z"
+    }
+  ]
+}

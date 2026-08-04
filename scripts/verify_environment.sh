@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root" || exit 1
 
 required=(git make uv)
-optional=(codex docker terraform aws jq trivy checkov shellcheck)
+optional=(codex docker terraform aws jq)
 missing=0
 
 echo "== Required tools =="
@@ -56,6 +56,14 @@ for cmd in "${optional[@]}"; do
     printf "[OPTIONAL MISSING] %s\n" "$cmd"
   fi
 done
+
+echo
+echo "== Repository-local security scanners =="
+if [[ -f .cache/security-tools/install-state.json && -d .venv ]]; then
+  uv run --frozen --no-sync python -m scripts.security_tools check
+else
+  echo "[OPTIONAL MISSING] run make security-tools-bootstrap after uv sync"
+fi
 
 echo
 echo "== Core versions =="

@@ -48,9 +48,9 @@ resource "terraform_data" "bootstrap_guard" {
 }
 
 data "aws_iam_policy_document" "state_kms" {
-  # checkov:skip=CKV_AWS_109:The same-account root is the standard recovery/IAM boundary; service principals are separately limited by exact account, source ARN, SNS context, and regional SNS ViaService.
-  # checkov:skip=CKV_AWS_111:KMS key policies require Resource="*" to denote their own key; every service use has exact account, source ARN, SNS context, and regional SNS ViaService conditions.
-  # checkov:skip=CKV_AWS_356:The key-policy resource cannot be its not-yet-created ARN; exact principals, actions, account, source ARNs, SNS context, and ViaService bound every statement.
+  # checkov:skip=CKV_AWS_109:The same-account root is the standard recovery/IAM boundary; service principals are separately limited by exact account, source ARN, SNS context, and regional SNS ViaService. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_111:KMS key policies require Resource="*" to denote their own key; every service use has exact account, source ARN, SNS context, and regional SNS ViaService conditions. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_356:The key-policy resource cannot be its not-yet-created ARN; exact principals, actions, account, source ARNs, SNS context, and ViaService bound every statement. [owner=modelguard-maintainers; expires=2026-10-31]
 
   statement {
     sid    = "AccountControlsKeyAndEnablesIamDelegation"
@@ -198,9 +198,9 @@ resource "aws_kms_alias" "state" {
 }
 
 resource "aws_s3_bucket" "state" {
-  # checkov:skip=CKV_AWS_18:Retained state uses a separately retained CloudTrail data-event trail; a state-owned logging bucket would create circular ownership.
-  # checkov:skip=CKV_AWS_144:Cross-Region replication is outside this single-Region portfolio demo; KMS encryption, versioning, and guarded retention are enabled.
-  # checkov:skip=CKV2_AWS_62:State-bucket event notifications are not a project contract; access is audited by the separately retained CloudTrail prerequisite.
+  # checkov:skip=CKV_AWS_18:Retained state uses a separately retained CloudTrail data-event trail; a state-owned logging bucket would create circular ownership. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_144:Cross-Region replication is outside this single-Region portfolio demo; KMS encryption, versioning, and guarded retention are enabled. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV2_AWS_62:State-bucket event notifications are not a project contract; access is audited by the separately retained CloudTrail prerequisite. [owner=modelguard-maintainers; expires=2026-10-31]
 
   bucket        = local.state_bucket_name
   force_destroy = false

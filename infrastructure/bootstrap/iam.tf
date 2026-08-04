@@ -645,8 +645,8 @@ data "aws_iam_policy_document" "ci_plan_read" {
 }
 
 data "aws_iam_policy_document" "ci_deploy_compute" {
-  # checkov:skip=CKV_AWS_111:The enumerated EC2 lifecycle calls operate on generated and association IDs that cannot all be known before creation; exact account, Region, state, plan, and tag guards compensate.
-  # checkov:skip=CKV_AWS_356:Only enumerated EC2 lifecycle calls and tagged ECS CreateCluster use Resource="*"; all resource-addressable compute actions use exact demo ARNs.
+  # checkov:skip=CKV_AWS_111:The enumerated EC2 lifecycle calls operate on generated and association IDs that cannot all be known before creation; exact account, Region, state, plan, and tag guards compensate. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_356:Only enumerated EC2 lifecycle calls and tagged ECS CreateCluster use Resource="*"; all resource-addressable compute actions use exact demo ARNs. [owner=modelguard-maintainers; expires=2026-10-31]
 
   # EC2 lifecycle APIs span newly generated VPC/subnet/route/SG/NAT IDs and several association
   # resources that cannot all be predicted before create. This is the sole mutation statement with

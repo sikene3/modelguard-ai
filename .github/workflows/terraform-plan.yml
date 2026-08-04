@@ -27,7 +27,7 @@ env:
 
 jobs:
   static-validation:
-    name: Credentialless Terraform and Checkov gates
+    name: Credentialless Terraform formatting and validation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -40,12 +40,6 @@ jobs:
         with:
           terraform_version: 1.10.5
           terraform_wrapper: false
-      - name: Install pinned uv and Python
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: 0.12.1
-          python-version: "3.12"
-          enable-cache: true
       - name: Check Terraform formatting
         run: terraform fmt -check -recursive infrastructure
       - name: Initialize and validate bootstrap without a backend
@@ -58,20 +52,6 @@ jobs:
           terraform -chdir=infrastructure/environments/demo init -backend=false -input=false \
             -lockfile=readonly
           terraform -chdir=infrastructure/environments/demo validate
-      - name: Run pinned Checkov
-        run: |
-          mkdir -p artifacts/terraform-static
-          uvx --from checkov==3.3.9 checkov -d infrastructure \
-            --quiet --skip-download --output json \
-            >artifacts/terraform-static/checkov.json
-      - name: Upload credentialless Terraform policy evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: terraform-static-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/terraform-static/checkov.json
-          if-no-files-found: warn
-          retention-days: 14
 
   trusted-prerequisite-plan:
     name: Trusted main-ref prerequisite plan

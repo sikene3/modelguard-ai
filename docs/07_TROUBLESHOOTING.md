@@ -58,9 +58,10 @@ Do not reuse a hand-written event directory. `smoke_local.sh`, `demo_local.sh`, 
 create unique named-volume namespaces and validate exact counts. Keep the default minimum counts;
 lowering drift thresholds or the monitoring minimum to force a pass invalidates the evidence.
 
-## Trivy critical finding
+## Trivy HIGH or CRITICAL finding
 
-Run `./scripts/scan_local_images.sh`, inspect its JSON evidence, and follow the remediation order in
+Run `./scripts/scan_local_images.sh`, inspect its CycloneDX and sanitized SARIF evidence, and follow
+the remediation order in
 `docs/CONTAINER_LOCAL_DEMO.md`. Upgrade a locked dependency or pinned base digest first. Temporary
 exceptions require an exact finding/package/image match, rationale, owner, and expiry of at most 90
 days; expired, stale, or unmatched exceptions fail the evaluator.

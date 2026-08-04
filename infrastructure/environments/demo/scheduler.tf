@@ -5,7 +5,7 @@ resource "aws_scheduler_schedule_group" "monitor" {
 }
 
 resource "aws_scheduler_schedule" "monitor" {
-  # checkov:skip=CKV_AWS_297:AWS-owned Scheduler encryption is sufficient for a synthetic command with no secret payload and avoids a disposable customer key lingering after teardown.
+  # checkov:skip=CKV_AWS_297:AWS-owned Scheduler encryption is sufficient for a synthetic command with no secret payload and avoids a disposable customer key lingering after teardown. [owner=modelguard-maintainers; expires=2026-10-31]
 
   name                         = "${local.name_prefix}-monitor"
   group_name                   = aws_scheduler_schedule_group.monitor.name

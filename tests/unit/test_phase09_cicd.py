@@ -411,15 +411,17 @@ def test_required_workflows_parse_and_external_actions_are_commit_pinned(
                 continue
             assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action), action
     ci = _read(repository_root, ".github/workflows/ci.yml")
+    security_scan = _read(repository_root, "scripts/security_scan.sh")
     assert "fetch-depth: 0" in ci
-    assert "--redact=100" in ci
-    assert re.search(r"ghcr\.io/gitleaks/gitleaks:v[0-9.]+@sha256:[0-9a-f]{64}", ci)
-    assert "ACTIONLINT_COMMIT: a443f344ff32813837fa49f7aa6cbc478d770e62" in ci
+    assert "--redact=100" in security_scan
+    assert "make security-tools-bootstrap" in ci
+    assert "make security-scan" in ci
+    assert "security-tools.lock.json" in _read(repository_root, "scripts/security_tools.py")
     assert "yamllint==1.37.1" in ci
     assert "UV_FROZEN" not in ci
     assert "uv sync --all-groups --locked" in ci
-    assert "./scripts/check_shell.sh" in ci
-    assert "Require every security gate" in ci
+    assert "continue-on-error" not in ci
+    assert "github/codeql-action/upload-sarif@" in ci
 
 
 def test_untrusted_workflows_have_no_oidc_or_aws_and_plan_never_applies(
@@ -612,21 +614,18 @@ def test_release_build_scan_push_and_digest_promotion_order_is_fail_closed(
         "Assume the protected-environment deploy role through OIDC"
     )
     assert publish.index("Build all three release images exactly once") < publish.index(
-        "Scan API once"
+        "Scan each exact content-addressed image"
     )
-    assert publish.count("continue-on-error: true") == 3
-    assert publish.index("Scan monitor once") < publish.index(
-        "Require all three image scans before registry access"
-    )
-    assert publish.index("Require all three image scans before registry access") < publish.index(
+    assert "continue-on-error" not in publish
+    assert publish.index("Scan each exact content-addressed image") < publish.index(
         "Assume the protected-environment deploy role through OIDC"
     )
     assert publish.index(
         "Assume the protected-environment deploy role through OIDC"
-    ) < publish.index("Authenticate to ECR only after all scans pass")
-    assert publish.index("Authenticate to ECR only after all scans pass") < publish.index(
-        "Push each already-scanned image"
-    )
+    ) < publish.index("Authenticate to ECR only after the image transfer is verified")
+    assert publish.index(
+        "Authenticate to ECR only after the image transfer is verified"
+    ) < publish.index("Tag and push each already-scanned image")
     assert "git-${{ inputs.source_commit }}" in publish
     assert "@sha256:" in _read(repository_root, "scripts/verify_release_runtime.sh")
     assert "latest" not in "\n".join(

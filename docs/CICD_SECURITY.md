@@ -9,8 +9,8 @@ must pass. No workflow accepts or uses a long-lived AWS access key.
 
 | Workflow | Trigger | AWS identity | Mutation boundary | Durable evidence |
 | --- | --- | --- | --- | --- |
-| `ci.yml` | pull request, protected `main`, manual | none | none | test, coverage, Bandit, dependency-audit, and redacted history-scan reports |
-| `container-security.yml` | relevant pull request/`main` changes, manual | none | local runner images only | per-image inspect metadata and CycloneDX SBOM/vulnerability report |
+| `ci.yml` | pull request, protected `main`, manual | none | none | test, coverage, Bandit, dependency-audit, and sanitized repository-scan SARIF |
+| `container-security.yml` | relevant pull request/`main` changes, manual | none | local runner images only | per-image inspect metadata, CycloneDX evidence, and sanitized SARIF |
 | `terraform-plan.yml` | relevant pull request/`main` changes, manual | exact customized `demo-plan`/main/workflow plan subject | saved plan only; never apply | value-free resource/action summary plus sealed plan identity |
 | `publish-images.yml` | protected manual dispatch or protected reusable call | exact `demo` environment deploy role | create-only Git-SHA ECR tags | image/SBOM/source/digest release manifest |
 | `deploy-demo.yml` | protected manual dispatch on `main` | exact `demo` environment deploy role | reviewed prerequisite apply, then reviewed activation apply | plan identities, release manifest, verified inputs, smoke/deployment record, rollback evidence |
@@ -79,14 +79,13 @@ guarded human/SSO `scripts/safe_destroy.sh` path until live deployment and teard
 
 ## Required GitHub protections
 
-Protect `main` against direct pushes and require pull requests. At minimum, require the five always-
+Protect `main` against direct pushes and require pull requests. At minimum, require the four always-
 running CI job checks:
 
 - `CI / Format, lint, and typecheck`
 - `CI / Pytest and branch coverage`
-- `CI / Bandit and dependency audit`
-- `CI / Full-history secret scan`
-- `CI / Workflow syntax and YAML lint`
+- `CI / Reproducible security release gates`
+- `CI / Workflow YAML compatibility lint`
 
 Use path-aware rules or required-workflow rules for container and Terraform checks. Do not make a
 path-filtered check globally required on repositories where GitHub leaves an untriggered check in a
@@ -265,14 +264,69 @@ contains only resource addresses/actions and the sealed plan hash, source commit
 backend identity, workspace, workflow run, and tool versions. The trusted non-applying main plan
 deletes its raw saved plan and uploads only this redacted evidence.
 
-## Secret scanning and supply-chain pins
+## Reproducible security release gates
 
-`ci.yml` checks out full history and runs Gitleaks 8.30.1 from the exact GHCR digest in the workflow.
-The scanner uses 100% value redaction; its intermediate report is deleted, and only value-free scope
-metadata is uploaded. `.github/secret-scanning-allowlist.json` is empty by default. An exception must
-bind one exact fingerprint, repository-relative path, rule ID, 40-character commit, rationale of at
-least 20 characters, owner, and UTC expiry date no more than 90 days away. Expired, overlong,
-duplicate, unused, wildcarded, malformed, or unowned exceptions fail the gate.
+The Phase 09.1 read-first audit classified all five scanners as **partially enforced**; none was
+absent and none yet met the complete local/CI reproducibility contract:
+
+| Scanner | Before Phase 09.1 | Repaired enforcement |
+| --- | --- | --- |
+| actionlint | CI-only source installation; no shared local cache or command | every workflow through the shared script, with the exact local ShellCheck binary for embedded Bash |
+| ShellCheck | repository script skipped when the host binary was missing | every approved shell file plus embedded workflow Bash; a missing pinned binary fails |
+| Checkov | Terraform-only workflow invocation through `uvx` | one exact OCI digest scans Terraform, Dockerfiles, and GitHub Actions with one failure policy |
+| Trivy | image-only action/local critical-only paths | filesystem vulnerability/secret, configuration, and exact-image HIGH/CRITICAL gates |
+| Gitleaks | CI history scan with a separate container invocation | complete history plus an approved current-worktree snapshot through one redacted shared gate |
+
+`security/security-tools.lock.json` is the single source of truth. `scripts/security_tools.py`
+strictly validates the schema and rejects floating versions, `latest`, mutable branches, missing
+checksums, and unqualified OCI tags. `make security-tools-bootstrap` installs or caches only under
+ignored `.cache/security-tools/`; `make security-tools-check` verifies the lock identity, installed
+versions, downloaded archive hashes, extracted binary hashes, Checkov image digest, and cached OCI
+archive identity. It never treats a globally installed scanner as release evidence.
+
+`scripts/security_scan.sh` is the sole scanner command used by local gates and GitHub Actions.
+`make security-scan` executes all five scanner groups through `scripts/security_gate_runner.py`,
+preserves each exit status, and fails after all groups run if any tool is missing or returns nonzero.
+`make release-gates` runs the full `make verify` contract followed by those shared scans. There is no
+`continue-on-error`, soft-fail, or forced-zero scanner path.
+
+The CI security job has only `contents: read` and `security-events: write`; it has no protected
+environment, secret reference, OIDC permission, AWS credential step, image publication, or
+deployment command. Container and publish workflows scan in similarly credentialless jobs. The
+protected publisher receives the already scanned exact image archive, verifies its source,
+manifest/archive hashes, and three image IDs before assuming AWS identity; it cannot rerun or bypass
+the scan.
+
+Checkov, Gitleaks, and Trivy outputs are reduced by `scripts/sanitize_sarif.py` to scanner/rule,
+severity, safe repository path/line, and value-free suppression state before upload through the
+pinned CodeQL SARIF action. Raw scanner output exists only in a mode-0700 ignored temporary cache and
+is removed after sanitization. Scanner caches, vulnerability databases, environment dumps, raw
+secret matches, Terraform plans/state, and downloaded binaries are not artifacts.
+
+Gitleaks scans every commit with `--log-opts=--all`, then independently scans a copied approved
+current-worktree snapshot. It uses 100% value redaction, disables inline `gitleaks:allow`, and emits
+only sanitized SARIF. The sole historical exception in
+`.github/secret-scanning-allowlist.json` binds one exact fingerprint, repository-relative path, rule
+ID, 40-character commit, substantive rationale, owner, and UTC expiry; the current worktree has no
+finding. Expired, overlong, duplicate, unused, wildcarded, malformed, or unowned exceptions fail.
+
+All suppressions are version-controlled and policy-checked before their scanner runs:
+
+| Scanner | Approved records | Boundary |
+| --- | ---: | --- |
+| Checkov | 50 inline directives producing 59 resource/file result-instance skips | exact finding and affected block/file, justification, owner `modelguard-maintainers`, expiry 2026-10-31 |
+| ShellCheck | 6 directives | adjacent exact finding, justification, owner, expiry 2026-10-31 |
+| Trivy repository config | 3 path-scoped records | exact misconfiguration ID and path, justification, owner, expiry 2026-10-31 |
+| Trivy images | 0 | exact image/CVE/package registry remains empty |
+| Gitleaks | 1 historical record | exact fingerprint/path/rule/commit, rationale, owner, expiry 2026-10-31 |
+| Bandit release-gate helpers | 6 directives | exact Bandit IDs adjacent to fixed-command/verified-download justification, owner, and expiry 2026-10-31 |
+
+The three repository Trivy configuration suppressions retain the reviewed demo architecture: an
+internet-facing ALB still has an exact non-world CIDR; restricted-CIDR HTTP remains a disclosed
+token-free fallback while HTTPS is preferred; and the teardown-safe delivery bucket keeps mandatory
+SSE-S3. None suppresses a vulnerability or secret finding, and any expiry makes the gate fail.
+
+## Supply-chain pins
 
 External actions are pinned to immutable commits, with the upstream version retained as an inline
 comment:
@@ -285,22 +339,29 @@ comment:
 | `astral-sh/setup-uv` | 8.1.0 | `08807647e7069bb48b6ef5acd8ec9567f424441b` |
 | `hashicorp/setup-terraform` | 3.1.2 | `b9cd54a3c349d3f38e8881555d616ced269862dd` |
 | `aws-actions/configure-aws-credentials` | 6.1.2 | `acca2b1b2070338fb9fd1ca27ecee81d687e58e5` |
-| `aquasecurity/trivy-action` | 0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
+| `github/codeql-action/upload-sarif` | 4.37.5 | `d1ba80a13dd99fba24a470575428917156a28b43` |
 
 Pin review on 2026-08-04 advanced checkout 4.2.2 to 6.0.2, upload-artifact 4.6.2 to
 7.0.1, and download-artifact 4.3.0 to 8.0.1 so every GitHub-owned JavaScript action in this set uses
 the current Node 24 runtime. That review raised the documented self-hosted runner floor to v2.329.0.
 
-Actionlint is installed from source commit
-`a443f344ff32813837fa49f7aa6cbc478d770e62` (release 1.7.9). Gitleaks is pinned to
-`sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f`; Trivy is fixed at
-0.70.0; yamllint at 1.37.1; Checkov at 3.3.9; Terraform at 1.10.5; and uv at 0.12.1. Release
-Dockerfiles pin the full Python base-image digest.
+| Scanner | Version | Approved artifact identity |
+| --- | --- | --- |
+| actionlint | 1.7.9 | release archive SHA-256 `233b280d05e100837f4af1433c7b40a5dcb306e3aa68fb4f17f8a7f45a7df7b4` |
+| ShellCheck | 0.11.0 | release archive SHA-256 `8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198` |
+| Checkov | 3.3.9 | Linux/amd64 OCI digest `sha256:3617c42277657f23ed75a554f10bce3a46867251c1c0ea2e5a1df3bad24e336f` |
+| Trivy | 0.70.0 | release archive SHA-256 `8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9` |
+| Gitleaks | 8.30.1 | release archive SHA-256 `551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb` |
+
+Yamllint remains locked through the Python dependency command at 1.37.1, Terraform at 1.10.5 in
+workflows, and uv at 0.12.1. Release Dockerfiles pin the full Python base-image digest.
 
 For an update, open one dedicated dependency PR. Resolve the advertised version/tag to its upstream
 commit or registry digest from the official project, review release notes and security advisories,
-update the inline version comment and this table, then run CI, actionlint/yamllint, all image scans,
-and the credentialless Terraform validation. Never replace a commit/digest with a floating tag.
+update the lock plus inline action version comments and this table, then delete only the affected
+ignored cached tool, run `make security-tools-bootstrap`, `make security-tools-check`,
+`make release-gates`, all exact image scans, and credentialless Terraform validation. Never replace
+a commit/checksum/digest with a floating tag.
 
 ## Rollback and last-known-good state
 
@@ -343,6 +404,8 @@ the guarded Phase 10 destroy path; AutoDestroyDate is a reminder/guard, not an a
 Run locally:
 
 ```bash
+make security-tools-bootstrap
+make security-tools-check
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync ruff format --check .
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync ruff check .
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync mypy src \
@@ -353,9 +416,13 @@ UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync mypy src \
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync pytest -q
 ./scripts/check_shell.sh
 ./scripts/check_no_secrets.sh
+make security-scan
+make release-gates
 ```
 
-Local YAML parsing and Phase 09 contract tests catch trust/permission/pinning regressions. A real
+The release-gate tests mutate tool pins, scanner availability/exit codes, suppression records,
+workflow action pins, permissions, AWS/deployment access, image identities, and sanitized SARIF.
+Local YAML parsing and Phase 09 contract tests also catch trust and permission regressions. A real
 GitHub run is still required to prove GitHub expression evaluation, environment approvals, OIDC
 claims, artifact transfer, hosted/self-hosted runner behavior, action downloads, and report upload.
 A live Phase 10 AWS run is required to prove IAM authorization, ECR publication, saved-plan apply,

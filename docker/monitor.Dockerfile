@@ -1,5 +1,6 @@
 ARG PYTHON_BASE_IMAGE=python:3.12.13-alpine3.23@sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d
 
+# checkov:skip=CKV_DOCKER_7:The release workflow supplies no override and verifies this exact version-and-digest default before building. [owner=modelguard-maintainers; expires=2026-10-31]
 FROM ${PYTHON_BASE_IMAGE} AS dependencies
 ARG UV_VERSION=0.12.1
 ENV UV_COMPILE_BYTECODE=1 \

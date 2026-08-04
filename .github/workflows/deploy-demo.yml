@@ -1,5 +1,6 @@
 name: Deploy protected demo
 
+# checkov:skip=CKV_GHA_7:Strict inputs gate privileged work. [owner=modelguard-maintainers; expires=2026-10-31]
 on:
   workflow_dispatch:
     inputs:
@@ -292,8 +293,10 @@ jobs:
     name: Build, scan, and publish once after prerequisites
     needs: notification-enrollment-gate
     permissions:
+      actions: read
       contents: read
       id-token: write
+      security-events: write
     uses: ./.github/workflows/publish-images.yml
     with:
       source_commit: ${{ inputs.source_commit }}
@@ -781,12 +784,16 @@ jobs:
             --group-name modelguard-ai-demo-monitor --name modelguard-ai-demo-monitor \
             --query 'Target.EcsParameters.TaskDefinitionArn' --output text)"
           api_image="$(aws ecs describe-task-definition --task-definition "$api_task" \
-            --query 'taskDefinition.containerDefinitions[?name==`api`].image | [0]' --output text)"
+            --query "taskDefinition.containerDefinitions[?name==\`api\`].image | [0]" --output text)"
           dashboard_image="$(aws ecs describe-task-definition --task-definition "$dashboard_task" \
-            --query 'taskDefinition.containerDefinitions[?name==`dashboard`].image | [0]' --output text)"
+            --query "taskDefinition.containerDefinitions[?name==\`dashboard\`].image | [0]" --output text)"
           monitor_image="$(aws ecs describe-task-definition --task-definition "$monitor_task" \
-            --query 'taskDefinition.containerDefinitions[?name==`monitor`].image | [0]' --output text)"
-          # jq variables are intentionally single-quoted.
+            --query "taskDefinition.containerDefinitions[?name==\`monitor\`].image | [0]" --output text)"
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq filter uses only explicitly bound variables.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
           # shellcheck disable=SC2016
           jq -n \
             --arg api "$api_task" \
@@ -794,7 +801,11 @@ jobs:
             --arg monitor "$monitor_task" \
             '{api:$api,dashboard:$dashboard,monitor:$monitor}' \
             >artifacts/deploy/smoke/task-definitions.json
-          # jq variables are intentionally single-quoted.
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq filter uses only explicitly bound variables.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
           # shellcheck disable=SC2016
           jq -n \
             --arg api "$api_image" \
@@ -917,7 +928,11 @@ jobs:
             --group-name modelguard-ai-demo-monitor \
             --name modelguard-ai-demo-monitor \
             >artifacts/deploy/rollback/schedule-before.json
-          # jq variables are intentionally single-quoted.
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq filter uses only the explicitly bound task identity.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
           # shellcheck disable=SC2016
           jq --arg task "$MONITOR_TASK_DEFINITION" \
             'del(.Arn,.CreationDate,.LastModificationDate) |
@@ -929,7 +944,11 @@ jobs:
           aws ecs wait services-stable \
             --cluster modelguard-ai-demo \
             --services modelguard-ai-demo-api modelguard-ai-demo-dashboard
-          # jq variables are intentionally single-quoted.
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq filter uses only explicitly bound variables.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
           # shellcheck disable=SC2016
           jq -n \
             --arg api "$API_TASK_DEFINITION" \

@@ -98,8 +98,22 @@ long-running process; target it with `docker compose run monitor ...` when invok
 terraform fmt -recursive infrastructure
 terraform -chdir=infrastructure/environments/demo init -backend=false
 terraform -chdir=infrastructure/environments/demo validate
-checkov -d infrastructure
+make security-tools-bootstrap
+make security-scan
 ```
+
+## Reproducible security release gates
+
+```bash
+make security-tools-bootstrap
+make security-tools-check
+make security-scan
+make release-gates
+./scripts/scan_local_images.sh  # exact existing api/dashboard/monitor image IDs
+```
+
+The bootstrap writes only to ignored `.cache/security-tools/`. The lock, shared policy, and generated
+sanitized-SARIF contract are documented in `docs/CICD_SECURITY.md`.
 
 ## Git
 
