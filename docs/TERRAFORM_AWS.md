@@ -51,7 +51,7 @@ VPC. No interface endpoints or second NAT are present.
 | Area | Resources | Lifecycle/guard |
 |---|---|---|
 | Bootstrap state | KMS key/alias, S3 bucket, versioning, encryption, public block, TLS-only policy, lifecycle | Retained; `prevent_destroy`; S3 `use_lockfile=true`; separate final cleanup |
-| Bootstrap trust | GitHub OIDC provider, CI plan/deploy roles, workload boundary, four scoped CI managed policies and attachments | Retained with `prevent_destroy`; exact OIDC audience/subjects; demo role cannot mutate them |
+| Bootstrap trust | GitHub OIDC provider, CI plan/deploy roles, workload boundary, retained state/SNS key, four scoped CI managed policies and attachments | Retained with `prevent_destroy`; exact OIDC audience/subjects; demo role cannot mutate them |
 | Network | VPC, IGW, two public and two private subnets, route tables, one EIP/NAT, S3 gateway endpoint, four security groups | Disposable; one NAT is an explicit non-HA cost choice |
 | Images/data | Three immutable ECR repositories; model, prediction, report, and audit S3 buckets | Disposable; force-delete; version and object expiry; no public access |
 | Ingestion | Firehose delivery stream and finite log group/stream | GZIP newline JSON; physical UTC year/month/day/hour prefixes |
@@ -60,7 +60,7 @@ VPC. No interface endpoints or second NAT are present.
 | Identity | Execution, API, dashboard, monitor, Firehose, Scheduler roles and inline policies | Exact project path/names; mandatory bootstrap boundary; separate responsibilities |
 | Model identity | Active and previous SSM String pointers | Explicit unset sentinel; `ignore_changes` gives later values to promotion |
 | Secret reference | ARN of a pre-created SSM SecureString | Terraform never reads the value; ECS `secrets.valueFrom` injects it only into API |
-| Operations | Scheduler/group, SNS topic, optional drift subscription, logs, native/EMF alarms, budget | Finite retention; alarm actions disabled before activation; budget always required |
+| Operations | Scheduler/group, SNS topic/policy, logs, native/EMF alarms, budget | Finite retention; alarm actions disabled before activation; only the email endpoint is enrolled out of band |
 
 Every taggable demo resource receives `Project`, `Environment`, `Owner`, `ManagedBy`, `Ownership`,
 and `AutoDestroyDate`. The date is a plan guard and reminder, never an automatic deletion mechanism.
@@ -73,6 +73,7 @@ and `AutoDestroyDate`. The date is a plan guard and reminder, never an automatic
 | Disposable demo state | VPC through budget, including the six boundary-constrained workload roles | State/trust bucket, KMS, OIDC, CI roles, permission boundary |
 | Model promotion | Active/previous pointer values and controlled ECS rollout decision | Pointer locations, IAM, token value |
 | Human secret operator | Pre-created SecureString and its confirmation/rotation | Terraform state or inputs containing token bytes |
+| Human notification operator | One confirmed SNS email subscriber receiving budget and drift alarms | Terraform variables, plans, state, workflow inputs, or artifacts containing an address |
 | ACM owner | Pre-created certificate used by preferred HTTPS mode | Demo state unless a later phase explicitly changes ownership |
 
 The initial pointer is `modelguard.unset.v1` with `UNSET` identity fields. A promoted active pointer
@@ -136,23 +137,22 @@ account IAM; it does not name not-yet-created CI role principals and does not gr
 
 ## OIDC subjects
 
-The plan role accepts exactly:
+Both roles require `aud=sts.amazonaws.com` and a `StringEquals` subject built from the repository-
+level custom claim order `repo`, `ref`, `environment`, `workflow_ref`. For an immutable repository,
+the subject begins `repo:<owner>@<owner-id>/<repository>@<repository-id>`; an explicitly legacy
+repository begins `repo:<owner>/<repository>`. The remainder always binds `refs/heads/main`, one
+exact protected environment, and one exact workflow path at that same ref.
 
-```text
-aud = sts.amazonaws.com
-sub = repo:<owner>/<repository>:ref:refs/heads/main
-```
+The plan role accepts only `terraform-plan.yml` in `demo-plan`. The deploy role accepts exact
+`deploy-demo.yml` and direct `publish-images.yml` subjects in `demo`, plus the dormant
+`destroy-demo.yml` subject in `demo-destroy`. There is no wildcard repository, ref, environment, or
+workflow condition. See `docs/CICD_SECURITY.md` and `.github/oidc-subject-template.json` for the exact
+subjects, legacy/immutable inputs, and repository setting.
 
-The deploy role accepts two exact alternative subjects, never a wildcard:
-
-```text
-repo:<owner>/<repository>:environment:demo
-repo:<owner>/<repository>:environment:demo-destroy
-```
-
-Phase 09 must ensure fork/untrusted PR jobs receive neither `id-token: write` nor state/AWS
-credentials. The trust policy already rejects PR subjects, branches other than protected main, and
-unprotected environment names.
+Create the matching IAM conditions first through the human/SSO bootstrap. Only after reviewing the
+Terraform subject/template outputs may a repository administrator activate the matching GitHub OIDC
+customization. Switching GitHub first is forbidden. Phase 09 ensures fork/untrusted PR jobs receive
+neither `id-token: write` nor state/AWS credentials.
 
 ## Bootstrap and deployment order
 
@@ -173,10 +173,12 @@ working directories.
 
 ### 2. Human bootstrap in Phase 10
 
-Copy `infrastructure/bootstrap/bootstrap.auto.tfvars.example` to a Git-ignored file. A human uses
-short-lived SSO, verifies STS account and configured Region, produces a saved plan, reviews it, and
-applies it. Preserve bootstrap state in an approved encrypted location. Record only non-secret
-outputs. Before that apply, the account/organization owner must confirm an existing CloudTrail trail
+Copy `infrastructure/bootstrap/bootstrap.auto.tfvars.example` to a Git-ignored file. Supply the exact
+repository names, numeric owner/repository IDs, immutable-subject flag, ref, environments, and
+workflow paths. A human uses short-lived SSO, verifies STS account and configured Region, produces a
+saved plan, reviews it, and applies it before activating the GitHub custom subject template. Preserve
+bootstrap state in an approved encrypted location. Record only non-secret outputs. Before that
+apply, the account/organization owner must confirm an existing CloudTrail trail
 captures S3 data events for the exact future state-bucket ARN; that retained account-level control is
 why this root does not create a circular second state-log bucket.
 
@@ -187,9 +189,10 @@ account/Region naming contract.
 
 ### 3. First reviewed saved plan: prerequisites
 
-Copy `demo.auto.tfvars.example` to a Git-ignored file. Replace the budget placeholder with a human
-destination and set its confirmation true. Use a current restricted CIDR and an AutoDestroyDate no
-more than 14 days away. For HTTPS, include only ACM and SecureString ARNs.
+Copy `demo.auto.tfvars.example` to a Git-ignored file. Use a current restricted CIDR and an
+AutoDestroyDate no more than 14 days away. For HTTPS, include only ACM and SecureString ARNs. No
+notification address is a Terraform input. Set `alert_kms_key_arn` only from the bootstrap
+`alert_kms_key_arn` output; it is non-secret and is bound to the guarded account and Region.
 
 ```bash
 terraform -chdir=infrastructure/environments/demo init \
@@ -204,7 +207,7 @@ The first plan must have `deployment_stage=prerequisites`, `activate_services=fa
 `runtime_contract_verified=false`, no image inputs, API/dashboard desired count zero, and schedule
 disabled. Task definitions use an explicit non-runnable zero digest so no mutable tag ever appears.
 Alarm actions are disabled. The `terraform_data.deployment_guard` lifecycle preconditions make an
-invalid identity, date, budget, transport combination, or stage a plan error. Do not use
+invalid identity, date, transport combination, or stage a plan error. Do not use
 `terraform -target`.
 
 Bind the opaque saved plan to its plan hash, variable-file hash, backend-file hash, account, Region,
@@ -222,8 +225,8 @@ uv run python scripts/terraform_demo_guard.py seal-plan \
 ```
 
 Verification must run immediately before applying the same saved plan in Phase 10. A renamed,
-modified, stale, wrong-commit, wrong-account, wrong-Region, wrong-backend, or wrong-stage plan is
-refused.
+modified, more-than-24-hour-old, implausibly future-dated, wrong-commit, wrong-account, wrong-Region,
+wrong-backend, or wrong-stage plan is refused.
 
 In Phase 10 only, the manual operator path applies this exact file through `scripts/safe_apply.sh`.
 The script rechecks backend/account/Region/default workspace, displays the plan, verifies the sealed
@@ -241,7 +244,16 @@ PLAN_STAGE=prerequisites \
 scripts/safe_apply.sh
 ```
 
-### 4. Publish and verify prerequisites
+### 4. Enroll notifications, then publish and verify prerequisites
+
+The prerequisite apply creates a budget whose 80% actual-cost notification targets the exact SNS
+topic ARN; this is non-secret plan data. A human using short-lived SSO then runs
+`scripts.notification_enrollment enroll` from an interactive terminal. The prompt accepts one
+mandatory SNS email address without echo, writes no files, and emits no address. That single endpoint
+receives both budget and drift alarms, and Terraform never owns or refreshes it. The protected
+deployment calls `scripts.notification_enrollment verify` and refuses before image publication
+unless exactly one confirmed email subscription exists. See
+`docs/CICD_SECURITY.md` for the exact command and permission boundary.
 
 Build each role image once for the reviewed Git SHA, scan that exact image, push one immutable
 `git-<sha>` tag, and resolve it with ECR `DescribeImages`. Activation uses only
@@ -251,9 +263,9 @@ Publish the verified seven-file bundle into the model bucket without overwriting
 read every object back, record every VersionId, and promote the exact active pointer outside
 Terraform. Verify the pointer and bundle. In HTTPS mode, use SSM `DescribeParameters` to prove the
 ARN names a `SecureString` using `alias/aws/ssm` without calling `GetParameter`; verify the ACM
-certificate is issued and covers the ALB hostname, and verify all ECR digests. Confirm the budget
-destination and that the `Project` user cost-allocation tag is active. Run image contract tests proving API model bootstrap,
-dashboard S3 reads, and the monitor's one-shot `aws-run` contract before setting
+certificate is issued and covers the ALB hostname, and verify all ECR digests. Confirm the value-free
+notification enrollment gate and that the `Project` user cost-allocation tag is active. Run image contract
+tests proving API model bootstrap, dashboard S3 reads, and the monitor's one-shot `aws-run` contract before setting
 `runtime_contract_verified=true`.
 
 The current Phase 07 monitor image exposes only the local `run` and `status` commands; it does not
@@ -263,9 +275,11 @@ may be activated until a later phase implements and tests that exact digest-pinn
 
 ### 5. Second reviewed saved plan: activation
 
-Set `deployment_stage=activation`, `activate_services=true`, all three exact digest references, and
-`runtime_contract_verified=true`. The activation plan reads and validates the non-secret active
-pointer, sets desired count one, enables alarm actions, and enables the schedule.
+Set `deployment_stage=activation`, `activate_services=true`, all three exact digest references,
+`runtime_contract_verified=true`, and the verified pointer's model version, manifest SHA-256, and
+seven-entry S3 VersionId map. The activation plan freshly reads the non-secret active pointer and
+requires exact equality with those inputs before setting desired count one, enabling alarm actions,
+and enabling the schedule.
 
 ```bash
 terraform -chdir=infrastructure/environments/demo plan \
@@ -313,12 +327,24 @@ monitor runs, Firehose ingestion, log storage, S3 objects, and the retained stat
 lifecycle rules bound stale images, current objects, noncurrent versions, and incomplete multipart
 uploads. Logs retain 14 days by default. Desired count one and one NAT are non-HA choices.
 
-The monthly USD budget defaults to 25 with an 80% actual-cost email notification. It is mandatory but
-informational, not a quota or hard cap. Its confirmed human destination lives only in ignored
-tfvars. The optional SNS drift email is separate and may remain unset. Before deployment, a billing
-administrator must activate the user-defined `Project` cost-allocation tag and confirm the budget
-subscription; tag activation and cost data can take time, so the budget is never described as a hard
-real-time cap.
+The monthly USD budget defaults to 25. Its 80% actual-cost notification targets the Terraform-owned
+SNS topic by non-secret ARN. The topic policy permits only the exact account's exact budget service
+identity for this publish path. Because AWS Budgets requires a customer-managed key policy for an
+encrypted SNS target, the topic reuses the retained bootstrap KMS key. Exact Budget and CloudWatch
+source ARNs, the source account, the SNS topic encryption context, and exact regional
+`kms:ViaService = sns.<region>.amazonaws.com` conditions are enforced independently inside both
+service-principal key-policy statements; the monitor role is limited to the same key/context/SNS
+path. One confirmed SNS email
+endpoint is enrolled after prerequisite apply by the protected interactive human/SSO contract and
+receives both budget and drift alarms; its address never enters Terraform, state, a saved plan, a
+workflow input, or an artifact. Before deployment, a
+billing administrator must activate the user-defined `Project` cost-allocation tag and confirm the
+SNS subscription; tag activation and cost data can take time, so the budget is never
+described as a hard real-time cap.
+This follows AWS's
+[budget-to-SNS policy](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-sns-policy.html)
+and [encrypted SNS key-policy](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)
+contracts.
 
 Assumptions:
 
@@ -330,9 +356,11 @@ Assumptions:
   an authorized human; the demo deploy role cannot create arbitrary IAM service-linked roles.
 - Required HTTPS AWS API and ECR control-plane egress uses the single NAT. ECR layer objects and demo
   S3 data use the S3 gateway endpoint. No interface endpoints or second NAT are added.
-- The pre-created prediction token uses the AWS-managed SSM key, and the SNS topic uses
-  `alias/aws/sns`; custom key support would require exact-key IAM and key-policy review.
-- CloudWatch alarms publishing to the AWS-managed-key SNS topic, Scheduler dimensions, Firehose
+- The pre-created prediction token uses the AWS-managed SSM key. The SNS topic uses the retained
+  bootstrap customer-managed key with exact source account, source ARN, topic context, and regional
+  SNS ViaService conditions in each Budget/CloudWatch key-policy statement, so both services can
+  publish without creating a second retained key.
+- CloudWatch alarms publishing to the encrypted SNS topic, Scheduler dimensions, Firehose
   delivery, and every digest-pinned image contract require live Phase 10 smoke evidence before
   activation is accepted as operationally complete.
 - S3 demo data uses SSE-S3 so destroy leaves no demo KMS key pending deletion. Data is synthetic,
@@ -348,9 +376,9 @@ wildcard check ID, or repository-wide exception.
 
 | Check (result instances) | Exact scope | Justification/compensating control |
 |---|---|---|
-| `CKV_AWS_109` (1) | `data.aws_iam_policy_document.state_kms` | Same-account root is the standard KMS recovery/IAM-delegation principal; it grants no other account access |
-| `CKV_AWS_111` (2) | `state_kms`; `data.aws_iam_policy_document.ci_deploy_compute` | KMS policy resource must denote its own key; generated EC2/association IDs cannot be known before creation, while actions and account/Region/plan/tag guards are fixed |
-| `CKV_AWS_356` (2) | `state_kms`; `ci_deploy_compute` | Same two unavoidable resource forms; no `Action: "*"`, and resource-addressable workload actions use exact ARNs |
+| `CKV_AWS_109` (1) | `data.aws_iam_policy_document.state_kms` | Same-account root is the standard KMS recovery/IAM-delegation principal; Budget/CloudWatch use is separately limited by exact account, source ARN, SNS context, and regional SNS ViaService |
+| `CKV_AWS_111` (2) | `state_kms`; `data.aws_iam_policy_document.ci_deploy_compute` | KMS policy resource must denote its own key and every service statement has exact source/context/ViaService; generated EC2/association IDs cannot be known before creation, while actions and guards are fixed |
+| `CKV_AWS_356` (2) | `state_kms`; `ci_deploy_compute` | Same two unavoidable resource forms; no `Action: "*"`, KMS service use has exact source/context/ViaService, and resource-addressable workload actions use exact ARNs |
 | `CKV_AWS_18` (2) | `aws_s3_bucket.state`; `module.data_plane.aws_s3_bucket.this` | Retained state requires separately confirmed CloudTrail data events; three demo buckets log to the audit sink, which cannot server-log to itself |
 | `CKV_AWS_144` (2) | Retained state bucket; disposable data-plane bucket resource | Single-Region temporary scope; versioning, encryption, saved state, and finite cleanup remain |
 | `CKV2_AWS_62` (2) | Retained state bucket; disposable data-plane bucket resource | No unconsumed S3 notification path is part of the state, Firehose, or monitor contract |

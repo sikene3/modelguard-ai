@@ -15,9 +15,10 @@ the video and screenshots, then destroy the demo resources.
 - Do not schedule the monitor more frequently than the demo requires.
 - Keep CloudWatch retention short and configurable.
 - Use S3 lifecycle policies to remove prediction events and reports after the demo retention period.
-- Require a small AWS Budget and a confirmed human notification destination that is never committed
-  to Git. The notification is not a hard spending cap. Keep the optional drift SNS subscription
-  separate.
+- Require a small AWS Budget whose 80% notification targets the exact non-secret SNS topic ARN.
+  After prerequisite apply, enroll one confirmed human email endpoint for both budget and drift
+  alarms through the interactive human/SSO command; never place the address in Terraform, state, a
+  saved plan, workflow input, or artifact. The notification is not a hard spending cap.
 - Tag every resource with `Project`, `Environment`, `Owner`, `ManagedBy`, and `AutoDestroyDate`.
   The date is a reminder and guard, not an automatic deletion mechanism.
 - Keep state and locking in a separate bootstrap layer; demo destroy must not own the state bucket.

@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG SOURCE_REVISION=local-uncommitted
-ARG UV_LOCK_SHA256=d91aa5086e9ef4a0fc03802abf77277f988e2aba974c21c8426b5f7ec522a9fd
+ARG UV_LOCK_SHA256=a8a841251ea3520a988d8042be7efabddcb93014f6cd24a40ffb3cf22812aefc
 LABEL org.opencontainers.image.title="ModelGuard AI Monitor" \
       org.opencontainers.image.description="One-shot deterministic local drift monitor" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \

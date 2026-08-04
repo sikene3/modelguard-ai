@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from mlflow import MlflowClient
-from mlflow.environment_variables import MLFLOW_ALLOW_FILE_STORE
+from mlflow import environment_variables as mlflow_environment_variables
 
 from modelguard.core.serialization import canonical_json_bytes
 from modelguard.training.config import TrainingConfig
@@ -25,9 +25,17 @@ class _BooleanEnvironmentVariable(Protocol):
 
 
 def create_local_mlflow_client(tracking_uri: str) -> MlflowClient:
-    """Construct a file-store client with MLflow's explicit maintenance-mode opt-in."""
+    """Construct a local file-store client across supported MLflow minor releases."""
 
-    file_store_opt_in = cast(_BooleanEnvironmentVariable, MLFLOW_ALLOW_FILE_STORE)
+    raw_file_store_opt_in = getattr(
+        mlflow_environment_variables,
+        "MLFLOW_ALLOW_FILE_STORE",
+        None,
+    )
+    if raw_file_store_opt_in is None:
+        return MlflowClient(tracking_uri=tracking_uri)
+
+    file_store_opt_in = cast(_BooleanEnvironmentVariable, raw_file_store_opt_in)
     previously_set = file_store_opt_in.is_set()
     previous_value = file_store_opt_in.get()
     file_store_opt_in.set(True)

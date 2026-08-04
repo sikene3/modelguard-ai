@@ -394,18 +394,24 @@ data "aws_iam_policy_document" "monitor" {
   }
 
   statement {
-    sid    = "UseOnlyAwsManagedSnsKey"
+    sid    = "UseRetainedKeyForExactAlertTopic"
     effect = "Allow"
     actions = [
       "kms:Decrypt",
       "kms:GenerateDataKey",
     ]
-    resources = [local.aws_managed_key_arn_pattern]
+    resources = [var.alert_kms_key_arn]
 
     condition {
-      test     = "ForAnyValue:StringEquals"
-      variable = "kms:ResourceAliases"
-      values   = ["alias/aws/sns"]
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:sns:topicArn"
+      values   = [aws_sns_topic.alerts.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["sns.${var.aws_region}.amazonaws.com"]
     }
   }
 }

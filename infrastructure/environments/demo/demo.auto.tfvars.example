@@ -4,11 +4,7 @@ owner_tag             = "portfolio-owner"
 auto_destroy_date     = "2026-08-09"
 backend_bucket_name   = "modelguard-ai-terraform-state-123456789012-us-east-1"
 permission_boundary_arn = "arn:aws:iam::123456789012:policy/modelguard-ai/bootstrap/modelguard-ai-workload-boundary"
-
-# Always replace this in a Git-ignored demo.auto.tfvars. The committed placeholder is deliberately
-# unconfirmable and a normal plan refuses it.
-budget_notification_email     = "replace-with-confirmed-human-address"
-budget_notification_confirmed = false
+alert_kms_key_arn        = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
 
 alb_allowed_cidr = "203.0.113.10/32"
 
@@ -26,10 +22,21 @@ runtime_contract_verified = false
 # Activation saved plan only: set deployment_stage=activation, activate_services=true, and resolve
 # all three values from ECR DescribeImages. Never use mutable tags.
 # Set runtime_contract_verified=true only after the digest-pinned image contract tests pass.
+# Bind these values to the same verified active pointer; include all seven exact S3 VersionIds.
+# expected_model_version         = "1.0.0"
+# expected_model_manifest_sha256 = "<64-hex>"
+# expected_model_object_version_ids = {
+#   "baseline_profile.json" = "<S3-VersionId>"
+#   "checksums.sha256"      = "<S3-VersionId>"
+#   "input_schema.json"     = "<S3-VersionId>"
+#   "manifest.json"         = "<S3-VersionId>"
+#   "metrics.json"          = "<S3-VersionId>"
+#   "model.joblib"          = "<S3-VersionId>"
+#   "threshold.json"        = "<S3-VersionId>"
+# }
 # api_image_ref       = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/api@sha256:<64-hex>"
 # dashboard_image_ref = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/dashboard@sha256:<64-hex>"
 # monitor_image_ref   = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/monitor@sha256:<64-hex>"
 
-# Optional drift subscription is separate from the mandatory budget destination and must also live
-# only in the ignored file.
-# drift_notification_email = "confirmed-operator-address"
+# The budget targets the non-secret SNS topic ARN in Terraform. Its one email endpoint is not a
+# Terraform variable; enroll and confirm it interactively after the prerequisite apply.

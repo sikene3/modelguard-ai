@@ -1,9 +1,21 @@
-aws_account_id      = "123456789012"
-aws_region          = "us-east-1"
-owner_tag           = "portfolio-owner"
-bootstrap_review_date = "2026-08-16"
-github_repository   = "replace-owner/modelguard-ai"
+aws_account_id             = "123456789012"
+aws_region                 = "us-east-1"
+owner_tag                  = "portfolio-owner"
+bootstrap_review_date      = "2026-08-16"
+github_repository          = "replace-owner/modelguard-ai"
+github_repository_owner_id = "12345678"
+github_repository_id       = "87654321"
 
-# These names produce exact, alternative OIDC subjects. They must be protected GitHub environments.
+# This value must match .github/oidc-subject-template.json. New repositories and repositories that
+# opt in to immutable subjects use true; an existing legacy repository may explicitly use false.
+github_oidc_use_immutable_subject = true
+
+# These exact ref/environment/workflow inputs produce wildcard-free customized OIDC subjects.
+github_allowed_ref         = "refs/heads/main"
+github_plan_environment    = "demo-plan"
 github_deploy_environment  = "demo"
 github_destroy_environment = "demo-destroy"
+github_plan_workflow_path    = ".github/workflows/terraform-plan.yml"
+github_deploy_workflow_path  = ".github/workflows/deploy-demo.yml"
+github_publish_workflow_path = ".github/workflows/publish-images.yml"
+github_destroy_workflow_path = ".github/workflows/destroy-demo.yml"

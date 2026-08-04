@@ -1,0 +1,208 @@
+name: Terraform validation and trusted plan
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - "scripts/terraform_demo_guard.py"
+      - "scripts/render_ci_terraform.py"
+      - "scripts/plan_evidence.py"
+      - ".github/workflows/terraform-plan.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "scripts/terraform_demo_guard.py"
+      - "scripts/render_ci_terraform.py"
+      - "scripts/plan_evidence.py"
+      - ".github/workflows/terraform-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  static-validation:
+    name: Credentialless Terraform and Checkov gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infrastructure
+      - name: Initialize and validate bootstrap without a backend
+        run: |
+          terraform -chdir=infrastructure/bootstrap init -backend=false -input=false \
+            -lockfile=readonly
+          terraform -chdir=infrastructure/bootstrap validate
+      - name: Initialize and validate demo without a backend
+        run: |
+          terraform -chdir=infrastructure/environments/demo init -backend=false -input=false \
+            -lockfile=readonly
+          terraform -chdir=infrastructure/environments/demo validate
+      - name: Run pinned Checkov
+        run: |
+          mkdir -p artifacts/terraform-static
+          uvx --from checkov==3.3.9 checkov -d infrastructure \
+            --quiet --skip-download --output json \
+            >artifacts/terraform-static/checkov.json
+      - name: Upload credentialless Terraform policy evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-static-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/terraform-static/checkov.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  trusted-prerequisite-plan:
+    name: Trusted main-ref prerequisite plan
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: static-validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: demo-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
+      BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+      PERMISSION_BOUNDARY_ARN: ${{ vars.TF_PERMISSION_BOUNDARY_ARN }}
+      ALERT_KMS_KEY_ARN: ${{ vars.TF_ALERT_KMS_KEY_ARN }}
+      OWNER_TAG: ${{ vars.DEMO_OWNER_TAG }}
+      ALB_ALLOWED_CIDR: ${{ vars.DEMO_ALB_ALLOWED_CIDR }}
+      API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
+      ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
+      PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
+      AUTO_DESTROY_DATE: ${{ vars.DEMO_AUTO_DESTROY_DATE }}
+    steps:
+      - name: Check out the exact protected-main source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Assume the exact main-ref plan role through OIDC
+        uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          role-session-name: modelguard-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+      - name: Verify OIDC account identity
+        run: |
+          actual_account="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account" = "$AWS_ACCOUNT_ID"
+      - name: Render and preflight the runtime-disabled inputs
+        run: |
+          uv run --frozen --no-sync python -m scripts.render_ci_terraform \
+            --output-dir artifacts/terraform-plan/input \
+            --stage prerequisites \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --owner-tag "$OWNER_TAG" \
+            --auto-destroy-date "$AUTO_DESTROY_DATE" \
+            --backend-bucket "$BACKEND_BUCKET" \
+            --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
+            --permission-boundary-arn "$PERMISSION_BOUNDARY_ARN" \
+            --alert-kms-key-arn "$ALERT_KMS_KEY_ARN" \
+            --alb-allowed-cidr "$ALB_ALLOWED_CIDR" \
+            --access-mode "$API_ACCESS_MODE" \
+            --acm-certificate-arn "$ACM_CERTIFICATE_ARN" \
+            --prediction-token-ssm-arn "$PREDICTION_TOKEN_SSM_ARN"
+          uv run --frozen --no-sync python scripts/terraform_demo_guard.py preflight \
+            --input artifacts/terraform-plan/input/preflight.json \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --stage prerequisites \
+            --backend-bucket "$BACKEND_BUCKET"
+          rm -f artifacts/terraform-plan/input/preflight.json
+      - name: Create a non-applying saved prerequisite plan
+        run: |
+          terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
+            -lockfile=readonly \
+            -backend-config="$GITHUB_WORKSPACE/artifacts/terraform-plan/input/backend.hcl"
+          test "$(terraform -chdir=infrastructure/environments/demo workspace show)" = "default"
+          if ! terraform -chdir=infrastructure/environments/demo plan -input=false -lock-timeout=5m \
+            -var-file="$GITHUB_WORKSPACE/artifacts/terraform-plan/input/demo-ci.tfvars.json" \
+            -out="$GITHUB_WORKSPACE/artifacts/terraform-plan/prerequisites.tfplan" \
+            -no-color >/dev/null 2>&1; then
+            echo "Terraform prerequisite plan failed; raw output was suppressed." >&2
+            exit 1
+          fi
+      - name: Seal raw plan, source, account, Region, and backend identity
+        run: |
+          uv run --frozen --no-sync python scripts/terraform_demo_guard.py seal-plan \
+            --plan artifacts/terraform-plan/prerequisites.tfplan \
+            --var-file artifacts/terraform-plan/input/demo-ci.tfvars.json \
+            --backend-config artifacts/terraform-plan/input/backend.hcl \
+            --stage prerequisites \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --repository . \
+            --auto-destroy-date "$AUTO_DESTROY_DATE" \
+            --activate-services false \
+            --output artifacts/terraform-plan/prerequisites.tfplan.identity.json
+      - name: Publish only a value-free human plan summary
+        run: |
+          terraform -chdir=infrastructure/environments/demo show -json \
+            "$GITHUB_WORKSPACE/artifacts/terraform-plan/prerequisites.tfplan" 2>/dev/null | \
+            uv run --frozen --no-sync python -m scripts.plan_evidence \
+              --manifest artifacts/terraform-plan/prerequisites.tfplan.identity.json \
+              --output-json artifacts/terraform-plan/prerequisites.redacted.json \
+              --output-markdown artifacts/terraform-plan/prerequisites.redacted.md \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --workflow-ref "$GITHUB_WORKFLOW_REF"
+          cat artifacts/terraform-plan/prerequisites.redacted.md >>"$GITHUB_STEP_SUMMARY"
+          rm -f artifacts/terraform-plan/prerequisites.tfplan
+          rm -rf artifacts/terraform-plan/input
+      - name: Upload redacted plan evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: >-
+            terraform-prerequisite-plan-redacted-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/terraform-plan/prerequisites.redacted.json
+            artifacts/terraform-plan/prerequisites.redacted.md
+            artifacts/terraform-plan/prerequisites.tfplan.identity.json
+          if-no-files-found: error
+          retention-days: 14

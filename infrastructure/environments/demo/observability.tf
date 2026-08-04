@@ -1,17 +1,66 @@
 resource "aws_sns_topic" "alerts" {
   name              = "${local.name_prefix}-alerts"
   display_name      = "ModelGuard demo alerts"
-  kms_master_key_id = "alias/aws/sns"
+  kms_master_key_id = var.alert_kms_key_arn
 
   tags = merge(local.common_tags, { Name = "${local.name_prefix}-alerts" })
 }
 
-resource "aws_sns_topic_subscription" "optional_drift_email" {
-  count = var.drift_notification_email == null ? 0 : 1
+data "aws_iam_policy_document" "alert_topic" {
+  statement {
+    sid       = "AllowExactBudgetNotification"
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
 
-  topic_arn = aws_sns_topic.alerts.arn
-  protocol  = "email"
-  endpoint  = var.drift_notification_email
+    principals {
+      type        = "Service"
+      identifiers = ["budgets.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "AWS:SourceArn"
+      values = [
+        "arn:${local.partition}:budgets::${var.aws_account_id}:budget/${local.name_prefix}-monthly",
+      ]
+    }
+  }
+
+  statement {
+    sid       = "AllowExactCloudWatchAlarmNotifications"
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "AWS:SourceArn"
+      values   = local.alert_alarm_arns
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alerts" {
+  arn    = aws_sns_topic.alerts.arn
+  policy = data.aws_iam_policy_document.alert_topic.json
 }
 
 resource "aws_cloudwatch_log_group" "application" {

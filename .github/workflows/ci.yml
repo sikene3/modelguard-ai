@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_CACHE_DIR: ${{ github.workspace }}/.cache/uv
+  UV_NO_SYNC: "1"
+
+jobs:
+  quality:
+    name: Format, lint, and typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+        env:
+          UV_NO_SYNC: "0"
+      - name: Check Ruff formatting
+        run: uv run ruff format --check .
+      - name: Run Ruff lint
+        run: uv run ruff check .
+      - name: Check repository shell scripts
+        run: ./scripts/check_shell.sh
+      - name: Run strict Mypy
+        run: >-
+          uv run mypy src
+          scripts/terraform_demo_guard.py
+          scripts/notification_enrollment.py
+          scripts/secret_scan_policy.py
+          scripts/plan_evidence.py
+          scripts/render_ci_terraform.py
+          scripts/release_manifest.py
+          scripts/verify_deployment_inputs.py
+          scripts/deployment_record.py
+
+  tests:
+    name: Pytest and branch coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+        env:
+          UV_NO_SYNC: "0"
+      - name: Run tests with portable reports
+        run: |
+          mkdir -p artifacts/ci
+          uv run pytest -q \
+            --junitxml=artifacts/ci/pytest.xml \
+            --cov-report=xml:artifacts/ci/coverage.xml \
+            --cov-report=term-missing:skip-covered
+      - name: Upload test and coverage evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-tests-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ci/pytest.xml
+            artifacts/ci/coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  security:
+    name: Bandit and dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+        env:
+          UV_NO_SYNC: "0"
+      - name: Run Bandit
+        id: bandit
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts/ci
+          uv run bandit -q -r \
+            src \
+            scripts/terraform_demo_guard.py \
+            scripts/notification_enrollment.py \
+            scripts/secret_scan_policy.py \
+            scripts/plan_evidence.py \
+            scripts/render_ci_terraform.py \
+            scripts/release_manifest.py \
+            scripts/verify_deployment_inputs.py \
+            scripts/deployment_record.py \
+            -f json -o artifacts/ci/bandit.json
+      - name: Export a fully hashed audit input
+        id: audit_input
+        continue-on-error: true
+        run: >-
+          uv export --quiet --all-groups --frozen --no-emit-project
+          --output-file artifacts/ci/audit-requirements.txt
+      - name: Run strict pip-audit
+        id: pip_audit
+        if: ${{ steps.audit_input.outcome == 'success' }}
+        continue-on-error: true
+        run: >-
+          uv run pip-audit --strict --require-hashes --disable-pip
+          --progress-spinner=off --format=json
+          --output=artifacts/ci/pip-audit.json
+          --requirement artifacts/ci/audit-requirements.txt
+      - name: Run repository file/secret defense in depth
+        id: repository_defense
+        continue-on-error: true
+        run: ./scripts/check_no_secrets.sh
+      - name: Require every security gate
+        env:
+          AUDIT_INPUT_OUTCOME: ${{ steps.audit_input.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          PIP_AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+          REPOSITORY_DEFENSE_OUTCOME: ${{ steps.repository_defense.outcome }}
+        run: |
+          test "$BANDIT_OUTCOME" = "success"
+          test "$AUDIT_INPUT_OUTCOME" = "success"
+          test "$PIP_AUDIT_OUTCOME" = "success"
+          test "$REPOSITORY_DEFENSE_OUTCOME" = "success"
+      - name: Upload security evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-security-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ci/bandit.json
+            artifacts/ci/pip-audit.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  history-secret-scan:
+    name: Full-history secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out complete repository history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+        env:
+          UV_NO_SYNC: "0"
+      - name: Validate scoped, owned, expiring exceptions
+        run: >-
+          uv run python scripts/secret_scan_policy.py validate
+          --allowlist .github/secret-scanning-allowlist.json
+      - name: Scan all fetched history with a digest-pinned scanner
+        run: |
+          mkdir -p artifacts/ci
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --log-opts=--all --redact=100 --exit-code=0 \
+            --config=.gitleaks.toml --report-format=json \
+            --report-path=artifacts/ci/gitleaks-raw.json .
+          set +e
+          uv run python scripts/secret_scan_policy.py report \
+            --input artifacts/ci/gitleaks-raw.json \
+            --allowlist .github/secret-scanning-allowlist.json \
+            --output artifacts/ci/gitleaks-redacted.json \
+            --scanner-version 8.30.1
+          scan_status=$?
+          set -e
+          rm -f artifacts/ci/gitleaks-raw.json
+          exit "$scan_status"
+      - name: Upload value-free secret-scan evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: secret-scan-redacted-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ci/gitleaks-redacted.json
+          if-no-files-found: error
+          retention-days: 14
+
+  workflow-lint:
+    name: Workflow syntax and YAML lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+      - name: Run locked yamllint
+        run: uvx --from yamllint==1.37.1 yamllint .github/workflows
+      - name: Install commit-pinned actionlint
+        env:
+          ACTIONLINT_COMMIT: a443f344ff32813837fa49f7aa6cbc478d770e62
+        run: |
+          install -d "$RUNNER_TEMP/actionlint/bin"
+          GOBIN="$RUNNER_TEMP/actionlint/bin" \
+            go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_COMMIT}"
+          "$RUNNER_TEMP/actionlint/bin/actionlint" -version
+      - name: Run actionlint
+        run: "$RUNNER_TEMP/actionlint/bin/actionlint"

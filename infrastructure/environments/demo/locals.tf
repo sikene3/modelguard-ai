@@ -51,6 +51,22 @@ locals {
     dashboard = "${var.project_name}/${var.environment}/dashboard"
     monitor   = "${var.project_name}/${var.environment}/monitor"
   }
+  alert_alarm_arns = [
+    for name in [
+      "alb-api-5xx",
+      "alb-api-latency",
+      "alb-api-healthy-hosts",
+      "alb-dashboard-healthy-hosts",
+      "firehose-delivery",
+      "scheduler-target-errors",
+      "api-event-write-failures",
+      "monitor-completion",
+      "monitor-input",
+      "monitor-rejected",
+      "monitor-predictions",
+      "monitor-report-freshness",
+    ] : "arn:${local.partition}:cloudwatch:${var.aws_region}:${var.aws_account_id}:alarm:${local.name_prefix}-${name}"
+  ]
 
   workload_path = "/${var.project_name}/${var.environment}/"
   expected_permission_boundary_arn = (
@@ -166,19 +182,21 @@ resource "terraform_data" "deployment_guard" {
 
     precondition {
       condition = (
-        (var.deployment_stage == "prerequisites" && !var.activate_services) ||
-        (var.deployment_stage == "activation" && var.activate_services)
+        (
+          var.deployment_stage == "prerequisites" &&
+          !var.activate_services &&
+          var.expected_model_version == null &&
+          var.expected_model_manifest_sha256 == null &&
+          length(var.expected_model_object_version_ids) == 0
+        ) ||
+        (
+          var.deployment_stage == "activation" &&
+          var.activate_services &&
+          var.expected_model_version != null &&
+          var.expected_model_manifest_sha256 != null
+        )
       )
-      error_message = "prerequisites must keep activation false; activation must set it true."
-    }
-
-    precondition {
-      condition = (
-        var.budget_notification_confirmed &&
-        can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.budget_notification_email)) &&
-        !endswith(lower(var.budget_notification_email), ".invalid")
-      )
-      error_message = "A noncommitted, confirmed human budget email is mandatory for every deployment plan."
+      error_message = "Prerequisites must omit expected model identity; activation must bind the verified model identity."
     }
 
     precondition {
@@ -225,12 +243,31 @@ resource "terraform_data" "deployment_guard" {
     precondition {
       condition = !var.activate_services ? true : (
         try(local.active_pointer.pointer_schema_version, "") == "modelguard.active-monitor-target.v1" &&
+        try(
+          toset(keys(local.active_pointer.target_identity)) == toset([
+            "event_schema_version",
+            "model_version",
+            "bundle_manifest_sha256",
+            "input_schema_version",
+          ]) &&
+          toset(keys(local.active_pointer.bundle)) == toset([
+            "bucket",
+            "key_prefix",
+            "object_version_ids",
+          ]),
+          false,
+        ) &&
+        try(local.active_pointer.target_identity.event_schema_version, "") == "modelguard.prediction-event.v1" &&
+        try(local.active_pointer.target_identity.input_schema_version, "") == "modelguard.input.v1" &&
         can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", local.active_model_version)) &&
         can(regex("^[0-9a-f]{64}$", local.active_manifest_sha256)) &&
+        local.active_model_version == var.expected_model_version &&
+        local.active_manifest_sha256 == var.expected_model_manifest_sha256 &&
         try(local.active_pointer.bundle.bucket, "") == local.bucket_definitions.models.name &&
         try(local.active_pointer.bundle.key_prefix, "") == "model-bundles/${local.active_model_version}/" &&
         try(
           toset(keys(local.active_pointer.bundle.object_version_ids)) == local.expected_bundle_filenames &&
+          tomap(local.active_pointer.bundle.object_version_ids) == var.expected_model_object_version_ids &&
           alltrue([
             for filename in local.expected_bundle_filenames :
             length(local.active_pointer.bundle.object_version_ids[filename]) > 0
@@ -238,7 +275,7 @@ resource "terraform_data" "deployment_guard" {
           false,
         )
       )
-      error_message = "Activation requires a promoted exact model version/manifest digest and all seven version-pinned bundle objects in the demo model bucket."
+      error_message = "Activation requires the live pointer to equal the verified model version, manifest digest, schemas, and all seven S3 VersionIds."
     }
   }
 }

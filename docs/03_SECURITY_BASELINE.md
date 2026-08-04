@@ -2,8 +2,8 @@
 
 ## Identity and secrets
 
-- GitHub Actions uses separate plan/deploy OIDC roles; trust pins audience and exact repository plus
-  protected environment/ref subject.
+- GitHub Actions uses separate plan/deploy OIDC roles; customized subjects pin audience, exact
+  legacy-or-immutable repository identity, ref, protected environment, and workflow path.
 - No AWS access key or secret key is stored in GitHub Secrets.
 - `.env`, Terraform tfvars containing personal values, state, and generated credentials are ignored.
 - The application does not log environment variables or AWS responses containing credentials.
@@ -22,6 +22,8 @@
 - Health routes are token-exempt/minimal for ALB checks; `/metrics` is not publicly routed in AWS.
 - AWS token bytes come only from a pre-created SSM SecureString injected into ECS. Terraform receives
   the ARN only; rotation forces a controlled deployment and teardown verifies parameter cleanup.
+- Notification addresses enter only the interactive human/SSO enrollment command. They are absent
+  from Terraform variables, state/plans, workflow inputs, and artifacts.
 
 ## Containers
 
@@ -53,8 +55,10 @@
 - Encryption at rest enabled for S3/ECR/CloudWatch-supported resources.
 - IAM separates CI plan/deploy, ECS execution, API, dashboard, monitor, Firehose, and Scheduler.
 - Human/SSO bootstrap owns OIDC roles and a mandatory permission boundary; demo deploy cannot alter
-  it. Protected main-ref and protected-environment OIDC subjects are exact alternatives, and
-  `iam:PassRole` is limited to exact bounded workload roles.
+  it. Every customized OIDC subject binds repository IDs/names, main ref, protected environment,
+  and workflow path; `iam:PassRole` is limited to exact bounded workload roles.
+- The encrypted alert topic uses the retained customer-managed bootstrap key. Budget/CloudWatch and
+  monitor access is limited by exact source, topic encryption context, and SNS service conditions.
 - S3 access limited to required prefixes.
 - CloudWatch retention is finite and configurable.
 - HTTPS uses ACM when available; restricted HTTP is only a disclosed short-lived limitation.
@@ -76,7 +80,7 @@
 
 Capture:
 
-- OIDC trust-policy excerpt with repository and branch/environment condition.
+- OIDC trust-policy excerpt with immutable repository, ref, environment, workflow, and audience.
 - Checkov summary.
 - Trivy summary.
 - IAM role diagram or table.

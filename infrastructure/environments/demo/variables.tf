@@ -95,6 +95,19 @@ variable "permission_boundary_arn" {
   }
 }
 
+variable "alert_kms_key_arn" {
+  description = "Retained bootstrap customer-managed key used only with the exact SNS topic context."
+  type        = string
+
+  validation {
+    condition = can(regex(
+      "^arn:aws:kms:${var.aws_region}:${var.aws_account_id}:key/[0-9a-fA-F-]{36}$",
+      var.alert_kms_key_arn,
+    ))
+    error_message = "alert_kms_key_arn must be one exact KMS key ARN in the guarded account and Region."
+  }
+}
+
 variable "deployment_stage" {
   description = "Reviewed saved-plan stage; activation must exactly agree with activate_services."
   type        = string
@@ -116,6 +129,44 @@ variable "runtime_contract_verified" {
   description = "Human/CI proof that all digest-pinned images implement the AWS startup and one-shot monitor contracts."
   type        = bool
   default     = false
+}
+
+variable "expected_model_version" {
+  description = "Verified active-pointer model version bound into an activation plan."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.expected_model_version == null || can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.expected_model_version))
+    error_message = "expected_model_version must be a semantic version when set."
+  }
+}
+
+variable "expected_model_manifest_sha256" {
+  description = "Verified active-pointer bundle manifest SHA-256 bound into an activation plan."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.expected_model_manifest_sha256 == null || can(regex("^[0-9a-f]{64}$", var.expected_model_manifest_sha256))
+    error_message = "expected_model_manifest_sha256 must be an exact lowercase SHA-256 when set."
+  }
+}
+
+variable "expected_model_object_version_ids" {
+  description = "Verified active-pointer S3 VersionIds bound into an activation plan."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for version_id in values(var.expected_model_object_version_ids) :
+      length(version_id) >= 1 && length(version_id) <= 1024
+    ])
+    error_message = "expected_model_object_version_ids values must be nonempty bounded S3 VersionIds."
+  }
 }
 
 variable "availability_zones" {
@@ -337,35 +388,12 @@ variable "maximum_rejected_records" {
 }
 
 variable "budget_limit_usd" {
-  description = "Mandatory small monthly notification budget; informational, never a hard cap."
+  description = "Mandatory small monthly budget; SNS email endpoint enrollment is a separate human/SSO operation."
   type        = number
   default     = 25
 
   validation {
     condition     = var.budget_limit_usd >= 5 && var.budget_limit_usd <= 100
     error_message = "budget_limit_usd must stay between USD 5 and USD 100."
-  }
-}
-
-variable "budget_notification_email" {
-  description = "Confirmed human budget recipient supplied only in a Git-ignored tfvars file."
-  type        = string
-}
-
-variable "budget_notification_confirmed" {
-  description = "Explicit operator assertion that the noncommitted budget destination is human-owned and confirmed."
-  type        = bool
-  default     = false
-}
-
-variable "drift_notification_email" {
-  description = "Optional, noncommitted SNS email for drift transitions; separate from the mandatory budget recipient."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.drift_notification_email == null || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.drift_notification_email))
-    error_message = "drift_notification_email must be a syntactically valid email when set."
   }
 }

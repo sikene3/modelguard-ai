@@ -65,13 +65,30 @@ lint:
 	$(UV_RUN) ruff check .
 
 typecheck:
-	$(UV_RUN) mypy src
+	$(UV_RUN) mypy src \
+		scripts/terraform_demo_guard.py \
+		scripts/notification_enrollment.py \
+		scripts/secret_scan_policy.py \
+		scripts/plan_evidence.py \
+		scripts/render_ci_terraform.py \
+		scripts/release_manifest.py \
+		scripts/verify_deployment_inputs.py \
+		scripts/deployment_record.py
 
 test:
 	$(UV_RUN) pytest -q
 
 security:
-	$(UV_RUN) bandit -q -r src
+	$(UV_RUN) bandit -q -r \
+		src \
+		scripts/terraform_demo_guard.py \
+		scripts/notification_enrollment.py \
+		scripts/secret_scan_policy.py \
+		scripts/plan_evidence.py \
+		scripts/render_ci_terraform.py \
+		scripts/release_manifest.py \
+		scripts/verify_deployment_inputs.py \
+		scripts/deployment_record.py
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))
 	$(UV) export --quiet --all-groups --frozen --no-emit-project \
 		--output-file $(PIP_AUDIT_REQUIREMENTS)

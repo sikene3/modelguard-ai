@@ -17,7 +17,8 @@
 - [x] Circuit breaker
 - [x] Tags/lifecycle
 - [x] Budget alert, alarm matrix, guarded verified destroy
-- [x] Confirmed noncommitted budget recipient; optional drift subscription kept separate
+- [x] Budget targets the non-secret alert-topic ARN; one confirmed noncommitted SNS email endpoint
+      receives both budget and drift notifications
 - [x] Native/EMF source defined and tested for every alarm
 - [x] Prerequisites default runtimes off; second digest-pinned activation plan
 - [x] Non-HA NAT/task and HTTPS egress exceptions documented

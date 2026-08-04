@@ -63,6 +63,54 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_owner_id" {
+  description = "Immutable numeric GitHub owner ID paired with github_repository."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]{0,19}$", var.github_repository_owner_id))
+    error_message = "github_repository_owner_id must be a non-zero numeric GitHub owner ID."
+  }
+}
+
+variable "github_repository_id" {
+  description = "Immutable numeric GitHub repository ID paired with github_repository."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]{0,19}$", var.github_repository_id))
+    error_message = "github_repository_id must be a non-zero numeric GitHub repository ID."
+  }
+}
+
+variable "github_oidc_use_immutable_subject" {
+  description = "Must exactly match the repository OIDC template use_immutable_subject setting."
+  type        = bool
+  default     = true
+}
+
+variable "github_allowed_ref" {
+  description = "Only Git ref allowed in customized GitHub OIDC subjects."
+  type        = string
+  default     = "refs/heads/main"
+
+  validation {
+    condition     = var.github_allowed_ref == "refs/heads/main"
+    error_message = "The Phase 09 OIDC contract permits only refs/heads/main."
+  }
+}
+
+variable "github_plan_environment" {
+  description = "Exact protected environment for the read-only trusted plan job."
+  type        = string
+  default     = "demo-plan"
+
+  validation {
+    condition     = var.github_plan_environment == "demo-plan"
+    error_message = "The plan OIDC subject is pinned to the protected demo-plan environment."
+  }
+}
+
 variable "github_deploy_environment" {
   description = "Exact protected GitHub environment allowed to deploy."
   type        = string
@@ -82,6 +130,50 @@ variable "github_destroy_environment" {
   validation {
     condition     = var.github_destroy_environment == "demo-destroy"
     error_message = "The destroy OIDC subject is pinned to the protected demo-destroy environment."
+  }
+}
+
+variable "github_plan_workflow_path" {
+  description = "Exact workflow path allowed to assume the CI plan role."
+  type        = string
+  default     = ".github/workflows/terraform-plan.yml"
+
+  validation {
+    condition     = var.github_plan_workflow_path == ".github/workflows/terraform-plan.yml"
+    error_message = "The plan role is pinned to .github/workflows/terraform-plan.yml."
+  }
+}
+
+variable "github_deploy_workflow_path" {
+  description = "Exact caller workflow path allowed to assume the deploy role."
+  type        = string
+  default     = ".github/workflows/deploy-demo.yml"
+
+  validation {
+    condition     = var.github_deploy_workflow_path == ".github/workflows/deploy-demo.yml"
+    error_message = "The deploy role is pinned to .github/workflows/deploy-demo.yml."
+  }
+}
+
+variable "github_publish_workflow_path" {
+  description = "Exact directly dispatched image-publish workflow allowed to assume the deploy role."
+  type        = string
+  default     = ".github/workflows/publish-images.yml"
+
+  validation {
+    condition     = var.github_publish_workflow_path == ".github/workflows/publish-images.yml"
+    error_message = "The deploy role is pinned to .github/workflows/publish-images.yml."
+  }
+}
+
+variable "github_destroy_workflow_path" {
+  description = "Exact dormant destroy workflow path; no such workflow is implemented in Phase 09."
+  type        = string
+  default     = ".github/workflows/destroy-demo.yml"
+
+  validation {
+    condition     = var.github_destroy_workflow_path == ".github/workflows/destroy-demo.yml"
+    error_message = "The dormant destroy subject is pinned to .github/workflows/destroy-demo.yml."
   }
 }
 

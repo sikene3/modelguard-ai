@@ -11,24 +11,17 @@ resource "aws_budgets_budget" "demo" {
     values = [format("user:Project$%s", var.project_name)]
   }
 
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 80
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.budget_notification_email]
-  }
-
   tags = merge(local.common_tags, { Name = "${local.name_prefix}-monthly" })
 
-  lifecycle {
-    precondition {
-      condition = (
-        var.budget_notification_confirmed &&
-        can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.budget_notification_email)) &&
-        !endswith(lower(var.budget_notification_email), ".invalid")
-      )
-      error_message = "Budget creation requires a confirmed human recipient from a Git-ignored tfvars file."
-    }
+  # Terraform carries only the non-secret topic ARN. The topic's email subscriber is enrolled
+  # interactively outside Terraform so no address can enter state or a saved plan.
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    threshold                 = 80
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_sns_topic_arns = [aws_sns_topic.alerts.arn]
   }
+
+  depends_on = [aws_sns_topic_policy.alerts]
 }

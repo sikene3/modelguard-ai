@@ -1,0 +1,230 @@
+name: Publish immutable images
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        description: Exact protected-main Git commit to build once
+        required: true
+        type: string
+      confirmation:
+        description: Exact protected pipeline confirmation
+        required: true
+        type: string
+    outputs:
+      api_ref:
+        description: Immutable API repository digest
+        value: ${{ jobs.publish.outputs.api_ref }}
+      dashboard_ref:
+        description: Immutable dashboard repository digest
+        value: ${{ jobs.publish.outputs.dashboard_ref }}
+      monitor_ref:
+        description: Immutable monitor repository digest
+        value: ${{ jobs.publish.outputs.monitor_ref }}
+      manifest_sha256:
+        description: Published image-manifest SHA-256
+        value: ${{ jobs.publish.outputs.manifest_sha256 }}
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact 40-character commit at protected main HEAD
+        required: true
+        type: string
+      confirmation:
+        description: Type PUBLISH modelguard-ai images
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelguard-image-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Protected build, scan, push, and digest resolution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: demo
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api_ref: ${{ steps.manifest.outputs.api_ref }}
+      dashboard_ref: ${{ steps.manifest.outputs.dashboard_ref }}
+      monitor_ref: ${{ steps.manifest.outputs.monitor_ref }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      PROVENANCE_TAG: git-${{ inputs.source_commit }}
+    steps:
+      - name: Refuse an unreviewed source or confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$CONFIRMATION" = "PUBLISH modelguard-ai images"
+          test "$SOURCE_COMMIT" = "$WORKFLOW_COMMIT"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$AWS_REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]
+      - name: Check out the exact source commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Refuse any release stage that bypasses a digest-pinned base
+        run: >-
+          uv run --frozen --no-sync python -m scripts.release_manifest verify-source
+          --repository-root .
+      - name: Build all three release images exactly once
+        run: |
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          lock_sha="$(sha256sum uv.lock | awk '{print $1}')"
+          mkdir -p artifacts/image-release
+          for component in api dashboard monitor; do
+            image_ref="${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
+            docker build --pull \
+              --file "docker/${component}.Dockerfile" \
+              --build-arg "SOURCE_REVISION=${SOURCE_COMMIT}" \
+              --build-arg "UV_LOCK_SHA256=${lock_sha}" \
+              --tag "$image_ref" .
+            docker image inspect "$image_ref" | \
+              jq '[.[] | {Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}]' \
+                >"artifacts/image-release/inspect-${component}.json"
+          done
+      - name: Scan API once and create its CycloneDX SBOM
+        id: scan_api
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/api:${{ env.PROVENANCE_TAG }}
+          format: cyclonedx
+          output: artifacts/image-release/api.cdx.json
+          exit-code: "1"
+          ignore-unfixed: false
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          version: v0.70.0
+      - name: Scan dashboard once and create its CycloneDX SBOM
+        id: scan_dashboard
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/dashboard:${{ env.PROVENANCE_TAG }}
+          format: cyclonedx
+          output: artifacts/image-release/dashboard.cdx.json
+          exit-code: "1"
+          ignore-unfixed: false
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          version: v0.70.0
+      - name: Scan monitor once and create its CycloneDX SBOM
+        id: scan_monitor
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/modelguard-ai/demo/monitor:${{ env.PROVENANCE_TAG }}
+          format: cyclonedx
+          output: artifacts/image-release/monitor.cdx.json
+          exit-code: "1"
+          ignore-unfixed: false
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          version: v0.70.0
+      - name: Require all three image scans before registry access
+        env:
+          API_SCAN_OUTCOME: ${{ steps.scan_api.outcome }}
+          DASHBOARD_SCAN_OUTCOME: ${{ steps.scan_dashboard.outcome }}
+          MONITOR_SCAN_OUTCOME: ${{ steps.scan_monitor.outcome }}
+        run: |
+          test "$API_SCAN_OUTCOME" = "success"
+          test "$DASHBOARD_SCAN_OUTCOME" = "success"
+          test "$MONITOR_SCAN_OUTCOME" = "success"
+      - name: Assume the protected-environment deploy role through OIDC
+        uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: modelguard-publish-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          # ECR digest job outputs contain this non-secret provenance value.
+          mask-aws-account-id: false
+      - name: Verify account, repositories, and create-only tags
+        run: |
+          actual_account="$(aws sts get-caller-identity --query Account --output text)"
+          test "$actual_account" = "$AWS_ACCOUNT_ID"
+          for component in api dashboard monitor; do
+            repository="modelguard-ai/demo/${component}"
+            aws ecr describe-repositories --repository-names "$repository" >/dev/null
+            if aws ecr describe-images --repository-name "$repository" \
+              --image-ids "imageTag=${PROVENANCE_TAG}" >/dev/null 2>&1; then
+              echo "Refusing to overwrite an existing immutable provenance tag."
+              exit 1
+            fi
+          done
+      - name: Authenticate to ECR only after all scans pass
+        run: |
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+      - name: Push each already-scanned image without rebuilding
+        run: |
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          for component in api dashboard monitor; do
+            docker push "${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
+            aws ecr describe-images \
+              --repository-name "modelguard-ai/demo/${component}" \
+              --image-ids "imageTag=${PROVENANCE_TAG}" \
+              >"artifacts/image-release/ecr-${component}.json"
+          done
+      - name: Bind ECR digests, source labels, SBOMs, and Dockerfiles
+        id: manifest
+        run: |
+          uv run --frozen --no-sync python -m scripts.release_manifest create \
+            --repository-root . \
+            --evidence-dir artifacts/image-release \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --source-commit "$SOURCE_COMMIT" \
+            --output artifacts/image-release/image-release-manifest.json \
+            --github-output "$GITHUB_OUTPUT"
+          rm -f artifacts/image-release/inspect-*.json artifacts/image-release/ecr-*.json
+      - name: Upload immutable release and scan evidence
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: >-
+            published-image-manifest-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-release/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload partial scan evidence after a refusal
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: >-
+            refused-image-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image-release/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: End the ECR registry session
+        if: ${{ always() }}
+        run: docker logout "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" || true

@@ -1,0 +1,4 @@
+title = "ModelGuard AI full-history secret scan"
+
+[extend]
+useDefault = true

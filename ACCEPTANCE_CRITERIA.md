@@ -85,31 +85,41 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] `terraform fmt -check`, `validate`, and Checkov pass with documented exceptions only.
 - [x] Separate least-privilege plan/deploy/execution/service/delivery/scheduler roles are scoped.
 - [x] Bootstrap owns OIDC roles and a mandatory permission boundary that demo deploy cannot alter;
-      exact-subject trust and bounded `iam:PassRole` are evidenced.
-- [ ] GitHub Actions uses OIDC, not stored AWS access keys.
+      customized legacy/immutable subjects bind exact repository, ref, protected environment,
+      workflow, and audience; bounded `iam:PassRole` is evidenced.
+- [x] GitHub Actions uses customized exact-subject OIDC, not stored AWS access keys; IAM is updated
+      before the matching repository subject template, and live claim exchange remains a Phase 10
+      execution check.
 - [x] ALB requires explicit restricted CIDR; private tasks have no public IP.
 - [x] Two AZs, one documented NAT, S3 endpoint, state bootstrap, budget alert, alarm matrix, and
       guarded verified destroy are implemented.
-- [x] A confirmed, noncommitted human budget destination is required; drift SNS subscription remains
-      optional, and budget alerts are documented as non-enforcing.
+- [x] The budget targets only the exact non-secret SNS topic ARN; one confirmed human SNS email
+      destination is enrolled through a protected interactive human/SSO boundary after prerequisite
+      apply and receives budget/drift alarms. No address enters Terraform, state, a saved plan, or a
+      workflow artifact; alerts remain non-enforcing.
 - [x] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
       image/model/token prerequisites, then uses a second reviewed digest-pinned activation plan.
 - [x] ECS deployment circuit breaker/rollback is enabled.
 - [ ] Scheduled monitor task can read inputs and write reports.
-- [x] SNS notification is optional and configured without committing an email.
+- [x] SNS email enrollment is interactive, fail-closed before publication, and absent from Terraform
+      state/plans and workflow artifacts. Budget and CloudWatch key-policy statements each enforce
+      exact source-account, source-ARN, topic-context, and regional SNS ViaService conditions.
 - [x] CloudWatch logs and alarms exist; every alarm has a tested native-service or bounded EMF source,
       and scheduler submission is not treated as monitor completion.
 - [ ] `terraform destroy` removes the demo environment without orphaned resources.
 
 ## CI/CD
 
-- [ ] Pull requests run lint, typecheck, tests, and security scans.
-- [ ] Infrastructure plan is reviewable and not auto-applied from untrusted PRs.
-- [ ] Deployment workflow is manual or protected.
-- [ ] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
+- [x] Pull-request workflows define lint, typecheck, tests, and security scans without AWS access.
+- [x] Infrastructure plan is reviewable and not auto-applied from untrusted PRs.
+- [x] Deployment workflow is manual and protected.
+- [x] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
       actions/base images are pinned.
 - [ ] Post-deploy smoke test runs.
-- [ ] Failed deployment does not silently remain marked successful.
+- [x] HTTPS smoke keeps the bearer token out of curl argv/environment and persisted evidence by
+      validating it and supplying the Authorization header only through anonymous config stdin.
+- [x] Failed deployment does not silently remain marked successful and has explicit protected ECS
+      rollback with a separate model-pointer policy.
 
 ## Portfolio assets
 

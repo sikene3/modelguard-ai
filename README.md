@@ -5,19 +5,18 @@ fraud-risk model, observable inference, and deterministic drift incident handlin
 
 ## Current status
 
-The Phase 07 implementation packages the API, read-only dashboard, and one-shot monitor as separate
-digest-pinned, non-root images. Docker Compose mounts the verified bundle/configuration read-only,
-shares only a named synthetic runtime volume, and runs without AWS credentials. Repeatable scripts
-cover API health and prediction, closed event creation, healthy and degraded monitor reports,
-dashboard availability, insufficient data, a corrupt bundle, and a fail-open sink outage.
-Machine-readable traffic/smoke/demo/scan evidence is generated under ignored
-`artifacts/phase-07-evidence/` paths. Phase 08 now defines the separate retained AWS bootstrap and
-disposable demo Terraform architecture, guarded two-plan activation, alarm sources, and verified
-teardown inventory. No AWS plan, apply, or destroy has run. Both Terraform roots validate against
-the locked AWS provider, Checkov passes with only documented resource-local exceptions, and the
-complete local quality/security gate passes. Phase 08 is technically complete but still requires
-independent review and a manual commit before Phase 09. See
-[`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md) and `reports/phase-08.md`.
+Phases 07 and 08 package three digest-pinned, non-root images and define the separate retained AWS
+bootstrap plus disposable demo Terraform architecture. Phase 09 adds SHA-pinned GitHub Actions for
+quality/security evidence, full-history secret scanning, credentialless Terraform validation,
+trusted non-applying plans, build-once image scanning/publication, and a protected two-plan demo
+deployment with customized legacy/immutable OIDC subjects, notification-PII-free saved plans,
+immutable ECR digests, smoke checks, and separate ECS/model rollback targets.
+
+No GitHub workflow or AWS plan/apply/destroy has run from this tree. The deployment remains
+deliberately fail-closed because the current API/dashboard/monitor images do not yet satisfy the AWS
+runtime contract; Phase 10 must implement and test those interfaces before activation. See
+[`docs/CICD_SECURITY.md`](docs/CICD_SECURITY.md),
+[`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-09.md`.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -28,8 +27,8 @@ The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHIT
 - Python is pinned by `.python-version` and `requires-python` to Python 3.12; developer commands use
   `uv run` and never rely on the host's unversioned `python3` command.
 - Docker Engine and Docker Compose 2 or newer for Phase 07. Terraform 1.10 or newer and Checkov are
-  required for the Phase 08 infrastructure gate. Trivy is required for the image-security gate;
-  ShellCheck is used automatically when installed.
+  required for the infrastructure gate. Trivy is required for the image-security gate. Pinned CI
+  jobs enforce actionlint and yamllint; the repository shell check uses ShellCheck when installed.
 
 ```bash
 ./scripts/verify_environment.sh
@@ -45,7 +44,7 @@ remote installer scripts whose artifacts are not pinned and verified in this rep
 ```bash
 make format       # apply Ruff formatting and safe lint fixes
 make lint         # formatting and lint checks
-make typecheck    # strict Mypy checks for src/
+make typecheck    # strict Mypy checks for src/ and deployment-control helpers
 make test         # Pytest with branch coverage
 make security     # Bandit, pip-audit, and a basic redacted secret/file check
 make api          # bounded local FastAPI server on 127.0.0.1:8000
@@ -58,8 +57,9 @@ make scan-images  # capture/evaluate machine-readable critical Trivy findings
 make verify       # quality/security gates plus verification of the generated bundle
 ```
 
-The repository-level secret check is intentionally basic defense in depth; it does not replace a
-dedicated scanner or review of staged changes.
+The repository-level shell secret check is basic defense in depth. CI additionally runs a pinned,
+fully redacted Gitleaks scan over fetched repository history with exact, owned, expiring exceptions;
+neither replaces human review of staged changes.
 
 ## Audited local training
 
@@ -305,16 +305,18 @@ ALB. `/metrics` is a local/test Prometheus surface: the application returns 404 
 and the ALB must not route it publicly. AWS custom application signals use fixed-dimension EMF JSON
 on stdout instead.
 
-An illustrative HTTPS request uses a token already present in the process environment (never a query
-parameter):
+The supported authenticated AWS smoke invocation is the hardened script used by the protected
+deployment workflow:
 
 ```bash
-curl --fail-with-body --proto '=https' \
-  -H "Authorization: Bearer ${PREDICTION_BEARER_TOKEN:?not_set}" \
-  -H 'Content-Type: application/json' \
-  --data @examples/prediction-request.json \
-  https://restricted-demo.example/v1/predict
+./scripts/smoke_aws.sh
 ```
+
+The protected workflow supplies the required environment contract. The script validates and removes
+the bearer from the exported environment before curl starts, then sends the Authorization header
+only through anonymous `curl --disable --config -` stdin. Do not reproduce the request with a token
+in curl arguments, an exported child environment, a command-history entry, or a temporary config
+file.
 
 The restricted HTTP fallback deliberately sends no credential:
 

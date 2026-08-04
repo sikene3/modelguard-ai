@@ -34,7 +34,6 @@ TOKEN_ARN_PATTERN = re.compile(
     r"^arn:[^:]+:ssm:[a-z0-9-]+:[0-9]{12}:"
     r"parameter/modelguard-ai/demo/secrets/[A-Za-z0-9_./-]+$"
 )
-EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MODEL_BUNDLE_FILENAMES = {
     "baseline_profile.json",
     "checksums.sha256",
@@ -44,6 +43,8 @@ MODEL_BUNDLE_FILENAMES = {
     "model.joblib",
     "threshold.json",
 }
+MAX_SAVED_PLAN_AGE = timedelta(hours=24)
+MAX_SAVED_PLAN_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def _expected_backend_bucket(account_id: str, region: str) -> str:
@@ -112,6 +113,26 @@ class ActivePointer(StrictModel):
 
     @model_validator(mode="after")
     def exact_identity(self) -> ActivePointer:
+        if set(self.target_identity) != {
+            "event_schema_version",
+            "model_version",
+            "bundle_manifest_sha256",
+            "input_schema_version",
+        }:
+            raise ValueError("pointer target identity fields must be exact")
+        if (
+            self.target_identity.get("event_schema_version") != "modelguard.prediction-event.v1"
+            or self.target_identity.get("input_schema_version") != "modelguard.input.v1"
+        ):
+            raise ValueError("pointer event and input schema versions must be exact")
+        if set(self.bundle) != {"bucket", "key_prefix", "object_version_ids"}:
+            raise ValueError("pointer bundle fields must be exact")
+        bucket = self.bundle.get("bucket")
+        if (
+            not isinstance(bucket, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) is None
+        ):
+            raise ValueError("pointer bucket name is invalid")
         version = self.target_identity.get("model_version")
         digest = self.target_identity.get("bundle_manifest_sha256")
         if not isinstance(version, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
@@ -124,8 +145,13 @@ class ActivePointer(StrictModel):
         version_ids = self.bundle.get("object_version_ids")
         if not isinstance(version_ids, dict) or set(version_ids) != MODEL_BUNDLE_FILENAMES:
             raise ValueError("pointer must pin every exact model-bundle S3 VersionId")
-        if not all(isinstance(item, str) and item for item in version_ids.values()):
-            raise ValueError("pointer S3 VersionIds cannot be empty")
+        if not all(
+            isinstance(item, str)
+            and 1 <= len(item) <= 1024
+            and not any(ord(character) < 32 for character in item)
+            for item in version_ids.values()
+        ):
+            raise ValueError("pointer S3 VersionIds are invalid")
         return self
 
 
@@ -136,7 +162,13 @@ class PreflightContext(StrictModel):
     environment: Literal["demo"]
     backend_bucket: str = Field(min_length=3)
     backend_key: Literal["modelguard-ai/demo/terraform.tfstate"]
+    backend_kms_key_arn: str = Field(
+        pattern=r"^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-fA-F-]{36}$"
+    )
     workspace: Literal["default"]
+    alert_kms_key_arn: str = Field(
+        pattern=r"^arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-fA-F-]{36}$"
+    )
     stage: Literal["prerequisites", "activation", "destroy"]
     activate_services: bool
     runtime_contract_verified: bool = False
@@ -147,8 +179,6 @@ class PreflightContext(StrictModel):
     image_refs: dict[str, str | None]
     active_pointer: ActivePointer | None = None
     model_bucket: str
-    budget_notification_confirmed: bool
-    budget_notification_email: str
     auto_destroy_date: date
 
     @field_validator("alb_allowed_cidr")
@@ -165,6 +195,11 @@ class PreflightContext(StrictModel):
             raise ValueError("backend bucket does not match the guarded account and Region")
         if self.model_bucket != _expected_model_bucket(self.account_id, self.region):
             raise ValueError("model bucket does not match the guarded account and Region")
+        expected_key_prefix = f"arn:aws:kms:{self.region}:{self.account_id}:key/"
+        if not self.backend_kms_key_arn.startswith(expected_key_prefix):
+            raise ValueError("backend KMS key does not match the guarded account and Region")
+        if self.alert_kms_key_arn != self.backend_kms_key_arn:
+            raise ValueError("alert KMS key must be the exact retained bootstrap key")
         expected_activation = self.stage == "activation"
         if self.stage != "destroy" and self.activate_services != expected_activation:
             raise ValueError("saved-plan stage and activation flag disagree")
@@ -172,12 +207,6 @@ class PreflightContext(StrictModel):
             # Destroy may start from either active or prerequisite state; the saved plan identity,
             # not this flag, is authoritative for destructive intent.
             pass
-        if not self.budget_notification_confirmed:
-            raise ValueError("budget recipient is not confirmed")
-        if EMAIL_PATTERN.fullmatch(self.budget_notification_email) is None:
-            raise ValueError("budget recipient is not a valid human email")
-        if self.budget_notification_email.casefold().endswith(".invalid"):
-            raise ValueError("placeholder budget recipient is forbidden")
         if self.auto_destroy_date < datetime.now(tz=UTC).date():
             raise ValueError("AutoDestroyDate has expired")
         if self.auto_destroy_date > datetime.now(tz=UTC).date() + timedelta(days=14):
@@ -298,6 +327,49 @@ def _validate_backend_identity(values: dict[str, str], *, account_id: str, regio
         raise GuardError("backend_kms_key_identity_mismatch")
 
 
+def verify_active_pointer_binding(
+    *,
+    pointer_response: dict[str, Any],
+    variable_file: Path,
+    account_id: str,
+    region: str,
+) -> None:
+    """Require the live non-secret pointer to equal the activation inputs exactly."""
+
+    parameter = pointer_response.get("Parameter")
+    if not isinstance(parameter, dict):
+        raise GuardError("active_pointer_parameter_missing")
+    if (
+        parameter.get("Name") != f"/{PROJECT}/{ENVIRONMENT}/models/active"
+        or parameter.get("Type") != "String"
+        or not isinstance(parameter.get("Value"), str)
+    ):
+        raise GuardError("active_pointer_parameter_identity_invalid")
+    pointer_payload = json.loads(parameter["Value"])
+    if not isinstance(pointer_payload, dict):
+        raise GuardError("active_pointer_value_not_object")
+    pointer = ActivePointer.model_validate(pointer_payload)
+    tfvars = _load_json(variable_file)
+    expected = {
+        "stage": tfvars.get("deployment_stage"),
+        "activate_services": tfvars.get("activate_services"),
+        "model_version": tfvars.get("expected_model_version"),
+        "manifest_sha256": tfvars.get("expected_model_manifest_sha256"),
+        "object_version_ids": tfvars.get("expected_model_object_version_ids"),
+        "bucket": f"{PROJECT}-{ENVIRONMENT}-{account_id}-{region}-models",
+    }
+    actual = {
+        "stage": "activation",
+        "activate_services": True,
+        "model_version": pointer.target_identity["model_version"],
+        "manifest_sha256": pointer.target_identity["bundle_manifest_sha256"],
+        "object_version_ids": pointer.bundle["object_version_ids"],
+        "bucket": pointer.bundle["bucket"],
+    }
+    if expected != actual:
+        raise GuardError("active_pointer_activation_binding_mismatch")
+
+
 def seal_plan(
     *,
     plan_path: Path,
@@ -350,6 +422,7 @@ def verify_plan(
     stage: Literal["prerequisites", "activation", "destroy"],
     repository: Path,
     today: date | None = None,
+    now: datetime | None = None,
 ) -> None:
     """Refuse a stale, renamed, modified, or cross-identity saved plan."""
 
@@ -376,6 +449,14 @@ def verify_plan(
         raise GuardError("saved_plan_project_environment_mismatch")
     if manifest.workspace != "default":
         raise GuardError("terraform_workspace_mismatch")
+    evaluation_time = now or datetime.now(tz=UTC)
+    if evaluation_time.utcoffset() != timedelta(0):
+        raise GuardError("saved_plan_evaluation_time_not_utc")
+    plan_age = evaluation_time - manifest.sealed_at
+    if plan_age < -MAX_SAVED_PLAN_CLOCK_SKEW:
+        raise GuardError("saved_plan_sealed_at_in_future")
+    if plan_age > MAX_SAVED_PLAN_AGE:
+        raise GuardError("saved_plan_expired")
     if stage != "destroy" and manifest.auto_destroy_date < (today or datetime.now(tz=UTC).date()):
         raise GuardError("saved_plan_auto_destroy_date_expired")
 
@@ -474,6 +555,14 @@ def _parser() -> argparse.ArgumentParser:
     backend.add_argument("--account-id", required=True)
     backend.add_argument("--region", required=True)
 
+    pointer = subparsers.add_parser(
+        "verify-active-pointer", help="verify the live pointer against activation tfvars"
+    )
+    pointer.add_argument("--pointer-response", type=Path, required=True)
+    pointer.add_argument("--var-file", type=Path, required=True)
+    pointer.add_argument("--account-id", required=True)
+    pointer.add_argument("--region", required=True)
+
     for command in ("seal-plan", "verify-plan"):
         item = subparsers.add_parser(command)
         item.add_argument("--plan", type=Path, required=True)
@@ -524,6 +613,15 @@ def main() -> int:
                 region=args.region,
             )
             print('{"status":"passed","guard":"verify-backend"}')
+            return 0
+        if args.command == "verify-active-pointer":
+            verify_active_pointer_binding(
+                pointer_response=_load_json(args.pointer_response),
+                variable_file=args.var_file,
+                account_id=args.account_id,
+                region=args.region,
+            )
+            print('{"status":"passed","guard":"verify-active-pointer"}')
             return 0
         if args.command == "seal-plan":
             manifest = seal_plan(

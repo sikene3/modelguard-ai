@@ -2,11 +2,50 @@ locals {
   partition       = data.aws_partition.current.partition
   github_oidc_arn = "arn:${local.partition}:iam::${var.aws_account_id}:oidc-provider/token.actions.githubusercontent.com"
 
-  plan_subject = "repo:${var.github_repository}:ref:refs/heads/main"
-  deploy_subjects = [
-    "repo:${var.github_repository}:environment:${var.github_deploy_environment}",
-    "repo:${var.github_repository}:environment:${var.github_destroy_environment}",
-  ]
+  github_repository_parts = split("/", var.github_repository)
+  github_repository_subject = var.github_oidc_use_immutable_subject ? (
+    "repo:${local.github_repository_parts[0]}@${var.github_repository_owner_id}/${local.github_repository_parts[1]}@${var.github_repository_id}"
+  ) : "repo:${var.github_repository}"
+  github_workflow_ref_prefix = "${var.github_repository}/"
+
+  plan_subject = join(":", [
+    local.github_repository_subject,
+    "ref",
+    var.github_allowed_ref,
+    "environment",
+    var.github_plan_environment,
+    "workflow_ref",
+    "${local.github_workflow_ref_prefix}${var.github_plan_workflow_path}@${var.github_allowed_ref}",
+  ])
+  deploy_subjects = {
+    deploy = join(":", [
+      local.github_repository_subject,
+      "ref",
+      var.github_allowed_ref,
+      "environment",
+      var.github_deploy_environment,
+      "workflow_ref",
+      "${local.github_workflow_ref_prefix}${var.github_deploy_workflow_path}@${var.github_allowed_ref}",
+    ])
+    publish = join(":", [
+      local.github_repository_subject,
+      "ref",
+      var.github_allowed_ref,
+      "environment",
+      var.github_deploy_environment,
+      "workflow_ref",
+      "${local.github_workflow_ref_prefix}${var.github_publish_workflow_path}@${var.github_allowed_ref}",
+    ])
+    destroy = join(":", [
+      local.github_repository_subject,
+      "ref",
+      var.github_allowed_ref,
+      "environment",
+      var.github_destroy_environment,
+      "workflow_ref",
+      "${local.github_workflow_ref_prefix}${var.github_destroy_workflow_path}@${var.github_allowed_ref}",
+    ])
+  }
 
   bootstrap_path          = "/${var.project_name}/bootstrap/"
   workload_path           = "/${var.project_name}/demo/"
@@ -44,7 +83,6 @@ locals {
   log_stream_arns      = [for arn in local.log_group_arns : "${arn}:log-stream:*"]
   firehose_arn         = "arn:${local.partition}:firehose:${var.aws_region}:${var.aws_account_id}:deliverystream/${var.project_name}-demo-predictions"
   sns_topic_arn        = "arn:${local.partition}:sns:${var.aws_region}:${var.aws_account_id}:${var.project_name}-demo-alerts"
-  sns_subscription_arn = "${local.sns_topic_arn}:*"
   aws_managed_key_arns = "arn:${local.partition}:kms:${var.aws_region}:${var.aws_account_id}:key/*"
   cluster_arn          = "arn:${local.partition}:ecs:${var.aws_region}:${var.aws_account_id}:cluster/${var.project_name}-demo"
   ecs_service_arns = [
@@ -154,10 +192,10 @@ data "aws_iam_policy_document" "workload_boundary" {
     resources = [local.sns_topic_arn]
   }
 
-  # AWS-managed key IDs are service-created and cannot be known in bootstrap. The account/Region
-  # key pattern is therefore constrained by the two exact AWS-managed aliases workloads require.
+  # The AWS-managed SSM key ID is service-created, so the account/Region pattern is constrained by
+  # its exact alias. SNS uses the exact retained bootstrap key in the next statement.
   statement {
-    sid    = "UseApprovedAwsManagedServiceKeys"
+    sid    = "UseApprovedAwsManagedSsmKey"
     effect = "Allow"
     actions = [
       "kms:Decrypt",
@@ -169,9 +207,30 @@ data "aws_iam_policy_document" "workload_boundary" {
       test     = "ForAnyValue:StringEquals"
       variable = "kms:ResourceAliases"
       values = [
-        "alias/aws/sns",
         "alias/aws/ssm",
       ]
+    }
+  }
+
+  statement {
+    sid    = "UseRetainedKeyForExactAlertTopic"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+    ]
+    resources = [aws_kms_key.state.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:sns:topicArn"
+      values   = [local.sns_topic_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["sns.${var.aws_region}.amazonaws.com"]
     }
   }
 
@@ -233,7 +292,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 data "aws_iam_policy_document" "github_plan_trust" {
   statement {
-    sid     = "ExactProtectedMainRef"
+    sid     = "ExactCustomizedPlanSubject"
     effect  = "Allow"
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
@@ -258,7 +317,7 @@ data "aws_iam_policy_document" "github_plan_trust" {
 
 data "aws_iam_policy_document" "github_deploy_trust" {
   statement {
-    sid     = "ExactProtectedEnvironmentAlternatives"
+    sid     = "ExactCustomizedDeploySubjects"
     effect  = "Allow"
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
@@ -276,7 +335,7 @@ data "aws_iam_policy_document" "github_deploy_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = local.deploy_subjects
+      values   = values(local.deploy_subjects)
     }
   }
 }
@@ -851,36 +910,23 @@ data "aws_iam_policy_document" "ci_deploy_operations" {
   }
 
   statement {
-    sid    = "ManageExactAlertTopicAndSubscription"
+    sid    = "ManageExactAlertTopic"
     effect = "Allow"
     actions = [
       "sns:CreateTopic",
       "sns:DeleteTopic",
       "sns:SetTopicAttributes",
-      "sns:Subscribe",
       "sns:TagResource",
-      "sns:Unsubscribe",
       "sns:UntagResource",
     ]
-    resources = [
-      local.sns_topic_arn,
-      local.sns_subscription_arn,
-    ]
+    resources = [local.sns_topic_arn]
   }
 
   statement {
-    sid    = "UseOnlyAwsManagedSnsKeyMetadata"
-    effect = "Allow"
-    actions = [
-      "kms:DescribeKey",
-    ]
-    resources = [local.aws_managed_key_arns]
-
-    condition {
-      test     = "ForAnyValue:StringEquals"
-      variable = "kms:ResourceAliases"
-      values   = ["alias/aws/sns"]
-    }
+    sid       = "ReadRetainedNotificationKeyMetadata"
+    effect    = "Allow"
+    actions   = ["kms:DescribeKey"]
+    resources = [aws_kms_key.state.arn]
   }
 
   statement {

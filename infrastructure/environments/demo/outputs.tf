@@ -60,7 +60,7 @@ output "workload_role_arns" {
 }
 
 output "alert_topic_arn" {
-  description = "KMS-encrypted drift/operations SNS topic; optional subscription is configured separately."
+  description = "KMS-encrypted budget/drift topic; its email endpoint is enrolled outside Terraform."
   value       = aws_sns_topic.alerts.arn
 }
 

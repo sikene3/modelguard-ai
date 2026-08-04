@@ -1,0 +1,10 @@
+{
+  "include_claim_keys": [
+    "repo",
+    "ref",
+    "environment",
+    "workflow_ref"
+  ],
+  "use_default": false,
+  "use_immutable_subject": true
+}

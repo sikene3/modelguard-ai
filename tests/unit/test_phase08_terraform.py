@@ -61,7 +61,13 @@ def _preflight(*, activation: bool, today: date) -> dict[str, Any]:
         "environment": "demo",
         "backend_bucket": "modelguard-ai-terraform-state-123456789012-us-east-1",
         "backend_key": "modelguard-ai/demo/terraform.tfstate",
+        "backend_kms_key_arn": (
+            "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+        ),
         "workspace": "default",
+        "alert_kms_key_arn": (
+            "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+        ),
         "stage": "activation" if activation else "prerequisites",
         "activate_services": activation,
         "runtime_contract_verified": activation,
@@ -84,8 +90,6 @@ def _preflight(*, activation: bool, today: date) -> dict[str, Any]:
         ),
         "active_pointer": _pointer(bucket) if activation else None,
         "model_bucket": bucket,
-        "budget_notification_confirmed": True,
-        "budget_notification_email": "operator" + "@" + "example.test",
         "auto_destroy_date": (today + timedelta(days=7)).isoformat(),
     }
 
@@ -111,12 +115,19 @@ def test_preflight_refuses_every_activation_barrier_and_token_value_field() -> N
         ("alb_allowed_cidr", "0.0.0.0/0"),
         ("prediction_token_ssm_arn", "raw-token-bytes"),
         ("acm_certificate_arn", None),
-        ("budget_notification_confirmed", False),
         ("active_pointer", None),
         ("image_refs", {"api": None, "dashboard": None, "monitor": None}),
         ("backend_key", "other.tfstate"),
         ("backend_bucket", "other-state-bucket"),
         ("model_bucket", "other-model-bucket"),
+        (
+            "alert_kms_key_arn",
+            "arn:aws:kms:eu-west-1:123456789012:key/00000000-0000-0000-0000-000000000000",
+        ),
+        (
+            "backend_kms_key_arn",
+            "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-1111-1111-111111111111",
+        ),
         (
             "acm_certificate_arn",
             "arn:aws:acm:eu-west-1:123456789012:certificate/00000000-0000-0000-0000-000000000000",
@@ -162,6 +173,7 @@ def test_saved_plan_manifest_binds_hash_identity_stage_and_expiry(
         encoding="utf-8",
     )
     today = datetime.now(tz=UTC).date()
+    sealed_at = datetime.now(tz=UTC)
     manifest = seal_plan(
         plan_path=plan,
         variable_file=variables,
@@ -172,7 +184,7 @@ def test_saved_plan_manifest_binds_hash_identity_stage_and_expiry(
         auto_destroy_date=today + timedelta(days=7),
         activate_services=False,
         repository=repository_root,
-        now=datetime.now(tz=UTC),
+        now=sealed_at,
     )
     verify_plan(
         manifest,
@@ -184,7 +196,134 @@ def test_saved_plan_manifest_binds_hash_identity_stage_and_expiry(
         stage="prerequisites",
         repository=repository_root,
         today=today,
+        now=sealed_at + timedelta(minutes=1),
     )
+
+    with pytest.raises(GuardError):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="999999999999",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    with pytest.raises(GuardError):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="eu-west-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    with pytest.raises(GuardError, match="stage"):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="activation",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    wrong_commit = PlanManifest.model_validate({**manifest.model_dump(), "git_commit": "f" * 40})
+    with pytest.raises(GuardError, match="git_commit"):
+        verify_plan(
+            wrong_commit,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    with pytest.raises(ValidationError, match="workspace"):
+        PlanManifest.model_validate({**manifest.model_dump(), "workspace": "other"})
+
+    variables.write_text("activate_services = true\n", encoding="utf-8")
+    with pytest.raises(GuardError, match="variable_file_sha256"):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    variables.write_text("activate_services = false\n", encoding="utf-8")
+    backend.write_text(
+        backend.read_text(encoding="utf-8") + "# identity change\n", encoding="utf-8"
+    )
+    with pytest.raises(GuardError, match="backend_config_sha256"):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at + timedelta(minutes=1),
+        )
+    backend.write_text(
+        backend.read_text(encoding="utf-8").removesuffix("# identity change\n"),
+        encoding="utf-8",
+    )
+
+    stale_manifest = PlanManifest.model_validate(
+        {**manifest.model_dump(), "sealed_at": sealed_at - timedelta(hours=25)}
+    )
+    with pytest.raises(GuardError, match="saved_plan_expired"):
+        verify_plan(
+            stale_manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at,
+        )
+
+    future_manifest = PlanManifest.model_validate(
+        {**manifest.model_dump(), "sealed_at": sealed_at + timedelta(minutes=6)}
+    )
+    with pytest.raises(GuardError, match="saved_plan_sealed_at_in_future"):
+        verify_plan(
+            future_manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository_root,
+            today=today,
+            now=sealed_at,
+        )
 
     plan.write_bytes(b"tampered-plan")
     with pytest.raises(GuardError, match="plan_sha256"):
@@ -301,13 +440,14 @@ def test_bootstrap_owns_exact_oidc_boundary_and_passrole_scope(repository_root: 
 
     assert 'variable = "token.actions.githubusercontent.com:aud"' in bootstrap
     assert 'values   = ["sts.amazonaws.com"]' in bootstrap
-    assert '"repo:${var.github_repository}:ref:refs/heads/main"' in bootstrap
-    assert (
-        '"repo:${var.github_repository}:environment:${var.github_deploy_environment}"' in bootstrap
-    )
-    assert (
-        '"repo:${var.github_repository}:environment:${var.github_destroy_environment}"' in bootstrap
-    )
+    assert "github_repository_owner_id" in bootstrap
+    assert "github_repository_id" in bootstrap
+    assert '"ref"' in bootstrap and "var.github_allowed_ref" in bootstrap
+    assert '"environment"' in bootstrap and '"workflow_ref"' in bootstrap
+    assert "var.github_plan_workflow_path" in bootstrap
+    assert "var.github_deploy_workflow_path" in bootstrap
+    assert "var.github_publish_workflow_path" in bootstrap
+    assert "var.github_destroy_workflow_path" in bootstrap
     assert "token.actions.githubusercontent.com:sub" in bootstrap
     assert "repo:*" not in bootstrap
     assert '"iam:PassRole"' in bootstrap

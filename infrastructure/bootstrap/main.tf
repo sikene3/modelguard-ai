@@ -5,6 +5,24 @@ data "aws_region" "current" {}
 locals {
   environment       = "bootstrap"
   state_bucket_name = "${var.project_name}-terraform-state-${var.aws_account_id}-${var.aws_region}"
+  alert_topic_arn   = "arn:${data.aws_partition.current.partition}:sns:${var.aws_region}:${var.aws_account_id}:${var.project_name}-demo-alerts"
+  budget_source_arn = "arn:${data.aws_partition.current.partition}:budgets::${var.aws_account_id}:budget/${var.project_name}-demo-monthly"
+  alarm_source_arns = [
+    for name in [
+      "alb-api-5xx",
+      "alb-api-latency",
+      "alb-api-healthy-hosts",
+      "alb-dashboard-healthy-hosts",
+      "firehose-delivery",
+      "scheduler-target-errors",
+      "api-event-write-failures",
+      "monitor-completion",
+      "monitor-input",
+      "monitor-rejected",
+      "monitor-predictions",
+      "monitor-report-freshness",
+    ] : "arn:${data.aws_partition.current.partition}:cloudwatch:${var.aws_region}:${var.aws_account_id}:alarm:${var.project_name}-demo-${name}"
+  ]
   common_tags = {
     Project         = var.project_name
     Environment     = local.environment
@@ -30,9 +48,9 @@ resource "terraform_data" "bootstrap_guard" {
 }
 
 data "aws_iam_policy_document" "state_kms" {
-  # checkov:skip=CKV_AWS_109:The account-root statement is the standard KMS key-policy recovery and IAM-delegation boundary; it does not grant another account access.
-  # checkov:skip=CKV_AWS_111:KMS key policies require Resource="*" to denote the key carrying the policy; the principal is this exact account root.
-  # checkov:skip=CKV_AWS_356:KMS key policies cannot replace Resource="*" with the not-yet-created key ARN; the exact same-account principal bounds access.
+  # checkov:skip=CKV_AWS_109:The same-account root is the standard recovery/IAM boundary; service principals are separately limited by exact account, source ARN, SNS context, and regional SNS ViaService.
+  # checkov:skip=CKV_AWS_111:KMS key policies require Resource="*" to denote their own key; every service use has exact account, source ARN, SNS context, and regional SNS ViaService conditions.
+  # checkov:skip=CKV_AWS_356:The key-policy resource cannot be its not-yet-created ARN; exact principals, actions, account, source ARNs, SNS context, and ViaService bound every statement.
 
   statement {
     sid    = "AccountControlsKeyAndEnablesIamDelegation"
@@ -75,10 +93,90 @@ data "aws_iam_policy_document" "state_kms" {
     # KMS key policies require Resource="*" to mean the key carrying this policy.
     resources = ["*"]
   }
+
+  statement {
+    sid    = "AllowExactBudgetEncryptedTopic"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["budgets.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [local.budget_source_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:sns:topicArn"
+      values   = [local.alert_topic_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["sns.${var.aws_region}.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid    = "AllowExactCloudWatchAlarmsEncryptedTopic"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [var.aws_account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = local.alarm_source_arns
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:sns:topicArn"
+      values   = [local.alert_topic_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["sns.${var.aws_region}.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_kms_key" "state" {
-  description             = "ModelGuard Terraform remote-state encryption"
+  description             = "ModelGuard retained state and exact SNS notification encryption"
   enable_key_rotation     = true
   deletion_window_in_days = 30
   policy                  = data.aws_iam_policy_document.state_kms.json

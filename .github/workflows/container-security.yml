@@ -1,0 +1,75 @@
+name: Container security
+
+on:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "src/**"
+      - ".streamlit/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/container-security.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "src/**"
+      - ".streamlit/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/container-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: Build and scan ${{ matrix.component }} once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api, dashboard, monitor]
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build the digest-based release Dockerfile once
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          lock_sha="$(sha256sum uv.lock | awk '{print $1}')"
+          docker build --pull \
+            --file "docker/${COMPONENT}.Dockerfile" \
+            --build-arg "SOURCE_REVISION=${SOURCE_COMMIT}" \
+            --build-arg "UV_LOCK_SHA256=${lock_sha}" \
+            --tag "modelguard-${COMPONENT}:scan-${SOURCE_COMMIT}" .
+          mkdir -p "artifacts/container-security/${COMPONENT}"
+          docker image inspect "modelguard-${COMPONENT}:scan-${SOURCE_COMMIT}" | \
+            jq '[.[] | {Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}]' \
+              >"artifacts/container-security/${COMPONENT}/image-inspect.json"
+      - name: Generate CycloneDX SBOM and enforce the vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: modelguard-${{ matrix.component }}:scan-${{ github.sha }}
+          format: cyclonedx
+          output: artifacts/container-security/${{ matrix.component }}/${{ matrix.component }}.cdx.json
+          exit-code: "1"
+          ignore-unfixed: false
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          version: v0.70.0
+      - name: Upload image metadata, SBOM, and vulnerability evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: >-
+            container-security-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/container-security/${{ matrix.component }}/
+          if-no-files-found: error
+          retention-days: 14
