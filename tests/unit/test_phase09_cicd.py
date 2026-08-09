@@ -638,6 +638,35 @@ def test_release_build_scan_push_and_digest_promotion_order_is_fail_closed(
         assert re.search(r"^ARG PYTHON_BASE_IMAGE=.+@sha256:[0-9a-f]{64}$", dockerfile, re.M)
 
 
+def test_release_manifest_uses_fresh_sanitized_remote_tag_inspection(
+    repository_root: Path,
+) -> None:
+    workflow = _workflow(repository_root, "publish-images.yml")
+    publish_job = workflow["jobs"]["publish"]
+    tag_step = next(
+        step
+        for step in publish_job["steps"]
+        if step.get("name") == "Tag and push each already-scanned image without rebuilding"
+    )
+    tag_script = str(tag_step["run"])
+    sanitized_projection = (
+        "{Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}"
+    )
+
+    assert tag_script.index('docker tag "$local_ref" "$remote_ref"') < tag_script.index(
+        'docker image inspect "$remote_ref"'
+    )
+    assert sanitized_projection in tag_script
+    assert '>"artifacts/image-release/inspect-${component}.json"' in tag_script
+    assert "docker build" not in tag_script
+    assert "security_scan.sh" not in tag_script
+
+    source = _read(repository_root, ".github/workflows/publish-images.yml")
+    assert source.index('docker image inspect "$remote_ref"') < source.index(
+        "python -m scripts.release_manifest create"
+    )
+
+
 def test_history_secret_policy_requires_exact_owned_unexpired_scope(tmp_path: Path) -> None:
     evaluation_date = datetime.now(tz=UTC).date()
     scope = {

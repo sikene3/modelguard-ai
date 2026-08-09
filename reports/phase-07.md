@@ -112,7 +112,11 @@ setuid/setgid files, loopback exposure, and no Docker socket remain enforced and
 ```text
 ./scripts/build_local_images.sh
 PASS — API, dashboard, and monitor built from the pinned Alpine digest. Build context was allowlisted;
-source revision was MGH06___________________________________-dirty and uv.lock SHA-256 was
+the literal embedded revision predates the authorized publication-sanitization rewrite. Its canonical
+rewritten commit is `c3ddaa460e801e74b34ec753128d4befb80dd232`, but that new hash was not the
+literal image label. The corresponding dirty tree was later committed as canonical
+`cc4d85bbc901407fd3715c0bf613c5bd33273272`. This is historical local evidence, not current Git
+provenance. The uv.lock SHA-256 was
 d91aa5086e9ef4a0fc03802abf77277f988e2aba974c21c8426b5f7ec522a9fd.
 
 SOURCE_REVISION=<resolved> UV_LOCK_SHA256=<resolved> docker-compose up --build -d

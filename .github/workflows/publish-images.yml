@@ -350,6 +350,9 @@ jobs:
             remote_ref="${registry}/modelguard-ai/demo/${component}:${PROVENANCE_TAG}"
             docker tag "$local_ref" "$remote_ref"
             docker push "$remote_ref"
+            docker image inspect "$remote_ref" | \
+              jq '[.[] | {Id,RepoTags,RepoDigests,Config:{User:.Config.User,Labels:.Config.Labels}}]' \
+                >"artifacts/image-release/inspect-${component}.json"
             aws ecr describe-images \
               --repository-name "modelguard-ai/demo/${component}" \
               --image-ids "imageTag=${PROVENANCE_TAG}" \

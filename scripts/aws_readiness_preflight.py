@@ -102,9 +102,12 @@ def verify_budget_prerequisite(
         for notification in notifications:
             if not isinstance(notification, Mapping):
                 raise ReadinessRefusal("budget_notifications_malformed")
+            threshold_type = notification.get("ThresholdType")
+            if threshold_type is None:
+                threshold_type = "PERCENTAGE"
             if (
                 notification.get("ComparisonOperator") != "GREATER_THAN"
-                or notification.get("ThresholdType") != "PERCENTAGE"
+                or threshold_type != "PERCENTAGE"
                 or notification.get("NotificationType") not in {"ACTUAL", "FORECASTED"}
             ):
                 raise ReadinessRefusal("budget_notification_contract_mismatch")

@@ -165,6 +165,30 @@ def test_budget_preflight_verifies_exact_value_and_thresholds_without_subscriber
 
 
 @pytest.mark.parametrize(
+    ("include_threshold_type", "threshold_type"),
+    [
+        pytest.param(True, "PERCENTAGE", id="explicit-percentage"),
+        pytest.param(False, None, id="missing-effective-percentage"),
+        pytest.param(True, None, id="null-effective-percentage"),
+    ],
+)
+def test_budget_preflight_normalizes_optional_percentage_threshold_type(
+    include_threshold_type: bool,
+    threshold_type: str | None,
+) -> None:
+    client = BudgetDouble()
+    for notification in client.notifications:
+        if include_threshold_type:
+            notification["ThresholdType"] = threshold_type
+        else:
+            notification.pop("ThresholdType")
+
+    result = verify_budget_prerequisite(client, account_id="123456789012")
+
+    assert result["status"] == "passed"
+
+
+@pytest.mark.parametrize(
     "notifications",
     [
         [],
@@ -204,7 +228,6 @@ def test_budget_preflight_rejects_missing_or_extra_thresholds(
     ("field", "value"),
     [
         ("ComparisonOperator", "LESS_THAN"),
-        ("ThresholdType", "ABSOLUTE_VALUE"),
         ("NotificationType", "UNKNOWN"),
     ],
 )
@@ -214,6 +237,14 @@ def test_budget_preflight_rejects_each_wrong_notification_contract_value(
 ) -> None:
     client = BudgetDouble()
     client.notifications[0][field] = value
+
+    with pytest.raises(ReadinessRefusal, match="budget_notification_contract_mismatch"):
+        verify_budget_prerequisite(client, account_id="123456789012")
+
+
+def test_budget_preflight_rejects_explicit_absolute_threshold_type() -> None:
+    client = BudgetDouble()
+    client.notifications[0]["ThresholdType"] = "ABSOLUTE_VALUE"
 
     with pytest.raises(ReadinessRefusal, match="budget_notification_contract_mismatch"):
         verify_budget_prerequisite(client, account_id="123456789012")

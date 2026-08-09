@@ -2,26 +2,31 @@
 
 ## Outcome
 
-The independent Ultra findings were repaired and committed as
-`MGH11___________________________________` on `main`. No prior Phase 10 work was reset,
-discarded, amended, rebased, or rewritten. The source, container, security, sealed-runtime, smoke,
-demo, and E2E gates passed for that baseline, so the Phase 10 **local code-only readiness segment is
-complete**.
+The independent Ultra findings were repaired in the commit now represented as
+`aad098ccb54d51c64a48b2105992d242f1c96b09` on `main`. The source, container, security,
+sealed-runtime, smoke, demo, and E2E gates passed for that baseline, so the Phase 10 **local
+code-only readiness segment is complete**. A later, explicitly authorized, single pre-publication
+rewrite replaced historical email metadata and host-private paths and removed obsolete
+language-specific documentation. It preserved commit order, names, timestamps, messages, and the
+canonical English project tree. The full original repository and corrective patch remain in a
+verified private backup.
 
-The one descendant live-blocker-remediation patch pins the missing AWS browser-login dependency and
+The descendant live-blocker-remediation commit
+`e5095af0114a938ffb7c779904e140f1db3c49a1` pins the missing AWS browser-login dependency and
 adds the controlled model-bundle publication/promotion implementation described below. Its exact
-commit message is `fix: remediate Phase 10 live deployment blockers`; resolve its content-addressed
-hash from Git history because a commit cannot embed its own hash.
+commit message is `fix: remediate Phase 10 live deployment blockers`.
 
-The overall Phase 10 controlled AWS deployment remains `in_progress` and deployment is still
-**NO-GO**: its live AWS/GitHub/Terraform prerequisites and deployment checklist were not authorized
-or executed. The repository's `runtime_contract_verified` Terraform default remains `false` until a
-future authorized activation supplies registry-digest evidence matching the verified source and all
-three images.
+The overall Phase 10 controlled AWS deployment remains `in_progress`. The browser-authenticated
+non-root AWS identity and the single combined value-free Budget/Firehose preflight passed in
+`us-east-1`; no subscriber endpoint was queried. Repository publication, retained audit bootstrap,
+OIDC/bootstrap, saved plans, applies, artifact publication, live tests, and teardown have not yet
+executed. The repository's `runtime_contract_verified` Terraform default remains `false` until an
+activation supplies registry-digest evidence matching the verified source and all three images.
 
 No GitHub setting, AWS resource, Terraform state, repository remote, push, image/model publication,
-or deployment was created or changed by either local readiness segment. No AWS login or AWS API call
-was run for the remediation. Phase 11 was not started.
+or deployment was created or changed by either local readiness segment or the history rewrite. The
+later AWS calls were read-only identity and prerequisite checks. No Terraform apply/destroy/import,
+state mutation, or Phase 11 work occurred.
 
 ## Consolidated blocker remediation
 
@@ -124,7 +129,7 @@ New or strengthened tests prove:
   mismatch; and
 - Phase 08/09 OIDC, KMS, saved-plan, bearer-token, dependency, and release-gate regressions.
 
-## Baseline validation recorded by `MGH11__`
+## Historical baseline validation for the tree now represented by `aad098c`
 
 ```text
 .venv/bin/pytest -q --no-cov \
@@ -183,7 +188,7 @@ PASS — final documented state reran the complete quality, trusted-model, depen
        workflow, IaC, history/worktree, filesystem, and configuration gates successfully.
 ```
 
-## Image/runtime/container gate — passed
+## Historical image/runtime/container gate — current regeneration pending
 
 The fail-closed host reset removed the conflicting Snap runtime and all authorized legacy Docker
 state, then established one Ubuntu Docker Engine 29.1.3 daemon on `/run/docker.sock` with data root
@@ -191,7 +196,9 @@ state, then established one Ubuntu Docker Engine 29.1.3 daemon on `/run/docker.s
 ModelGuard rebuild. AppArmor, built-in seccomp, and the real Alpine
 `--security-opt no-new-privileges:true` probe passed.
 
-The final source produced these exact immutable local image IDs:
+The pre-rewrite dirty worktree that became the local-readiness baseline produced these historical
+immutable local image IDs. They are functional local evidence only; they are not current
+clean-source publication provenance.
 
 ```text
 sha256:86bac0330814474c913324a9cade13686d44f1a3b8f292edd13d667f3c86fc6b  component=api
@@ -200,9 +207,12 @@ sha256:6d7647a901e45ecaa774cceb799df2c1d34dfdca575a86e83b5bbaf82809285b  compone
 ```
 
 Blocking image scans passed for all three IDs. `scripts/verify_release_runtime.sh` emitted a passing
-`modelguard.runtime-contract-verification.v2` record in `local_image_id` mode, bound to source commit
-`MGH10___________________________________`, the truthful dirty source revision, the three image IDs,
-and `uv.lock`. The API hydration, typed dashboard AWS-health, and one-shot monitor contracts passed.
+`modelguard.runtime-contract-verification.v2` record in `local_image_id` mode. Its literal embedded
+revision was the unpublished predecessor of canonical
+`f66eb68c36e110e66902b3910334df7984707601` plus the truthful `-dirty` suffix; the canonical
+hash was not the literal label. The record remains historical local evidence and cannot satisfy
+current digest-mode activation. It also binds the three image IDs and `uv.lock`. The API hydration,
+typed dashboard AWS-health, and one-shot monitor contracts passed.
 
 The complete local matrix then passed:
 
@@ -388,19 +398,23 @@ PASS — all three non-root images rebuilt from the exact new dependency lock an
        sha256:0c2aae094c957d0192b6788d7d17efb87a97d9148a1cd5ddf7567714b8eacc8a component=dashboard
        sha256:e1408044694bb5dee8d38f0325947e13f33870b694eb3616ffed9a35c66b97a5 component=monitor
 
-The verifier invocation mapped each image-reference placeholder below to its exact component ID
-recorded immediately above. Keeping the non-secret digest inventory separate avoids presenting a
-digest as a secret-like API key assignment in version-controlled evidence.
+The historical verifier invocation mapped each image-reference placeholder below to its exact
+component ID recorded immediately above. At that time, `git rev-parse HEAD` resolved to the
+unpublished predecessor of canonical `aad098ccb54d51c64a48b2105992d242f1c96b09`; the dirty tree
+was later committed as canonical `e5095af0114a938ffb7c779904e140f1db3c49a1`. The block is a
+description of historical execution, not replayable current-source provenance. Keeping the
+non-secret digest inventory separate avoids presenting a digest as a secret-like API key assignment
+in version-controlled evidence.
 
-SOURCE_COMMIT=MGH11___________________________________ \
+SOURCE_COMMIT="$(git rev-parse HEAD)" \
 RUNTIME_VERIFICATION_MODE=local_image_id \
 API_IMAGE_REF=<exact api ID above> \
 DASHBOARD_IMAGE_REF=<exact dashboard ID above> \
 MONITOR_IMAGE_REF=<exact monitor ID above> \
 RUNTIME_VERIFICATION_OUTPUT=artifacts/phase-10-evidence/local-runtime-remediation.json \
 ./scripts/verify_release_runtime.sh
-PASS — schema v2, exact local image IDs, non-root runtime contracts, source revision
-       MGH11___________________________________-dirty, and uv.lock SHA-256
+HISTORICAL PASS — schema v2, exact local image IDs, non-root runtime contracts, the then-current
+       dirty source revision (superseded by the authorized rewrite), and uv.lock SHA-256
        e7d65ff8a26e20c8f9c73f1bd0c7f7b2bbdf8162288d23a7a3b8397841078f5d.
 
 MODELGUARD_API_PORT=18000 MODELGUARD_DASHBOARD_PORT=18501 make smoke-local
@@ -423,14 +437,9 @@ The first unqualified `make smoke-local` attempt refused at Docker's bind bounda
 separately named, pre-existing local ModelGuard project occupied loopback ports 8000/8501. It did
 not start the candidate containers. That older project was preserved; the candidate reran on
 18000/18501 and passed. Only the candidate project's temporary containers and network were removed
-after validation; its generated evidence and named synthetic-data volume remain local and ignored.
-The exact local evidence paths are
-`artifacts/phase-07-evidence/build/images.json`,
-`artifacts/phase-07-evidence/trivy-20260809T195855Z/`,
-`artifacts/phase-10-evidence/local-runtime-remediation.json`,
-`artifacts/phase-07-evidence/smoke-20260809t200032z-145199/smoke-summary.json`,
-`artifacts/phase-07-evidence/demo-20260809t200131z-146693/demo-summary.json`, and
-`artifacts/phase-07-evidence/e2e-20260809t200331z-149282/e2e-summary.json`.
+after validation. The generated pre-rewrite artifacts were preserved in the verified private backup
+and removed from the publication candidate. They are not present in the worktree and are not
+reusable as current acceptance evidence.
 
 The remediation changes 29 existing paths and adds 3 paths, with no deletion:
 
@@ -469,26 +478,37 @@ src/modelguard/storage/publisher.py (new)
 tests/unit/test_phase10_model_publisher.py (new)
 ```
 
+## Read-only continuation evidence
+
+- AWS profile: `modelguard-bootstrap`; Region: `us-east-1`.
+- Caller: non-root IAM user `modelguard-bootstrap-admin`; account shown only in masked form.
+- Budget: `modelguard-ai-demo-monthly`, monthly COST, USD 10, ACTUAL 50/80/100 percent and
+  FORECASTED 100 percent, all `GREATER_THAN`; missing/null AWS `ThresholdType` is normalized to the
+  documented effective `PERCENTAGE`, while explicit `ABSOLUTE_VALUE` remains rejected.
+- Firehose: service access is active in `us-east-1`; the exact demo stream is not pre-existing.
+- Publication rewrite: one verified 12-commit rewrite completed locally; the full bundle, `.git`
+  archive, original working copy, commit map, and exact five-file corrective patch remain private and
+  checksum-verified. No remote received the pre-sanitized history.
+
 ## Remaining external blockers
 
-- Controlled future-Public audit and separately authorized visibility change while Actions is off.
-- A real independent reviewer for `team_protected`; `solo_portfolio` remains non-production.
-- Manual USD 10 Budget and value-free preflight; its notification endpoint remains Console-only.
+- Controlled Public audit and authorized visibility change while Actions is off.
+- `solo_portfolio` remains a disclosed non-production governance mode without independent review.
 - Separate review/apply and encrypted state preservation for retained CloudTrail.
-- Firehose service-subscription readiness; no fallback is authorized.
 - Live GitHub environments/protections/variables/OIDC and AWS bootstrap resources.
-- Interactive `aws login`, exact identity verification, and the retained/account prerequisites.
 - Immutable registry image/model publication, reviewed Terraform plans, live smoke, rollback, and
   teardown. Local publisher tests do not satisfy the unchecked live publication gate.
 
 ## Boundary confirmation
 
 The Docker host remediation was separately authorized maintenance and did not modify the protected
-repository or durable backup artifacts. No destructive reset operation was repeated during the
-verification resume. No remote was added. The blocker-remediation commit is one ordinary descendant
-of `MGH11__`; no amend, rebase, or history rewrite is permitted. Nothing was pushed, published,
-deployed, or applied. No GitHub or AWS API mutation occurred, no AWS login ran, and no Terraform
-apply/destroy/import/refresh/state command ran. No Phase 11 work began.
+repository or durable backup artifacts. The blocker-remediation commit is one ordinary descendant
+of `aad098c`. One later pre-publication rewrite was explicitly authorized, completed against a
+verified candidate, and adopted only after the exact corrective files were restored byte-for-byte;
+the untouched original working copy remains recoverable. No further rewrite is authorized. Nothing
+has yet been pushed, published, deployed, or applied. AWS activity was limited to browser login and
+read-only identity/Budget/Firehose checks. No Terraform apply/destroy/import/refresh/state command or
+Phase 11 work occurred.
 
 Authorized blocker-remediation commit message:
 

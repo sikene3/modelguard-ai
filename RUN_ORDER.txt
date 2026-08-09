@@ -17,7 +17,9 @@ Minimum effort: XHigh. Max handles high-coupling/statistical/cloud work. Ultra i
 independent design review and final audit only. After every phase: run the gate, inspect changes,
 update checklist/report/evidence, then commit manually.
 
-Current boundary (2026-08-09): continue Phase 10 only. The local-runtime baseline is MGH11__ and the
-live deployment checklist remains unchecked. Do not run Phase 11 until Phase 10 live evidence and
-teardown are complete. The next interactive command requires a fresh explicit approval:
-aws login --profile modelguard-bootstrap
+Current boundary (2026-08-10): continue Phase 10 only. The local-runtime baseline is aad098c; the
+single authorized pre-publication history sanitization is complete, and its original history and
+working copy remain in the verified private backup. AWS browser identity plus the value-free Budget
+and Firehose preflight have passed. Continue with the publication and live-deployment checklist; run
+`aws login --profile modelguard-bootstrap` only if the short-lived session expires. Do not run Phase
+11 until Phase 10 live evidence and teardown are complete.

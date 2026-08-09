@@ -29,22 +29,23 @@
       when rollback cannot be proven; the CLI has no secret-value or local-output arguments
 - [x] Full local quality, security, coverage, Terraform-format, workflow, and repository scanner
       gates pass after the Ultra repairs
-- [x] Production-equivalent images have been rebuilt from the final repaired worktree and their
-      exact immutable IDs pass the blocking Trivy HIGH/CRITICAL scans using Ubuntu Docker Engine,
-      BuildKit, and Buildx
-- [x] The sealed three-image local-image-ID runtime verifier passes with AppArmor, built-in seccomp,
-      and genuine `no-new-privileges`, and emits a source/image/`uv.lock`-bound v2 record; live
-      activation remains fail-closed until future registry-digest evidence matches
-- [x] The complete Compose smoke, healthy-to-drifted, browser-health, insufficient-data,
-      corrupt-bundle, and sink-outage matrix passes using images rebuilt from the final repaired
-      worktree. Historical pre-repair evidence was not promoted to current acceptance evidence.
+- [x] Historical pre-rewrite images from the repaired functional tree passed blocking Trivy
+      HIGH/CRITICAL scans using Ubuntu Docker Engine, BuildKit, and Buildx; current clean-source
+      immutable registry-digest evidence remains required before activation
+- [x] The historical sealed three-image local-image-ID runtime verifier passed with AppArmor,
+      built-in seccomp, and genuine `no-new-privileges`; its source/image/`uv.lock`-bound v2 record
+      is not current publication provenance, and live activation remains fail-closed until matching
+      clean-source registry-digest evidence exists
+- [x] The historical pre-rewrite Compose smoke, healthy-to-drifted, browser-health,
+      insufficient-data, corrupt-bundle, and sink-outage matrix passed using the repaired functional
+      tree; it remains functional local evidence only, not current source-bound publication evidence.
 
-## Live deployment segment — not authorized or executed
+## Live deployment segment — authorized; mutation not yet executed
 
-- [ ] AWS identity confirmed
+- [x] AWS identity confirmed with the browser-authenticated non-root operator profile in `us-east-1`
 - [ ] Account/Region/backend/tags/CIDR/budget/expiry/access-mode guardrails confirmed
-- [ ] Manual USD 10 budget exists and passes value-free preflight
-- [ ] Firehose account readiness passes without `SubscriptionRequiredException`
+- [x] Manual USD 10 budget exists and passes the value-free read-only preflight
+- [x] Firehose account readiness passes without `SubscriptionRequiredException`
 - [ ] Retained CloudTrail design reviewed/applied and its encrypted state preservation verified
 - [ ] Bootstrap trust boundary reviewed with temporary browser-authenticated human identity
 - [ ] GitHub governance mode, visibility, environments, protections, variables, OIDC template, and
@@ -68,11 +69,10 @@
 - Commands: see `reports/phase-10.md`
 - Test results: see `reports/phase-10.md`
 - Artifact paths: local-only evidence is listed in `reports/phase-10.md`; baseline private evidence
-  is sealed under the approved Phase 10 backup root and remediation evidence remains ignored locally;
-  no live AWS evidence exists
-- Local-runtime baseline commit: `MGH11___________________________________`
-- Blocker-remediation commit identity: resolve the commit with exact message
-  `fix: remediate Phase 10 live deployment blockers` from Git history; a report cannot embed its own
-  content-addressed hash
+  is sealed under the approved Phase 10 backup root; account-level read-only AWS prerequisite evidence
+  exists, but no live deployment/runtime evidence exists
+- Local-runtime baseline commit: `aad098ccb54d51c64a48b2105992d242f1c96b09`
+- Blocker-remediation commit: `e5095af0114a938ffb7c779904e140f1db3c49a1`, exact message
+  `fix: remediate Phase 10 live deployment blockers`
 - Residual risks: every unchecked live-deployment item above remains a blocker; the local code-only
-  readiness segment is complete
+  readiness segment and account-level read-only prerequisites are complete

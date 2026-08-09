@@ -255,7 +255,7 @@ def test_every_bundle_object_has_a_measured_task_safe_download_bound(
         "baseline_profile.json": 40_618,
         "checksums.sha256": 491,
         "input_schema.json": 2_279,
-        "manifest.json": 20_133,
+        "manifest.json": 20_121,
         "metrics.json": 183_619,
         "model.joblib": 4_733,
         "threshold.json": 1_375,

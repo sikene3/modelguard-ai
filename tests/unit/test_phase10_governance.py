@@ -344,6 +344,33 @@ def test_public_workflows_never_upload_raw_terraform_or_identity_metadata(
     assert "vars.DEPLOYMENT_GOVERNANCE_MODE == 'team_protected'" in str(metadata_upload["if"])
 
 
+def test_publication_refreshes_only_bounded_inspect_evidence_after_remote_tagging(
+    repository_root: Path,
+) -> None:
+    publish_path = repository_root / ".github/workflows/publish-images.yml"
+    source = publish_path.read_text(encoding="utf-8")
+    workflow = yaml.load(source, Loader=yaml.BaseLoader)
+    publish_job = workflow["jobs"]["publish"]
+    tag_step = next(
+        step
+        for step in publish_job["steps"]
+        if step.get("name") == "Tag and push each already-scanned image without rebuilding"
+    )
+    tag_script = str(tag_step["run"])
+
+    assert tag_script.count('docker image inspect "$remote_ref"') == 1
+    assert "RepoTags" in tag_script and "RepoDigests" in tag_script
+    assert "Config:{User:.Config.User,Labels:.Config.Labels}" in tag_script
+    assert "Env:.Config.Env" not in tag_script
+    assert "docker build" not in str(publish_job)
+    assert "security_scan.sh" not in str(publish_job)
+    assert (
+        source.index('docker tag "$local_ref" "$remote_ref"')
+        < source.index('docker image inspect "$remote_ref"')
+        < source.index("Bind ECR digests, source labels, SBOMs, and Dockerfiles")
+    )
+
+
 def _confidential_transfer_keys() -> tuple[str, str]:
     private = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     private_der = private.private_bytes(

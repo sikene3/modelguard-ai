@@ -7,10 +7,12 @@ repository-local cache from one exact lock, invoked through the same fail-closed
 locally and in GitHub Actions, and verified by real local scans. No Phase 10 implementation, live
 GitHub operation, AWS access, image publication, or Terraform mutation occurred.
 
-The requested baseline `LEGACY_COMMIT_REFERENCE_REDACTED` was not an object in this
-repository. The clean immutable Phase 09 commit was
-`MGH09___________________________________` with the requested message. The one-character baseline
-discrepancy was treated as a transcription error; history was not amended, rebased, or rewritten.
+The requested baseline identifier was not an object in this repository. The clean Phase 09 tree is
+represented after the authorized pre-publication rewrite by
+`165bbacadad5860aa995549ae79298c3f72a70f5` with the requested message. The one-character baseline
+discrepancy was treated as a transcription error at the time. The later, separately authorized
+rewrite changed publication metadata and removed obsolete language-specific history; it did not
+alter the canonical Phase 09 implementation.
 
 ## Read-first audit
 

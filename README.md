@@ -15,8 +15,8 @@ Phase 09.1 makes the five release scanners reproducible: one reviewed lock pins 
 ShellCheck, Checkov, Trivy, and Gitleaks; the same repository scripts enforce them locally and in
 GitHub Actions; and only sanitized SARIF is eligible for Code Scanning upload.
 
-The Phase 10 local-runtime baseline is committed at `MGH11__`. The follow-up blocker-remediation
-patch adds the exact Botocore browser-login CRT dependency and a create-only, checksum-verifying,
+The Phase 10 local-runtime baseline is committed at `aad098c`; its follow-up blocker-remediation
+commit is `e5095af`. That patch adds the exact Botocore browser-login CRT dependency and a create-only, checksum-verifying,
 version-pinned model publisher with serialized active/previous promotion and rollback. Phase 10
 remains `in_progress`: no GitHub workflow or AWS plan/apply/destroy has run, and no image or model has
 been published. Activation remains fail-closed until an authorized deployment supplies live

@@ -124,8 +124,9 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] The operator-only locked environment pins and imports `awscrt==0.36.0`, exactly satisfying
       locked Botocore's browser-login extra without adding CRT to any runtime-image dependency group;
       bootstrap verifies this dependency locally before any interactive login.
-- [ ] The retained manual USD 10 budget and its Console-entered notification endpoint exist in the
-      target AWS account and pass the value-free read-only preflight.
+- [x] The retained manual USD 10 budget exists in the target account and its four-notification
+      contract passes the value-free read-only preflight; the Console-entered subscriber endpoint is
+      operator-attested and deliberately neither queried nor recorded.
 - [x] A separate retained CloudTrail Terraform design limits S3 data events to the exact future
       state and lock objects, uses protected encrypted storage with finite retention and
       `prevent_destroy`, and documents encrypted local-state preservation and usage costs.
@@ -147,10 +148,11 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] The local production-equivalent runtime verifier checks actual API hydration, typed dashboard
       AWS health, and one-shot monitor contents/entrypoints; activation evidence must match all three
       immutable image references before `runtime_contract_verified` can be true in rendered inputs.
-- [x] A sealed three-image verifier run has passed all required host controls and produced a record
-      bound to the exact immutable local image IDs, source revision, and `uv.lock`. AppArmor,
-      built-in seccomp, and genuine `no-new-privileges` passed. The Terraform default remains false
-      until a future authorized activation supplies matching immutable registry-digest evidence.
+- [x] A pre-rewrite sealed three-image verifier run passed AppArmor, built-in seccomp, genuine
+      `no-new-privileges`, and all other required host controls. Its record is bound to the exact
+      historical local image IDs, then-current source revision, and `uv.lock`, and is retained only
+      as historical functional evidence. Current activation still requires a newly generated
+      clean-source immutable registry-digest record; the Terraform default remains false until then.
 - [x] Drift/alarm SNS email enrollment is interactive, fail-closed before publication, and absent
       from Terraform state/plans and workflow artifacts. Retained Budget and CloudWatch key-policy
       statements remain independently restricted by exact source-account, source-ARN, topic-context,
