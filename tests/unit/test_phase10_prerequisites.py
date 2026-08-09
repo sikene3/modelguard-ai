@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
+from scripts import human_aws_login
 from scripts.aws_readiness_preflight import (
     BUDGET_NAME,
     FIREHOSE_STREAM_NAME,
@@ -17,7 +18,9 @@ from scripts.aws_readiness_preflight import (
     verify_firehose_readiness,
 )
 from scripts.human_aws_login import (
+    APPROVED_AWSCRT_VERSION,
     HumanLoginRefusal,
+    verify_browser_login_dependency,
     verify_human_login_identity,
     verify_workflow_oidc_identity,
 )
@@ -31,6 +34,67 @@ def _error(code: str) -> ClientError:
         },
         "Describe",
     )
+
+
+def test_browser_login_dependency_is_exact_project_managed_and_bootstrapped(
+    repository_root: Path,
+) -> None:
+    pyproject = (repository_root / "pyproject.toml").read_text(encoding="utf-8")
+    lock = (repository_root / "uv.lock").read_text(encoding="utf-8")
+    bootstrap = (repository_root / "START_HERE.sh").read_text(encoding="utf-8")
+
+    assert f'"awscrt=={APPROVED_AWSCRT_VERSION}"' in pyproject
+    assert 'name = "awscrt"' in lock
+    assert f'version = "{APPROVED_AWSCRT_VERSION}"' in lock
+    assert "make setup" in bootstrap
+    assert "python -m scripts.human_aws_login dependency" in bootstrap
+    assert bootstrap.index("make setup") < bootstrap.index(
+        "python -m scripts.human_aws_login dependency"
+    )
+
+    result = verify_browser_login_dependency()
+    assert result == {
+        "awscrt_version": APPROVED_AWSCRT_VERSION,
+        "botocore_version": "1.43.62",
+        "status": "passed",
+    }
+
+
+def test_browser_login_dependency_fails_closed_when_crt_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_version = human_aws_login.importlib.metadata.version
+
+    def missing_crt(distribution: str) -> str:
+        if distribution == "awscrt":
+            raise human_aws_login.importlib.metadata.PackageNotFoundError(distribution)
+        return real_version(distribution)
+
+    monkeypatch.setattr(human_aws_login.importlib.metadata, "version", missing_crt)
+
+    with pytest.raises(HumanLoginRefusal, match="browser_login_dependency_missing"):
+        verify_browser_login_dependency()
+
+
+def test_browser_login_dependency_rejects_botocore_extra_version_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MetadataDouble:
+        def get_all(self, name: str) -> list[str]:
+            assert name == "Requires-Dist"
+            return ["awscrt (==0.35.0) ; extra == 'crt'"]
+
+    monkeypatch.setattr(
+        human_aws_login.importlib.metadata,
+        "metadata",
+        lambda distribution: MetadataDouble(),
+    )
+
+    with pytest.raises(
+        HumanLoginRefusal,
+        match="botocore_login_dependency_contract_mismatch",
+    ):
+        verify_browser_login_dependency()
 
 
 class BudgetDouble:

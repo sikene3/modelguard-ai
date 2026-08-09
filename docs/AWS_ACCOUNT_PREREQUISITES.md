@@ -3,6 +3,30 @@
 These prerequisites are intentionally outside the disposable demo lifecycle. This document is a
 manual design and read-only verification contract. It does not authorize an AWS mutation.
 
+## Browser-login runtime dependency
+
+The local operator environment, not any runtime image, owns Botocore's browser-login dependency.
+Synchronize the exact lock and prove the native module imports before asking for an interactive AWS
+session:
+
+```bash
+uv sync --all-groups --locked
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
+```
+
+The `aws-operator` group pins `awscrt==0.36.0`, the exact version required by locked Botocore
+`1.43.62`. The dependency command reads installed package metadata and imports CRT locally; it makes
+no AWS call, opens no browser, reads no credential, and prints only package versions and pass/refusal
+status. All three Docker runtime groups exclude this operator dependency.
+
+After a separate approval to authenticate, the next single interactive command is exactly:
+
+```bash
+aws login --profile modelguard-bootstrap
+```
+
+Do not substitute access keys, environment credentials, the root user, or an unapproved profile.
+
 ## USD 10 monthly budget
 
 Create one AWS Cost Budget manually in the AWS Console:
@@ -22,8 +46,8 @@ workflow inputs or artifacts, reports, logs, commands, examples, screenshots, or
 Terraform to own the budget or subscription. The demo Terraform has only a value-free activation
 guard.
 
-After a separately authorized manual creation, run the read-only preflight with temporary browser
-credentials:
+After a separately authorized manual creation and successful browser login, run the read-only
+preflight with temporary credentials:
 
 ```bash
 uv run python -m scripts.aws_readiness_preflight budget \
@@ -45,7 +69,9 @@ block, TLS-only/exact-service bucket policy, log-file validation, finite lifecyc
 Before any later apply, review its README and preserve its initial local state on encrypted storage
 with two offline copies and a verified restore. CloudTrail data events, S3 storage/retrieval, KMS key
 storage, and KMS requests can incur usage-based cost. Expiration is permanent and bounds recovery.
-No init, plan, apply, or state operation ran during this local segment.
+Only backend-disabled, read-only-lock provider/module initialization was used to validate this
+configuration locally. No backend initialization, plan, apply, destroy, import, refresh, state read,
+or AWS account call ran during this local segment.
 
 ## Firehose account readiness
 

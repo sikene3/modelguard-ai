@@ -235,7 +235,9 @@ The protected deployment is deliberately two-stage:
    and bind source labels, Dockerfile/base digest, local image ID, SBOM hash, and ECR digest in one
    release manifest.
 6. During the next protected approval pause, promote the exact seven-object model bundle and active
-   pointer through the separately reviewed Phase 10 model procedure. Input verification then reads
+   pointer through the create-only `scripts.model_bundle_publisher` Phase 10 procedure. Its
+   conditional lock, historical-prefix refusal, exact readback, and active/previous rollback must
+   pass before input verification reads
    the pointer, downloads each exact S3 VersionId, verifies the bundle, checks ECR digests, token
    metadata, certificate hostname, and all digest-pinned runtime interfaces. The verified version,
    manifest hash, and seven VersionIds are inputs to the activation plan; Terraform refuses if its
@@ -430,7 +432,7 @@ only and never triggers either rollback.
 
 For a model-only rollback, an operator must select the prior `active_model_pointer` from a versioned
 last-known-good/history record, reverify every recorded S3 VersionId and the bundle-manifest hash,
-then use the separately approved Phase 10 pointer-promotion procedure to replace only the non-secret
+then use the separately approved create-only Phase 10 publisher/pointer procedure to replace only the non-secret
 SSM active-pointer String. Re-run readiness, `/version`, and prediction smoke before recording that
 pointer as good. Never change the pointer from this ECS rollback job, from a drift alarm, or without
 the protected model review; until that procedure exists, model rollback fails closed as a manual

@@ -15,11 +15,12 @@ Phase 09.1 makes the five release scanners reproducible: one reviewed lock pins 
 ShellCheck, Checkov, Trivy, and Gitleaks; the same repository scripts enforce them locally and in
 GitHub Actions; and only sanitized SARIF is eligible for Code Scanning upload.
 
-Phase 10 implements and adversarially tests the three AWS runtime paths plus dual deployment
-governance, but it remains uncommitted and `in_progress`. No GitHub workflow or AWS
-plan/apply/destroy has run from this tree. Deployment remains deliberately fail-closed because the
-final repaired images have not produced a sealed immutable-digest runtime record; the current Docker
-host lacks buildx and its Snap/AppArmor runtime rejects the required `no-new-privileges` probe. See
+The Phase 10 local-runtime baseline is committed at `MGH11__`. The follow-up blocker-remediation
+patch adds the exact Botocore browser-login CRT dependency and a create-only, checksum-verifying,
+version-pinned model publisher with serialized active/previous promotion and rollback. Phase 10
+remains `in_progress`: no GitHub workflow or AWS plan/apply/destroy has run, and no image or model has
+been published. Activation remains fail-closed until an authorized deployment supplies live
+prerequisites and a clean-source immutable-registry-digest runtime record. See
 [`docs/CICD_SECURITY.md`](docs/CICD_SECURITY.md),
 [`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-10.md`.
 
@@ -39,6 +40,7 @@ The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHIT
 ```bash
 ./scripts/verify_environment.sh
 uv sync --all-groups --locked
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
 make security-tools-bootstrap
 make security-tools-check
 uv run python -c 'import modelguard; print(modelguard.__version__)'
@@ -354,6 +356,15 @@ codes. The dashboard uses explicit regional evidence-source health without recal
 emits a source/image-bound verification record. Activation rendering refuses to set
 `runtime_contract_verified=true` without a matching digest-mode record; the committed default stays
 false. See [docs/AWS_RUNTIME_CONTRACTS.md](docs/AWS_RUNTIME_CONTRACTS.md).
+
+The operator-only `aws-operator` dependency group pins `awscrt==0.36.0`, exactly matching locked
+Botocore's browser-login extra, while all runtime-image groups exclude it. The local dependency check
+above performs no AWS call. After prerequisite infrastructure exists and a separate publication
+approval is granted, `scripts.model_bundle_publisher` verifies the exact seven-file bundle locally,
+refuses any prior S3 version history for the semantic version, conditionally creates and reads back
+every object, and promotes active/previous under a conditional S3 lock. It writes no local file and
+accepts no credential or secret-value argument. The exact future command and failure recovery are in
+[docs/08_AWS_DEPLOYMENT_ORDER.md](docs/08_AWS_DEPLOYMENT_ORDER.md); it has not been run.
 
 AWS deployment governance supports a protected team contract and a disclosed solo portfolio
 contract. The latter is not separation of duties and cannot be selected while the repository is

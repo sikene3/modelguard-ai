@@ -121,6 +121,9 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       with 50/80/100 percent actual and 100 percent forecast alerts. Its read-only preflight never
       retrieves subscriber endpoints; no address enters project files, Terraform, state, saved
       plans, workflows, artifacts, reports, logs, commands, or examples; alerts are non-enforcing.
+- [x] The operator-only locked environment pins and imports `awscrt==0.36.0`, exactly satisfying
+      locked Botocore's browser-login extra without adding CRT to any runtime-image dependency group;
+      bootstrap verifies this dependency locally before any interactive login.
 - [ ] The retained manual USD 10 budget and its Console-entered notification endpoint exist in the
       target AWS account and pass the value-free read-only preflight.
 - [x] A separate retained CloudTrail Terraform design limits S3 data events to the exact future
@@ -130,6 +133,15 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       and verified in AWS.
 - [x] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
       image/model/token prerequisites, then uses a second reviewed digest-pinned activation plan.
+- [x] The model publisher verifies the strict seven-file bundle and measured size bounds before AWS,
+      refuses any current or historical object under the semantic-version prefix, uses conditional
+      create-only writes plus exact checksum/VersionId readback, publishes the checksum index last,
+      and changes no pointer until all seven objects pass.
+- [x] Active/previous promotion is serialized by an owner-verified conditional S3 lock, rechecks both
+      SSM snapshots, writes previous before active, verifies each new parameter version, restores both
+      snapshot values after any attempted failure, and retains the lock if rollback cannot be proven.
+      The CLI accepts no credential/secret-value or local-output argument and emits bounded identity
+      metadata only.
 - [x] ECS deployment circuit breaker/rollback is enabled.
 - [ ] Scheduled monitor task can read inputs and write reports.
 - [x] The local production-equivalent runtime verifier checks actual API hydration, typed dashboard

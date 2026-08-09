@@ -78,12 +78,28 @@ failure-scenario ports with `E2E_CORRUPT_PORT` and `E2E_SINK_PORT`.
 ## Incorrect AWS identity
 
 ```bash
-aws sts get-caller-identity
-aws configure list
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
+aws configure get region --profile modelguard-bootstrap
+# Only after an explicit authentication approval:
+aws login --profile modelguard-bootstrap
 ```
 
-Never ask an agent to create access keys. Use the approved browser-based AWS login profile, and use GitHub
-OIDC in CI.
+Never ask an agent to create access keys. Use the approved browser-based AWS login profile, verify it
+with `scripts.human_aws_login`, and use GitHub OIDC in CI. Do not export AWS credential variables.
+
+## Model publication stopped or the promotion lock remains
+
+Do not delete model objects, reuse the semantic version, overwrite a pointer, or remove the lock as a
+first response. A partial seven-file prefix is intentionally inactive and permanently consumes that
+version. A remaining `model-bundles/.modelguard-promotion.lock` means promotion rollback could not be
+proven or a process ended while holding the lock.
+
+Stop all publishers. In a separately approved read-only session, inspect the exact current lock
+VersionId, the seven-object version history, and both non-secret String parameters. Compare them with
+the command's bounded refusal category and the intended active/previous snapshots. If pointers are
+already restored, obtain explicit approval for exact lock-version cleanup; if not, obtain a separate
+pointer-repair plan. Publish any replacement under a new semantic version. The guarded demo destroy
+removes all model-bucket versions and lock residue after evidence capture.
 
 ## Terraform state or backend problems
 

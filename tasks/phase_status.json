@@ -52,7 +52,10 @@
   "phase_10": {
     "status": "in_progress",
     "commit": null,
-    "report": "reports/phase-10.md"
+    "report": "reports/phase-10.md",
+    "local_readiness_commit": "MGH11___________________________________",
+    "local_blocker_remediation_commit_message": "fix: remediate Phase 10 live deployment blockers",
+    "live_deployment_executed": false
   },
   "phase_11": {
     "status": "not_started",

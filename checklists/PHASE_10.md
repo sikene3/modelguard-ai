@@ -19,6 +19,14 @@
       preservation procedure added without init/plan/apply
 - [x] Firehose `SubscriptionRequiredException` has a distinct read-only blocker and no fallback
 - [x] Controlled future-Public checklist requires complete worktree/history/artifact/security audits
+- [x] Locked operator environment includes exact Botocore-compatible `awscrt==0.36.0`; bootstrap
+      verifies the import and version without starting AWS login or adding CRT to runtime images
+- [x] Create-only model publisher verifies the local manifest/checksums and bounds, rejects all prior
+      prefix version history, conditionally creates and reads back seven exact S3 VersionIds, and
+      never deletes or activates a partial publication
+- [x] Active/previous pointer promotion uses one conditional S3 lock, snapshot rechecks, previous-first
+      ordering, exact SSM-version verification, compensating rollback, and retained-lock fail closure
+      when rollback cannot be proven; the CLI has no secret-value or local-output arguments
 - [x] Full local quality, security, coverage, Terraform-format, workflow, and repository scanner
       gates pass after the Ultra repairs
 - [x] Production-equivalent images have been rebuilt from the final repaired worktree and their
@@ -59,8 +67,12 @@
 
 - Commands: see `reports/phase-10.md`
 - Test results: see `reports/phase-10.md`
-- Artifact paths: local-only evidence is listed in `reports/phase-10.md` and sealed under the approved
-  private Phase 10 backup root; no live AWS evidence exists
-- Commit: pending owner review and approval
+- Artifact paths: local-only evidence is listed in `reports/phase-10.md`; baseline private evidence
+  is sealed under the approved Phase 10 backup root and remediation evidence remains ignored locally;
+  no live AWS evidence exists
+- Local-runtime baseline commit: `MGH11___________________________________`
+- Blocker-remediation commit identity: resolve the commit with exact message
+  `fix: remediate Phase 10 live deployment blockers` from Git history; a report cannot embed its own
+  content-addressed hash
 - Residual risks: every unchecked live-deployment item above remains a blocker; the local code-only
   readiness segment is complete

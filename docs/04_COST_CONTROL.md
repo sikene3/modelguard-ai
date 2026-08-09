@@ -28,14 +28,24 @@ the video and screenshots, then destroy the demo resources.
 - Keep state and locking in a separate bootstrap layer; demo destroy must not own the state bucket.
 - Keep the exact-state-object CloudTrail trail, audit log bucket, and audit KMS key in the separate
   retained audit bootstrap. Its CloudTrail, S3, and KMS usage can incur ongoing cost.
+- The create-only model publisher adds no service. One successful publication is bounded to seven
+  small object puts/readbacks, one short-lived lock version, version-history inspection, and a few
+  SSM String operations. Failed immutable prefixes and lock versions remain subject to demo lifecycle
+  and teardown.
+
+The operating target is no more than USD 10 for the demo month. This is an expected-spend ceiling for
+human approval, not a technically enforceable maximum: AWS Budget alerts can arrive late and do not
+stop resources. Do not approve a plan whose estimate could exceed USD 10, stop the demo when an alert
+or unexpected charge appears, and destroy promptly after evidence capture. No finite maximum charge
+can be guaranteed by the current architecture.
 
 ## Before apply
 
 ```bash
-aws sts get-caller-identity
-aws configure get region
-terraform -chdir=infrastructure/environments/demo plan -out=tfplan
-terraform -chdir=infrastructure/environments/demo show tfplan
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
+# After separately approved browser login and identity verification, use only the guarded,
+# stage-specific saved-plan flow in docs/08_AWS_DEPLOYMENT_ORDER.md.
+terraform -chdir=infrastructure/environments/demo show prerequisites.tfplan
 ```
 
 Review these cost drivers especially carefully:
@@ -50,7 +60,10 @@ Review these cost drivers especially carefully:
 ## After recording the demo
 
 ```bash
-CONFIRM_DESTROY=YES ./scripts/safe_destroy.sh
+CONFIRM_DESTROY=YES \
+AWS_PROFILE=modelguard-bootstrap \
+DEPLOYMENT_GOVERNANCE_MODE="$DEPLOYMENT_GOVERNANCE_MODE" \
+./scripts/safe_destroy.sh
 ```
 
 Then verify through the console or CLI that the demo no longer has unintended:

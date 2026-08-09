@@ -21,8 +21,9 @@ terraform -chdir=infrastructure/bootstrap init -backend=false
 terraform -chdir=infrastructure/bootstrap validate
 ```
 
-Phase 08 does not authorize plan/apply. In Phase 10, copy the example to a Git-ignored `.tfvars`,
-require `AWS_PROFILE=modelguard-bootstrap`, and run `scripts.human_aws_login verify` for the exact
+Phase 08 does not authorize plan/apply. In Phase 10, copy the example to a Git-ignored `.tfvars`, run
+the local `python -m scripts.human_aws_login dependency` check, require the separately authenticated
+`AWS_PROFILE=modelguard-bootstrap`, and run `python -m scripts.human_aws_login verify` for the exact
 account and `us-east-1` before any human plan/apply helper. Root, environment, shared-file, static,
 or unnamed default-chain credentials are forbidden. Use that temporary browser identity to
 save/review a bootstrap plan,

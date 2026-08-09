@@ -14,7 +14,10 @@ performs validation only; live plan/apply evidence below belongs to Phase 10.
    documented encrypted offline procedure, and only in a later authorized step apply and verify the
    retained exact-state-object CloudTrail design.
 3. Copy `infrastructure/bootstrap/bootstrap.auto.tfvars.example` to a Git-ignored tfvars file.
-4. Verify the exact STS account and configured Region using temporary browser credentials.
+4. Run `uv sync --all-groups --locked`, then the network-free
+   `uv run --frozen --no-sync python -m scripts.human_aws_login dependency` check. Only after a
+   separate authentication approval, run `aws login --profile modelguard-bootstrap` and verify the
+   exact STS account/Region with the guarded helper.
 5. Supply the exact GitHub owner/repository names, immutable owner/repository IDs, subject-format
    flag, main ref, protected environments, and workflow paths.
 6. Create, display, review, and manually apply a saved bootstrap plan so AWS trusts the customized
@@ -75,6 +78,26 @@ Build and scan each Git-SHA image once, push one immutable provenance tag, and r
 digest. Publish the seven-file bundle create-only, read it back, record every S3 VersionId, and
 promote the exact `{model_version, manifest_sha256, bundle VersionIds}` pointer outside Terraform.
 
+The supported publication command is one explicit mutation boundary after the prerequisite apply
+and before activation planning:
+
+```bash
+uv run --frozen --no-sync python -m scripts.model_bundle_publisher publish-and-promote \
+  --bundle artifacts/model-bundles/1.0.0 \
+  --expected-account-id "$EXPECTED_AWS_ACCOUNT_ID" \
+  --region us-east-1 \
+  --profile modelguard-bootstrap \
+  --confirmation "PUBLISH AND PROMOTE modelguard-ai model"
+```
+
+Do not redirect its output into tracked or Public evidence. It accepts no secret-value argument and
+writes no local file. Review the bounded stdout identities and independently re-read the active
+pointer before activation inputs are rendered. The command holds an S3 conditional lock across
+version-history inspection, seven create-only uploads/readbacks, and previous-first/active-last SSM
+promotion. A verified rollback releases the lock. An unprovable rollback deliberately retains it;
+stop, read both pointers and the exact lock/object versions, and obtain a separate repair approval.
+Never delete, overwrite, or reuse a partial semantic-version prefix—publish a new reviewed version.
+
 Use SSM metadata APIs—not token-value retrieval—to verify that the configured token ARN names a
 SecureString. The active model pointer itself is a non-secret String and is fetched for exact bundle
 identity. Verify ACM, ECR digests, bundle/pointer identity, and the value-free notification enrollment
@@ -133,3 +156,8 @@ eventual-consistency delay.
 State bucket/KMS, OIDC, CI roles, and the permission boundary remain intentionally. The pre-created
 ACM certificate and SecureString also remain because demo state never owned them. Final bootstrap
 cleanup is a separate guarded human plan after state is archived and no backend user remains.
+
+The model publisher adds no standing resource. Its request cost is bounded to one lock lifecycle,
+one version-history read, seven puts, seven exact readbacks, and a small number of pointer reads/writes;
+all objects remain subject to the existing finite demo lifecycle and teardown. The retained USD 10
+monthly budget remains a warning guardrail, not a hard maximum or automatic shutdown.

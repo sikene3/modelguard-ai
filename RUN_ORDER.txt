@@ -16,3 +16,8 @@
 Minimum effort: XHigh. Max handles high-coupling/statistical/cloud work. Ultra is used for the
 independent design review and final audit only. After every phase: run the gate, inspect changes,
 update checklist/report/evidence, then commit manually.
+
+Current boundary (2026-08-09): continue Phase 10 only. The local-runtime baseline is MGH11__ and the
+live deployment checklist remains unchecked. Do not run Phase 11 until Phase 10 live evidence and
+teardown are complete. The next interactive command requires a fresh explicit approval:
+aws login --profile modelguard-bootstrap

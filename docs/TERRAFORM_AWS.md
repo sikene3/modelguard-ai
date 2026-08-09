@@ -180,9 +180,11 @@ working directories.
 
 Copy `infrastructure/bootstrap/bootstrap.auto.tfvars.example` to a Git-ignored file. Supply the exact
 repository names, numeric owner/repository IDs, immutable-subject flag, ref, environments, and
-workflow paths. A human sets only the explicit `AWS_PROFILE=modelguard-bootstrap` profile, runs
-`scripts.human_aws_login verify` for the exact account and `us-east-1`, and refuses root, environment,
-shared-file, or other static credentials. The verified temporary browser identity produces a
+workflow paths. First run the locked local `scripts.human_aws_login dependency` check; it proves
+`awscrt==0.36.0` satisfies Botocore without an AWS call. After separate approval, a human runs
+`aws login --profile modelguard-bootstrap`, uses only that explicit profile, runs
+`python -m scripts.human_aws_login verify` for the exact account and `us-east-1`, and refuses root,
+environment, shared-file, or other static credentials. The verified temporary browser identity produces a
 saved plan, reviews it, and applies it before activating the GitHub custom subject template. Preserve
 bootstrap state in an approved encrypted location. Record only non-secret outputs. Before that
 apply, the account/organization owner must confirm an existing CloudTrail trail
@@ -270,9 +272,13 @@ Build each role image once for the reviewed Git SHA, scan that exact image, push
 `git-<sha>` tag, and resolve it with ECR `DescribeImages`. Activation uses only
 `repository@sha256:<digest>`; it never rebuilds or deploys a tag.
 
-Publish the verified seven-file bundle into the model bucket without overwriting an existing version,
-read every object back, record every VersionId, and promote the exact active pointer outside
-Terraform. Verify the pointer and bundle. In HTTPS mode, use SSM `DescribeParameters` to prove the
+Run only `python -m scripts.model_bundle_publisher publish-and-promote` with the exact confirmation
+documented in `08_AWS_DEPLOYMENT_ORDER.md`. It rejects all historical use of the semantic-version
+prefix, conditionally creates the verified seven-file bundle, reads every exact VersionId back, and
+promotes active/previous under an owner-verified conditional S3 lock. Pointer writes are
+previous-first and active-last; a failed promotion restores both snapshots, while an unprovable
+rollback retains the lock and blocks all retry. Partial model objects are never deleted or reused.
+Verify the pointer and bundle independently. In HTTPS mode, use SSM `DescribeParameters` to prove the
 ARN names a `SecureString` using `alias/aws/ssm` without calling `GetParameter`; verify the ACM
 certificate is issued and covers the ALB hostname, and verify all ECR digests. Confirm the value-free
 budget and drift-notification gates. Run image contract tests proving API SSM/S3 hydration, exact

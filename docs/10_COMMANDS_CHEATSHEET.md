@@ -128,8 +128,15 @@ git commit -m "phase XX: message"
 ## AWS
 
 ```bash
-aws sts get-caller-identity
-aws ecs list-services --cluster "$CLUSTER_NAME"
-aws ecs list-tasks --cluster "$CLUSTER_NAME"
-aws logs tail "$LOG_GROUP" --follow
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
+# Stop here unless the next interactive authentication boundary is explicitly approved.
+aws login --profile modelguard-bootstrap
+uv run --frozen --no-sync python -m scripts.human_aws_login verify \
+  --profile modelguard-bootstrap --region us-east-1 \
+  --expected-account-id "$EXPECTED_AWS_ACCOUNT_ID"
+AWS_PROFILE=modelguard-bootstrap AWS_REGION=us-east-1 aws ecs list-services \
+  --cluster "$CLUSTER_NAME"
 ```
+
+Never use the generic default profile or pass credential values in arguments. Model publication is a
+later, separate approval boundary; use only the exact command in `docs/08_AWS_DEPLOYMENT_ORDER.md`.

@@ -5,6 +5,41 @@ GitHub workflow, image publication, or Terraform apply has run. Runtime code use
 through the default AWS SDK credential provider; no profile or static credential is accepted by an
 application entry point.
 
+## Create-only model publication and promotion
+
+`python -m scripts.model_bundle_publisher publish-and-promote` is the only supported model
+publication command. Its local validation calls the existing strict bundle inspector and compressed
+model bound before constructing AWS clients. The cloud mutation path then:
+
+1. requires the exact account-derived model bucket in `us-east-1`, explicit bucket-location response,
+   and enabled S3 versioning;
+2. acquires `model-bundles/.modelguard-promotion.lock` with `If-None-Match: *`, SSE-S3, a SHA-256
+   request checksum, and an owner check, then reads the exact lock VersionId back before proceeding;
+3. lists version history—not only current keys—for `model-bundles/<semantic-version>/` and refuses
+   any object version or delete marker, so a deleted or partial prior attempt cannot be reused;
+4. conditionally creates six payloads and then `checksums.sha256`, requires SSE-S3, SDK checksum and
+   nonempty S3 VersionId responses, and reads each exact VersionId back under its measured bound to
+   compare metadata, checksum, content type, length, and bytes;
+5. snapshots and strictly parses both non-secret SSM String pointers, rechecks their versions and
+   bytes under the lock, copies the old active value to previous, and writes the new active pointer
+   last; every write is read back at the returned SSM parameter version;
+6. restores the original active and previous values after any attempted promotion failure. If either
+   rollback cannot be verified, the command retains the lock and refuses all later publication until
+   an explicitly reviewed repair proves both pointers. Otherwise it deletes only its exact lock
+   VersionId and verifies that no live lock is exposed.
+
+Model objects are never deleted or overwritten by this command. A failed partial upload is inactive
+but permanently consumes that semantic version; recovery requires investigating it and publishing a
+new reviewed semantic version. Pointer visibility is the commit boundary, so incomplete object sets
+are never activated. The S3 lock serializes compliant publishers; the restricted deploy trust
+boundary prevents bypass writes.
+
+The CLI accepts only bundle path, non-secret expected account/Region/identity selectors, and an exact
+non-secret confirmation phrase. It accepts no access key, session token, bearer token, password,
+generic endpoint, or output-file argument. Success prints only model/manifest/pointer identities,
+seven VersionIds, fixed parameter names, and status. Refusals print only bounded reason categories.
+It has not been run against AWS in the local readiness segment.
+
 ## API bundle hydration
 
 An AWS API task starts with an empty writable `/runtime` volume. Startup performs this ordered,

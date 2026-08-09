@@ -1,11 +1,17 @@
-# Phase 10 report — Ultra-review repair and local readiness
+# Phase 10 report — local readiness and live-blocker remediation
 
 ## Outcome
 
-The independent Ultra findings were repaired in the preserved uncommitted worktree based on
-`MGH10___________________________________` on `main`. No prior Phase 10 work was reset or
-discarded. The final source, container, security, sealed-runtime, smoke, demo, and E2E gates now pass,
-so the Phase 10 **local code-only readiness segment is complete**.
+The independent Ultra findings were repaired and committed as
+`MGH11___________________________________` on `main`. No prior Phase 10 work was reset,
+discarded, amended, rebased, or rewritten. The source, container, security, sealed-runtime, smoke,
+demo, and E2E gates passed for that baseline, so the Phase 10 **local code-only readiness segment is
+complete**.
+
+The one descendant live-blocker-remediation patch pins the missing AWS browser-login dependency and
+adds the controlled model-bundle publication/promotion implementation described below. Its exact
+commit message is `fix: remediate Phase 10 live deployment blockers`; resolve its content-addressed
+hash from Git history because a commit cannot embed its own hash.
 
 The overall Phase 10 controlled AWS deployment remains `in_progress` and deployment is still
 **NO-GO**: its live AWS/GitHub/Terraform prerequisites and deployment checklist were not authorized
@@ -13,8 +19,36 @@ or executed. The repository's `runtime_contract_verified` Terraform default rema
 future authorized activation supplies registry-digest evidence matching the verified source and all
 three images.
 
-No GitHub setting, AWS resource, Terraform state, repository remote, commit, push, or deployment was
-created or changed. Phase 11 was not started.
+No GitHub setting, AWS resource, Terraform state, repository remote, push, image/model publication,
+or deployment was created or changed by either local readiness segment. No AWS login or AWS API call
+was run for the remediation. Phase 11 was not started.
+
+## Consolidated blocker remediation
+
+1. **Reproducible browser login.** The operator-only `aws-operator` dependency group pins
+   `awscrt==0.36.0`, exactly matching Botocore `1.43.62`. `uv.lock` carries the package URL and hashes;
+   runtime Docker groups do not include it. `START_HERE.sh` synchronizes the exact lock and runs the
+   network-free `scripts.human_aws_login dependency` import/metadata check before tests. No login was
+   attempted.
+2. **Create-only immutable publication.** `CreateOnlyModelBundlePublisher` uses the existing strict
+   inspector and decompression bound locally, requires the exact versioned model bucket, obtains a
+   conditional owner-verified S3 lock, refuses any current/noncurrent/delete-marker history for the
+   semantic-version prefix, conditionally creates every object, uploads the checksum index last, and
+   reads all seven exact VersionIds back to compare checksum, metadata, encryption, content type,
+   length, and bytes. It never deletes model objects; a partial prefix is inactive and permanently
+   consumed.
+3. **Transactional pointer promotion.** Under the lock, the publisher snapshots and strictly parses
+   active/previous, rechecks both, copies old active to previous, writes active last, and verifies each
+   returned SSM version. Any attempted failure restores active then previous. If rollback cannot be
+   proven, the lock is retained to block all follow-up mutation until separately reviewed repair.
+4. **Secret-free interface.** The command accepts no access key, secret key, session token, bearer
+   token, password, generic endpoint, or output-file argument. It writes no local file. Success emits
+   only non-secret model/manifest/pointer identities, seven VersionIds, fixed parameter names, and
+   status; failures emit bounded reason categories without SDK exception text.
+5. **Cost and teardown.** The publisher creates no standing service. A successful run uses one small
+   lock lifecycle, one prefix-history query, seven small puts/readbacks, and bounded SSM operations;
+   model/lock versions remain covered by the existing demo lifecycle and guarded bucket teardown.
+   The retained USD 10 monthly budget remains a warning, not a hard spending cap.
 
 ## Ultra findings repaired
 
@@ -90,7 +124,7 @@ New or strengthened tests prove:
   mismatch; and
 - Phase 08/09 OIDC, KMS, saved-plan, bearer-token, dependency, and release-gate regressions.
 
-## Validation actually executed
+## Baseline validation recorded by `MGH11__`
 
 ```text
 .venv/bin/pytest -q --no-cov \
@@ -182,7 +216,7 @@ The reset and resume logs are sealed privately at
 mode 0700, file mode 0600, and a strict private checksum inventory. No secret-bearing evidence is
 stored in the repository.
 
-## Changed-path inventory
+## Baseline changed-path inventory
 
 The repaired candidate set is 70 modified plus 29 new paths (99 total), with no deleted or staged
 path. The five paths added specifically by the Ultra repairs are the protected destroy/rollback
@@ -298,8 +332,142 @@ tests/unit/test_phase10_prerequisites.py
 tests/unit/test_phase10_runtime_readiness.py
 ```
 
-`FILE_MANIFEST.txt` contains the exact sorted 317-path approved candidate set and excludes itself by
-contract.
+At baseline, `FILE_MANIFEST.txt` contained the exact sorted 317-path approved candidate set and
+excluded itself by contract.
+
+## Blocker-remediation validation
+
+The descendant remediation candidate was validated without AWS credentials, AWS API calls, GitHub
+mutation, publication, or Terraform state/backend access:
+
+```text
+./START_HERE.sh
+PASS — required/optional tools and pinned scanner cache verified; Python 3.12.13 and uv 0.12.1;
+       locked sync unchanged; browser-login dependency passed; 394 tests passed in 27.26s at
+       83.50% coverage. The workflow opened no browser and made no AWS call.
+
+uv lock --check
+uv sync --all-groups --locked --offline --dry-run
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
+PASS — 128 locked packages resolved; the 127-package environment required no change; imported
+       awscrt 0.36.0 exactly matched Botocore 1.43.62.
+
+uv run pytest -q
+PASS — 394 passed in 28.16s with branch coverage enabled; 83.50% total versus the unchanged 70%
+       gate.
+
+make release-gates
+PASS — Ruff formatting/lint for 206 Python files; strict Mypy for 74 source files; 394 tests;
+       Bandit; strict hashed pip-audit with no known vulnerabilities; the basic secret/file gate;
+       exact model verification; and all repository security scanners.
+PASS — pinned actionlint 1.7.9, ShellCheck 0.11.0, Checkov 3.3.9, Gitleaks 8.30.1, and Trivy
+       0.70.0.
+PASS — Checkov Terraform 477/0/63, Dockerfile 317/0/3, and GitHub Actions 892/0/4
+       passed/failed/skipped; all 61 Checkov, 7 ShellCheck, 1 Gitleaks, and 3 Trivy policy
+       exceptions remained valid; history/worktree and filesystem/configuration scans passed.
+
+make shell-check
+PASS — Bash syntax and pinned ShellCheck for 21 tracked shell files.
+
+terraform fmt -recursive -check infrastructure
+terraform -chdir=infrastructure/audit-bootstrap init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infrastructure/audit-bootstrap validate
+terraform -chdir=infrastructure/bootstrap init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infrastructure/bootstrap validate
+terraform -chdir=infrastructure/environments/demo init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infrastructure/environments/demo validate
+PASS — Terraform 1.15.8 formatting and all three AWS-provider 6.46.0 configurations validated.
+       Backend-disabled, read-only-lock initialization created only ignored local provider/module
+       caches; it did not initialize a backend, read state, use credentials, or call an AWS account.
+
+make docker-build
+make scan-images
+PASS — all three non-root images rebuilt from the exact new dependency lock and passed blocking
+       Trivy high/critical scans:
+       sha256:6de2397dcc6fed3b9a74dab5a27438def5aac91ccc152a12da39f0a04210b723 component=api
+       sha256:0c2aae094c957d0192b6788d7d17efb87a97d9148a1cd5ddf7567714b8eacc8a component=dashboard
+       sha256:e1408044694bb5dee8d38f0325947e13f33870b694eb3616ffed9a35c66b97a5 component=monitor
+
+The verifier invocation mapped each image-reference placeholder below to its exact component ID
+recorded immediately above. Keeping the non-secret digest inventory separate avoids presenting a
+digest as a secret-like API key assignment in version-controlled evidence.
+
+SOURCE_COMMIT=MGH11___________________________________ \
+RUNTIME_VERIFICATION_MODE=local_image_id \
+API_IMAGE_REF=<exact api ID above> \
+DASHBOARD_IMAGE_REF=<exact dashboard ID above> \
+MONITOR_IMAGE_REF=<exact monitor ID above> \
+RUNTIME_VERIFICATION_OUTPUT=artifacts/phase-10-evidence/local-runtime-remediation.json \
+./scripts/verify_release_runtime.sh
+PASS — schema v2, exact local image IDs, non-root runtime contracts, source revision
+       MGH11___________________________________-dirty, and uv.lock SHA-256
+       e7d65ff8a26e20c8f9c73f1bd0c7f7b2bbdf8162288d23a7a3b8397841078f5d.
+
+MODELGUARD_API_PORT=18000 MODELGUARD_DASHBOARD_PORT=18501 make smoke-local
+MODELGUARD_API_PORT=18000 MODELGUARD_DASHBOARD_PORT=18501 make demo-local
+MODELGUARD_API_PORT=18000 MODELGUARD_DASHBOARD_PORT=18501 make e2e-local
+PASS — smoke persisted 601 events; baseline and drifted stages accepted 1,000 predictions each and
+       produced healthy then degraded drift; insufficient-data, corrupt-bundle, and sink-outage
+       scenarios all passed.
+
+git diff --check
+FILE_MANIFEST.txt exact-inventory comparison
+PASS — no whitespace errors; exact sorted 320-path repository inventory excluding the manifest.
+```
+
+The first final `make release-gates` rerun caught the report's original `api`-then-digest evidence
+layout as `generic-api-key`. No secret was present. The layout was corrected to digest-first without
+adding an exception or weakening policy; the full release gate was then rerun.
+
+The first unqualified `make smoke-local` attempt refused at Docker's bind boundary because a
+separately named, pre-existing local ModelGuard project occupied loopback ports 8000/8501. It did
+not start the candidate containers. That older project was preserved; the candidate reran on
+18000/18501 and passed. Only the candidate project's temporary containers and network were removed
+after validation; its generated evidence and named synthetic-data volume remain local and ignored.
+The exact local evidence paths are
+`artifacts/phase-07-evidence/build/images.json`,
+`artifacts/phase-07-evidence/trivy-20260809T195855Z/`,
+`artifacts/phase-10-evidence/local-runtime-remediation.json`,
+`artifacts/phase-07-evidence/smoke-20260809t200032z-145199/smoke-summary.json`,
+`artifacts/phase-07-evidence/demo-20260809t200131z-146693/demo-summary.json`, and
+`artifacts/phase-07-evidence/e2e-20260809t200331z-149282/e2e-summary.json`.
+
+The remediation changes 29 existing paths and adds 3 paths, with no deletion:
+
+```text
+.github/workflows/ci.yml
+ACCEPTANCE_CRITERIA.md
+FILE_MANIFEST.txt
+GETTING_STARTED.md
+Makefile
+README.md
+RUN_ORDER.txt
+START_HERE.sh
+checklists/PHASE_10.md
+docker-compose.yml
+docker/api.Dockerfile
+docker/dashboard.Dockerfile
+docker/monitor.Dockerfile
+docs/04_COST_CONTROL.md
+docs/07_TROUBLESHOOTING.md
+docs/08_AWS_DEPLOYMENT_ORDER.md
+docs/10_COMMANDS_CHEATSHEET.md
+docs/AWS_ACCOUNT_PREREQUISITES.md
+docs/AWS_RUNTIME_CONTRACTS.md
+docs/CICD_SECURITY.md
+docs/TERRAFORM_AWS.md
+infrastructure/bootstrap/README.md
+pyproject.toml
+reports/evidence/phase-10/README.md
+reports/phase-10.md
+scripts/human_aws_login.py
+tasks/phase_status.json
+tests/unit/test_phase10_prerequisites.py
+uv.lock
+scripts/model_bundle_publisher.py (new)
+src/modelguard/storage/publisher.py (new)
+tests/unit/test_phase10_model_publisher.py (new)
+```
 
 ## Remaining external blockers
 
@@ -309,18 +477,21 @@ contract.
 - Separate review/apply and encrypted state preservation for retained CloudTrail.
 - Firehose service-subscription readiness; no fallback is authorized.
 - Live GitHub environments/protections/variables/OIDC and AWS bootstrap resources.
-- Immutable image/model publication, reviewed Terraform plans, live smoke, rollback, and teardown.
+- Interactive `aws login`, exact identity verification, and the retained/account prerequisites.
+- Immutable registry image/model publication, reviewed Terraform plans, live smoke, rollback, and
+  teardown. Local publisher tests do not satisfy the unchecked live publication gate.
 
 ## Boundary confirmation
 
 The Docker host remediation was separately authorized maintenance and did not modify the protected
 repository or durable backup artifacts. No destructive reset operation was repeated during the
-verification resume. No remote was added. Nothing was staged, committed, pushed, published,
-deployed, or applied. No GitHub or AWS API mutation occurred. No Terraform
-init/plan/apply/destroy/import/refresh/state command ran. No Phase 11 work began.
+verification resume. No remote was added. The blocker-remediation commit is one ordinary descendant
+of `MGH11__`; no amend, rebase, or history rewrite is permitted. Nothing was pushed, published,
+deployed, or applied. No GitHub or AWS API mutation occurred, no AWS login ran, and no Terraform
+apply/destroy/import/refresh/state command ran. No Phase 11 work began.
 
-Suggested commit message after owner review:
+Authorized blocker-remediation commit message:
 
 ```text
-feat: complete fail-closed Phase 10 local runtime readiness
+fix: remediate Phase 10 live deployment blockers
 ```

@@ -187,6 +187,7 @@ scripts/generate_monitoring_fixture.py
 scripts/human_aws_login.py
 scripts/load_test_api.py
 scripts/local_compose_lib.sh
+scripts/model_bundle_publisher.py
 scripts/notification_enrollment.py
 scripts/plan_evidence.py
 scripts/release_manifest.py
@@ -258,6 +259,7 @@ src/modelguard/monitoring/telemetry.py
 src/modelguard/py.typed
 src/modelguard/runtime_contracts.py
 src/modelguard/storage/__init__.py
+src/modelguard/storage/publisher.py
 src/modelguard/storage/versioned_bundle.py
 src/modelguard/training/__init__.py
 src/modelguard/training/baseline.py
@@ -308,6 +310,7 @@ tests/unit/test_phase08_terraform.py
 tests/unit/test_phase091_release_gates.py
 tests/unit/test_phase09_cicd.py
 tests/unit/test_phase10_governance.py
+tests/unit/test_phase10_model_publisher.py
 tests/unit/test_phase10_prerequisites.py
 tests/unit/test_phase10_runtime_readiness.py
 tests/unit/test_prediction_events_phase04.py

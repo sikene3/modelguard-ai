@@ -6,18 +6,19 @@ cd "$repo_root"
 
 ./scripts/verify_environment.sh
 make setup
+uv run --frozen --no-sync python -m scripts.human_aws_login dependency
 make test
 
 cat <<'EOF'
 
-ModelGuard AI is implemented and validated through Phase 07.
+ModelGuard AI is locally implemented and validated through the Phase 10 code-only readiness segment.
 
 Recommended next action:
-1. Review every Phase 07 path, reports/phase-07.md, and checklists/PHASE_07.md.
-2. Confirm the recorded image, Compose, smoke, demo, E2E, Trivy, and quality gates.
-3. Stage only the approved Phase 07 paths and create a manual commit.
-4. Confirm the worktree is clean before considering Phase 08.
+1. Review reports/phase-10.md and checklists/PHASE_10.md.
+2. Confirm the current clean Phase 10 commit and every recorded local gate.
+3. Resolve the remaining external prerequisites in the documented order with explicit approval at
+   each mutation boundary.
 
-Do not begin Phase 08 before that independent review and manual commit.
-Terraform, AWS infrastructure, workflows, and later delivery phases are not implemented yet.
+Do not run AWS login, Terraform apply/destroy, GitHub mutation, image/model publication, or Phase 11
+from this bootstrap workflow. START_HERE is local and network-free after the locked dependency sync.
 EOF
