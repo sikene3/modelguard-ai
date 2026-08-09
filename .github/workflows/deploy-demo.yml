@@ -8,6 +8,13 @@ on:
         description: Exact 40-character commit at protected main HEAD
         required: true
         type: string
+      governance_mode:
+        description: Exact configured governance mode
+        required: true
+        type: choice
+        options:
+          - team_protected
+          - solo_portfolio
       model_version:
         description: Promoted semantic model version
         required: true
@@ -23,6 +30,22 @@ on:
       confirmation:
         description: Type DEPLOY modelguard-ai demo
         required: true
+        type: string
+      api_image_ref:
+        description: Solo mode exact previously published API repository digest
+        required: false
+        type: string
+      dashboard_image_ref:
+        description: Solo mode exact previously published dashboard repository digest
+        required: false
+        type: string
+      monitor_image_ref:
+        description: Solo mode exact previously published monitor repository digest
+        required: false
+        type: string
+      image_manifest_sha256:
+        description: Solo mode exact confidential release-manifest SHA-256
+        required: false
         type: string
 
 permissions:
@@ -45,9 +68,14 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      plan_sha256: ${{ steps.plan_identity.outputs.plan_sha256 }}
+      plan_identity_sha256: ${{ steps.plan_identity.outputs.plan_identity_sha256 }}
+      run_identity: ${{ steps.plan_identity.outputs.run_identity }}
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
       BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
       PERMISSION_BOUNDARY_ARN: ${{ vars.TF_PERMISSION_BOUNDARY_ARN }}
@@ -62,6 +90,9 @@ jobs:
       EXPECTED_MODEL_VERSION: ${{ inputs.model_version }}
       EXPECTED_MODEL_MANIFEST_SHA256: ${{ inputs.model_manifest_sha256 }}
       REPOSITORY_IS_PRIVATE: ${{ github.event.repository.private }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
     steps:
       - name: Refuse a non-main source or inexact dispatch confirmation
         env:
@@ -69,7 +100,13 @@ jobs:
           WORKFLOW_COMMIT: ${{ github.sha }}
         run: |
           test "$GITHUB_REF" = "refs/heads/main"
-          test "$REPOSITORY_IS_PRIVATE" = "true"
+          test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
+          if [[ "$GOVERNANCE_MODE" = "team_protected" ]]; then
+            test "$REPOSITORY_IS_PRIVATE" = "true"
+          else
+            test "$GOVERNANCE_MODE" = "solo_portfolio"
+            test "$REPOSITORY_IS_PRIVATE" = "false"
+          fi
           test "$CONFIRMATION" = "DEPLOY modelguard-ai demo"
           test "$SOURCE_COMMIT" = "$WORKFLOW_COMMIT"
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
@@ -93,6 +130,29 @@ jobs:
           enable-cache: true
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
+      - name: Verify the explicit deployment-governance entry contract
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_CONTEXT: ${{ toJSON(job) }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          uv run --frozen --no-sync python -m scripts.deployment_governance entry \
+            --mode "$GOVERNANCE_MODE" \
+            --operation deploy \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-visibility "$REPOSITORY_VISIBILITY" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --git-ref "$GITHUB_REF" \
+            --environment demo \
+            --workflow-ref "$WORKFLOW_REF" \
+            --job-workflow-ref "$job_workflow_ref" \
+            --source-commit "$SOURCE_COMMIT" \
+            --workflow-commit "$WORKFLOW_COMMIT" \
+            --job-workflow-commit "$job_workflow_commit" \
+            --confirmation "$CONFIRMATION"
       - name: Assume the protected-environment deploy role through OIDC
         uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
         with:
@@ -106,12 +166,16 @@ jobs:
         run: |
           actual_account="$(aws sts get-caller-identity --query Account --output text)"
           test "$actual_account" = "$AWS_ACCOUNT_ID"
+          uv run --frozen --no-sync python -m scripts.aws_readiness_preflight all \
+            --region "$AWS_REGION" \
+            --workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"
           uv run --frozen --no-sync python -m scripts.render_ci_terraform \
             --output-dir artifacts/deploy/prerequisite \
             --stage prerequisites \
             --account-id "$AWS_ACCOUNT_ID" \
             --region "$AWS_REGION" \
             --owner-tag "$OWNER_TAG" \
+            --governance-mode "$GOVERNANCE_MODE" \
             --auto-destroy-date "$AUTO_DESTROY_DATE" \
             --backend-bucket "$BACKEND_BUCKET" \
             --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
@@ -165,17 +229,19 @@ jobs:
               --run-attempt "$GITHUB_RUN_ATTEMPT" \
               --workflow-ref "$GITHUB_WORKFLOW_REF"
           cat artifacts/deploy/prerequisite/prerequisites.redacted.md >>"$GITHUB_STEP_SUMMARY"
-      - name: Upload one-day same-run raw prerequisite transfer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: prerequisite-plan-transfer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/deploy/prerequisite/prerequisites.tfplan
-            artifacts/deploy/prerequisite/prerequisites.tfplan.identity.json
-            artifacts/deploy/prerequisite/demo-ci.tfvars.json
-            artifacts/deploy/prerequisite/backend.hcl
-          if-no-files-found: error
-          retention-days: 1
+      - name: Seal the exact prerequisite review identity
+        id: plan_identity
+        run: |
+          {
+            echo "plan_sha256=$(sha256sum artifacts/deploy/prerequisite/prerequisites.tfplan | awk '{print $1}')"
+            echo "plan_identity_sha256=$(sha256sum artifacts/deploy/prerequisite/prerequisites.tfplan.identity.json | awk '{print $1}')"
+            echo "run_identity=${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:prerequisites"
+          } >>"$GITHUB_OUTPUT"
+      - name: Transfer raw prerequisite inputs only through encrypted private S3
+        env:
+          PLAN_STAGE: prerequisites
+          TRANSFER_DIRECTORY: artifacts/deploy/prerequisite
+        run: ./scripts/confidential_plan_transfer.sh upload
       - name: Upload durable redacted prerequisite evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -183,7 +249,6 @@ jobs:
           path: |
             artifacts/deploy/prerequisite/prerequisites.redacted.json
             artifacts/deploy/prerequisite/prerequisites.redacted.md
-            artifacts/deploy/prerequisite/prerequisites.tfplan.identity.json
           if-no-files-found: error
           retention-days: 30
 
@@ -207,11 +272,6 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - name: Download only this run's raw prerequisite transfer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: prerequisite-plan-transfer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/deploy/prerequisite-transfer
       - name: Install pinned Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
@@ -233,6 +293,35 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Download only this run's encrypted private prerequisite transfer
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+          PLAN_STAGE: prerequisites
+          TRANSFER_DIRECTORY: artifacts/deploy/prerequisite-transfer
+        run: ./scripts/confidential_plan_transfer.sh download
+      - name: Verify the human-reviewed prerequisite evidence boundary
+        env:
+          GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+          REVIEWED_PLAN_SHA256: ${{ vars.REVIEWED_PREREQUISITE_PLAN_SHA256 }}
+          REVIEWED_PLAN_IDENTITY_SHA256: ${{ vars.REVIEWED_PREREQUISITE_IDENTITY_SHA256 }}
+          REVIEWED_RUN_IDENTITY: ${{ vars.REVIEWED_PREREQUISITE_RUN_IDENTITY }}
+          REVIEW_CONFIRMATION: ${{ vars.REVIEWED_PREREQUISITE_CONFIRMATION }}
+        run: |
+          plan=artifacts/deploy/prerequisite-transfer/prerequisites.tfplan
+          identity=artifacts/deploy/prerequisite-transfer/prerequisites.tfplan.identity.json
+          uv run --frozen --no-sync python -m scripts.deployment_governance evidence \
+            --mode "$GOVERNANCE_MODE" \
+            --stage prerequisites \
+            --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:prerequisites" \
+            --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
+            --confirmation "$REVIEW_CONFIRMATION" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --workflow-commit "$GITHUB_SHA" \
+            --plan-sha256 "$(sha256sum "$plan" | awk '{print $1}')" \
+            --reviewed-plan-sha256 "$REVIEWED_PLAN_SHA256" \
+            --plan-identity-sha256 "$(sha256sum "$identity" | awk '{print $1}')" \
+            --reviewed-plan-identity-sha256 "$REVIEWED_PLAN_IDENTITY_SHA256"
       - name: Reverify and apply the exact same saved plan
         env:
           GITHUB_ACTIONS: "true"
@@ -243,13 +332,29 @@ jobs:
           BACKEND_CONFIG: ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/backend.hcl
           TFVARS_FILE: ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/demo-ci.tfvars.json
           PLAN_STAGE: prerequisites
+          DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}
           PLAN_FILE: ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/prerequisites.tfplan
           PLAN_MANIFEST: >-
             ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/prerequisites.tfplan.identity.json
         run: ./scripts/ci_apply_saved_plan.sh
+      - name: Preserve only the sealed prerequisite identity in the encrypted audit bucket
+        run: |
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api put-object \
+            --bucket "$audit_bucket" \
+            --key "deployments/plan-identities/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/prerequisites.json" \
+            --body artifacts/deploy/prerequisite-transfer/prerequisites.tfplan.identity.json \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
+      - name: Delete the exact private prerequisite transfer after successful apply
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+          PLAN_STAGE: prerequisites
+          TRANSFER_DIRECTORY: artifacts/deploy/prerequisite-transfer
+        run: ./scripts/confidential_plan_transfer.sh delete
 
   notification-enrollment-gate:
-    name: Require value-free notification enrollment evidence
+    name: Require value-free drift notification enrollment evidence
     needs: prerequisite-apply
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -260,6 +365,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
     steps:
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -283,15 +389,17 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
-      - name: Refuse activation until manual notification enrollment is present
+      - name: Refuse activation until manual drift notification enrollment is present
         run: >-
           uv run --frozen --no-sync python -m scripts.notification_enrollment verify
           --account-id "$AWS_ACCOUNT_ID"
           --region "$AWS_REGION"
+          --workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"
 
   publish-images:
     name: Build, scan, and publish once after prerequisites
     needs: notification-enrollment-gate
+    if: ${{ inputs.governance_mode == 'team_protected' }}
     permissions:
       actions: read
       contents: read
@@ -300,11 +408,67 @@ jobs:
     uses: ./.github/workflows/publish-images.yml
     with:
       source_commit: ${{ inputs.source_commit }}
+      governance_mode: ${{ inputs.governance_mode }}
       confirmation: PUBLISH modelguard-ai images
+      invocation_mode: deploy_reusable
+
+  resolve-images:
+    name: Resolve team publication or prior manual solo publication
+    needs: [notification-enrollment-gate, publish-images]
+    if: >-
+      always() &&
+      needs.notification-enrollment-gate.result == 'success' &&
+      (needs.publish-images.result == 'success' || needs.publish-images.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      api_ref: ${{ steps.resolve.outputs.api_ref }}
+      dashboard_ref: ${{ steps.resolve.outputs.dashboard_ref }}
+      monitor_ref: ${{ steps.resolve.outputs.monitor_ref }}
+      manifest_sha256: ${{ steps.resolve.outputs.manifest_sha256 }}
+    env:
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      PUBLISHED_API_REF: ${{ needs.publish-images.outputs.api_ref }}
+      PUBLISHED_DASHBOARD_REF: ${{ needs.publish-images.outputs.dashboard_ref }}
+      PUBLISHED_MONITOR_REF: ${{ needs.publish-images.outputs.monitor_ref }}
+      PUBLISHED_MANIFEST_SHA256: ${{ needs.publish-images.outputs.manifest_sha256 }}
+      SOLO_API_REF: ${{ inputs.api_image_ref }}
+      SOLO_DASHBOARD_REF: ${{ inputs.dashboard_image_ref }}
+      SOLO_MONITOR_REF: ${{ inputs.monitor_image_ref }}
+      SOLO_MANIFEST_SHA256: ${{ inputs.image_manifest_sha256 }}
+    steps:
+      - name: Select only the exact governance-mode image identity
+        id: resolve
+        run: |
+          if [[ "$GOVERNANCE_MODE" = "team_protected" ]]; then
+            test -z "$SOLO_API_REF$SOLO_DASHBOARD_REF$SOLO_MONITOR_REF$SOLO_MANIFEST_SHA256"
+            api_ref="$PUBLISHED_API_REF"
+            dashboard_ref="$PUBLISHED_DASHBOARD_REF"
+            monitor_ref="$PUBLISHED_MONITOR_REF"
+            manifest_sha="$PUBLISHED_MANIFEST_SHA256"
+          else
+            test "$GOVERNANCE_MODE" = "solo_portfolio"
+            api_ref="$SOLO_API_REF"
+            dashboard_ref="$SOLO_DASHBOARD_REF"
+            monitor_ref="$SOLO_MONITOR_REF"
+            manifest_sha="$SOLO_MANIFEST_SHA256"
+          fi
+          [[ "$api_ref" =~ /api@sha256:[0-9a-f]{64}$ ]]
+          [[ "$dashboard_ref" =~ /dashboard@sha256:[0-9a-f]{64}$ ]]
+          [[ "$monitor_ref" =~ /monitor@sha256:[0-9a-f]{64}$ ]]
+          [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "api_ref=$api_ref"
+            echo "dashboard_ref=$dashboard_ref"
+            echo "monitor_ref=$monitor_ref"
+            echo "manifest_sha256=$manifest_sha"
+          } >>"$GITHUB_OUTPUT"
 
   verify-inputs:
     name: Verify immutable images, model, pointer, token metadata, and runtime contract
-    needs: publish-images
+    needs: resolve-images
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: demo
@@ -322,10 +486,11 @@ jobs:
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       EXPECTED_MODEL_VERSION: ${{ inputs.model_version }}
       EXPECTED_MODEL_MANIFEST_SHA256: ${{ inputs.model_manifest_sha256 }}
-      API_IMAGE_REF: ${{ needs.publish-images.outputs.api_ref }}
-      DASHBOARD_IMAGE_REF: ${{ needs.publish-images.outputs.dashboard_ref }}
-      MONITOR_IMAGE_REF: ${{ needs.publish-images.outputs.monitor_ref }}
-      IMAGE_MANIFEST_SHA256: ${{ needs.publish-images.outputs.manifest_sha256 }}
+      API_IMAGE_REF: ${{ needs.resolve-images.outputs.api_ref }}
+      DASHBOARD_IMAGE_REF: ${{ needs.resolve-images.outputs.dashboard_ref }}
+      MONITOR_IMAGE_REF: ${{ needs.resolve-images.outputs.monitor_ref }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      IMAGE_MANIFEST_SHA256: ${{ needs.resolve-images.outputs.manifest_sha256 }}
     steps:
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -333,6 +498,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
       - name: Download this run's published release evidence
+        if: ${{ inputs.governance_mode == 'team_protected' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: >-
@@ -347,6 +513,7 @@ jobs:
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
       - name: Verify the release manifest and digest outputs before cloud access
+        if: ${{ inputs.governance_mode == 'team_protected' }}
         run: |
           manifest=artifacts/deploy/published/image-release-manifest.json
           actual_manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
@@ -368,6 +535,29 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Retrieve the solo release manifest only from encrypted private storage
+        if: ${{ inputs.governance_mode == 'solo_portfolio' }}
+        run: |
+          mkdir -p artifacts/deploy/published
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api get-object \
+            --bucket "$audit_bucket" \
+            --key "release-manifests/${SOURCE_COMMIT}.json" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            artifacts/deploy/published/image-release-manifest.json >/dev/null
+      - name: Reverify the exact release manifest after identity selection
+        run: |
+          manifest=artifacts/deploy/published/image-release-manifest.json
+          actual_manifest_sha="$(sha256sum "$manifest" | awk '{print $1}')"
+          test "$actual_manifest_sha" = "$IMAGE_MANIFEST_SHA256"
+          uv run --frozen --no-sync python -m scripts.release_manifest verify \
+            --manifest "$manifest" \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --source-commit "$SOURCE_COMMIT"
+          test "$(jq -r .images.api.image_ref "$manifest")" = "$API_IMAGE_REF"
+          test "$(jq -r .images.dashboard.image_ref "$manifest")" = "$DASHBOARD_IMAGE_REF"
+          test "$(jq -r .images.monitor.image_ref "$manifest")" = "$MONITOR_IMAGE_REF"
       - name: Authenticate Docker for exact ECR digest verification
         run: |
           registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -459,9 +649,23 @@ jobs:
           uv run --frozen --no-sync python -m modelguard.training.cli inspect \
             --bundle artifacts/deploy/verified/model-bundle
       - name: Prove digest-pinned runtime interfaces before activation
+        env:
+          RUNTIME_VERIFICATION_OUTPUT: artifacts/deploy/verified/runtime-contract.json
         run: ./scripts/verify_release_runtime.sh
+      - name: Store solo activation inputs only in encrypted private storage
+        if: ${{ inputs.governance_mode == 'solo_portfolio' }}
+        run: |
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          prefix="deployments/activation-inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          for name in active-pointer.json verified-inputs.json model-objects.json runtime-contract.json; do
+            aws s3api put-object \
+              --bucket "$audit_bucket" \
+              --key "${prefix}/${name}" \
+              --body "artifacts/deploy/verified/${name}" \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
+          done
       - name: Upload one-day verified activation inputs
-        if: ${{ success() }}
+        if: ${{ success() && inputs.governance_mode == 'team_protected' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: verified-activation-inputs-${{ github.run_id }}-${{ github.run_attempt }}
@@ -469,10 +673,11 @@ jobs:
             artifacts/deploy/verified/active-pointer.json
             artifacts/deploy/verified/verified-inputs.json
             artifacts/deploy/verified/model-objects.json
+            artifacts/deploy/verified/runtime-contract.json
           if-no-files-found: error
           retention-days: 1
       - name: Upload non-secret verification evidence on success or refusal
-        if: ${{ always() }}
+        if: ${{ always() && inputs.governance_mode == 'team_protected' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: deployment-input-verification-${{ github.run_id }}-${{ github.run_attempt }}
@@ -487,7 +692,7 @@ jobs:
 
   activation-plan:
     name: Protected digest-only activation plan
-    needs: [publish-images, verify-inputs]
+    needs: [resolve-images, verify-inputs]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     environment: demo
@@ -495,9 +700,15 @@ jobs:
       actions: read
       contents: read
       id-token: write
+    outputs:
+      plan_sha256: ${{ steps.plan_identity.outputs.plan_sha256 }}
+      plan_identity_sha256: ${{ steps.plan_identity.outputs.plan_identity_sha256 }}
+      model_pointer_sha256: ${{ steps.plan_identity.outputs.model_pointer_sha256 }}
+      run_identity: ${{ steps.plan_identity.outputs.run_identity }}
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
       BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
       PERMISSION_BOUNDARY_ARN: ${{ vars.TF_PERMISSION_BOUNDARY_ARN }}
@@ -508,9 +719,10 @@ jobs:
       ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
       PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
       AUTO_DESTROY_DATE: ${{ inputs.auto_destroy_date }}
-      API_IMAGE_REF: ${{ needs.publish-images.outputs.api_ref }}
-      DASHBOARD_IMAGE_REF: ${{ needs.publish-images.outputs.dashboard_ref }}
-      MONITOR_IMAGE_REF: ${{ needs.publish-images.outputs.monitor_ref }}
+      API_IMAGE_REF: ${{ needs.resolve-images.outputs.api_ref }}
+      DASHBOARD_IMAGE_REF: ${{ needs.resolve-images.outputs.dashboard_ref }}
+      MONITOR_IMAGE_REF: ${{ needs.resolve-images.outputs.monitor_ref }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
     steps:
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -518,6 +730,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
       - name: Download only this run's verified pointer input
+        if: ${{ inputs.governance_mode == 'team_protected' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: verified-activation-inputs-${{ github.run_id }}-${{ github.run_attempt }}
@@ -544,16 +757,33 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Retrieve solo activation inputs only from encrypted private storage
+        if: ${{ inputs.governance_mode == 'solo_portfolio' }}
+        run: |
+          mkdir -p artifacts/deploy/verified-transfer
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          prefix="deployments/activation-inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          for name in active-pointer.json verified-inputs.json model-objects.json runtime-contract.json; do
+            aws s3api get-object \
+              --bucket "$audit_bucket" \
+              --key "${prefix}/${name}" \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+              "artifacts/deploy/verified-transfer/${name}" >/dev/null
+          done
       - name: Render and preflight digest-only activation inputs
         run: |
           actual_account="$(aws sts get-caller-identity --query Account --output text)"
           test "$actual_account" = "$AWS_ACCOUNT_ID"
+          uv run --frozen --no-sync python -m scripts.aws_readiness_preflight all \
+            --region "$AWS_REGION" \
+            --workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"
           uv run --frozen --no-sync python -m scripts.render_ci_terraform \
             --output-dir artifacts/deploy/activation \
             --stage activation \
             --account-id "$AWS_ACCOUNT_ID" \
             --region "$AWS_REGION" \
             --owner-tag "$OWNER_TAG" \
+            --governance-mode "$GOVERNANCE_MODE" \
             --auto-destroy-date "$AUTO_DESTROY_DATE" \
             --backend-bucket "$BACKEND_BUCKET" \
             --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
@@ -566,6 +796,10 @@ jobs:
             --api-image-ref "$API_IMAGE_REF" \
             --dashboard-image-ref "$DASHBOARD_IMAGE_REF" \
             --monitor-image-ref "$MONITOR_IMAGE_REF" \
+            --budget-prerequisite-verified \
+            --runtime-verification-file \
+              artifacts/deploy/verified-transfer/runtime-contract.json \
+            --source-commit "$SOURCE_COMMIT" \
             --active-pointer-file artifacts/deploy/verified-transfer/active-pointer.json
           uv run --frozen --no-sync python scripts/terraform_demo_guard.py preflight \
             --input artifacts/deploy/activation/preflight.json \
@@ -574,12 +808,16 @@ jobs:
             --stage activation \
             --backend-bucket "$BACKEND_BUCKET"
           rm -f artifacts/deploy/activation/preflight.json
+          install -m 0600 artifacts/deploy/verified-transfer/active-pointer.json \
+            artifacts/deploy/activation/active-pointer.json
       - name: Create and seal the digest-only activation saved plan
         run: |
           terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
             -lockfile=readonly \
             -backend-config="$GITHUB_WORKSPACE/artifacts/deploy/activation/backend.hcl"
           test "$(terraform -chdir=infrastructure/environments/demo workspace show)" = "default"
+          test "$(terraform -chdir=infrastructure/environments/demo output -raw deployment_governance_mode)" = \
+            "$GOVERNANCE_MODE"
           if ! terraform -chdir=infrastructure/environments/demo plan -input=false -lock-timeout=5m \
             -var-file="$GITHUB_WORKSPACE/artifacts/deploy/activation/demo-ci.tfvars.json" \
             -out="$GITHUB_WORKSPACE/artifacts/deploy/activation/activation.tfplan" \
@@ -611,17 +849,20 @@ jobs:
               --run-attempt "$GITHUB_RUN_ATTEMPT" \
               --workflow-ref "$GITHUB_WORKFLOW_REF"
           cat artifacts/deploy/activation/activation.redacted.md >>"$GITHUB_STEP_SUMMARY"
-      - name: Upload one-day same-run raw activation transfer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: activation-plan-transfer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/deploy/activation/activation.tfplan
-            artifacts/deploy/activation/activation.tfplan.identity.json
-            artifacts/deploy/activation/demo-ci.tfvars.json
-            artifacts/deploy/activation/backend.hcl
-          if-no-files-found: error
-          retention-days: 1
+      - name: Seal the exact activation review identity
+        id: plan_identity
+        run: |
+          {
+            echo "plan_sha256=$(sha256sum artifacts/deploy/activation/activation.tfplan | awk '{print $1}')"
+            echo "plan_identity_sha256=$(sha256sum artifacts/deploy/activation/activation.tfplan.identity.json | awk '{print $1}')"
+            echo "model_pointer_sha256=$(sha256sum artifacts/deploy/activation/active-pointer.json | awk '{print $1}')"
+            echo "run_identity=${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:activation"
+          } >>"$GITHUB_OUTPUT"
+      - name: Transfer raw activation inputs only through encrypted private S3
+        env:
+          PLAN_STAGE: activation
+          TRANSFER_DIRECTORY: artifacts/deploy/activation
+        run: ./scripts/confidential_plan_transfer.sh upload
       - name: Upload durable redacted activation evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -629,13 +870,12 @@ jobs:
           path: |
             artifacts/deploy/activation/activation.redacted.json
             artifacts/deploy/activation/activation.redacted.md
-            artifacts/deploy/activation/activation.tfplan.identity.json
           if-no-files-found: error
           retention-days: 30
 
   activation-apply:
     name: Protected reviewed activation apply
-    needs: activation-plan
+    needs: [activation-plan, resolve-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: demo
@@ -651,11 +891,6 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
-      - name: Download only this run's raw activation transfer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: activation-plan-transfer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/deploy/activation-transfer
       - name: Install pinned Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
@@ -677,6 +912,52 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Download only this run's encrypted private activation transfer
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
+          BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+          PLAN_STAGE: activation
+          TRANSFER_DIRECTORY: artifacts/deploy/activation-transfer
+        run: ./scripts/confidential_plan_transfer.sh download
+      - name: Verify the human-reviewed activation evidence boundary
+        env:
+          GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+          API_IMAGE_REF: ${{ needs.resolve-images.outputs.api_ref }}
+          DASHBOARD_IMAGE_REF: ${{ needs.resolve-images.outputs.dashboard_ref }}
+          MONITOR_IMAGE_REF: ${{ needs.resolve-images.outputs.monitor_ref }}
+          REVIEWED_API_IMAGE_REF: ${{ vars.REVIEWED_API_IMAGE_REF }}
+          REVIEWED_DASHBOARD_IMAGE_REF: ${{ vars.REVIEWED_DASHBOARD_IMAGE_REF }}
+          REVIEWED_MONITOR_IMAGE_REF: ${{ vars.REVIEWED_MONITOR_IMAGE_REF }}
+          REVIEWED_PLAN_SHA256: ${{ vars.REVIEWED_ACTIVATION_PLAN_SHA256 }}
+          REVIEWED_PLAN_IDENTITY_SHA256: ${{ vars.REVIEWED_ACTIVATION_IDENTITY_SHA256 }}
+          REVIEWED_MODEL_POINTER_SHA256: ${{ vars.REVIEWED_ACTIVATION_MODEL_POINTER_SHA256 }}
+          REVIEWED_RUN_IDENTITY: ${{ vars.REVIEWED_ACTIVATION_RUN_IDENTITY }}
+          REVIEW_CONFIRMATION: ${{ vars.REVIEWED_ACTIVATION_CONFIRMATION }}
+        run: |
+          plan=artifacts/deploy/activation-transfer/activation.tfplan
+          identity=artifacts/deploy/activation-transfer/activation.tfplan.identity.json
+          pointer=artifacts/deploy/activation-transfer/active-pointer.json
+          uv run --frozen --no-sync python -m scripts.deployment_governance evidence \
+            --mode "$GOVERNANCE_MODE" \
+            --stage activation \
+            --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:activation" \
+            --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
+            --confirmation "$REVIEW_CONFIRMATION" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --workflow-commit "$GITHUB_SHA" \
+            --api-image-ref "$API_IMAGE_REF" \
+            --dashboard-image-ref "$DASHBOARD_IMAGE_REF" \
+            --monitor-image-ref "$MONITOR_IMAGE_REF" \
+            --reviewed-api-image-ref "$REVIEWED_API_IMAGE_REF" \
+            --reviewed-dashboard-image-ref "$REVIEWED_DASHBOARD_IMAGE_REF" \
+            --reviewed-monitor-image-ref "$REVIEWED_MONITOR_IMAGE_REF" \
+            --model-pointer-sha256 "$(sha256sum "$pointer" | awk '{print $1}')" \
+            --reviewed-model-pointer-sha256 "$REVIEWED_MODEL_POINTER_SHA256" \
+            --plan-sha256 "$(sha256sum "$plan" | awk '{print $1}')" \
+            --reviewed-plan-sha256 "$REVIEWED_PLAN_SHA256" \
+            --plan-identity-sha256 "$(sha256sum "$identity" | awk '{print $1}')" \
+            --reviewed-plan-identity-sha256 "$REVIEWED_PLAN_IDENTITY_SHA256"
       - name: Reverify and apply the exact same activation plan
         env:
           GITHUB_ACTIONS: "true"
@@ -687,13 +968,32 @@ jobs:
           BACKEND_CONFIG: ${{ github.workspace }}/artifacts/deploy/activation-transfer/backend.hcl
           TFVARS_FILE: ${{ github.workspace }}/artifacts/deploy/activation-transfer/demo-ci.tfvars.json
           PLAN_STAGE: activation
+          DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}
           PLAN_FILE: ${{ github.workspace }}/artifacts/deploy/activation-transfer/activation.tfplan
           PLAN_MANIFEST: ${{ github.workspace }}/artifacts/deploy/activation-transfer/activation.tfplan.identity.json
         run: ./scripts/ci_apply_saved_plan.sh
+      - name: Preserve only the sealed activation identity in the encrypted audit bucket
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api put-object \
+            --bucket "$audit_bucket" \
+            --key "deployments/plan-identities/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/activation.json" \
+            --body artifacts/deploy/activation-transfer/activation.tfplan.identity.json \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
+      - name: Delete the exact private activation transfer after successful apply
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
+          BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+          PLAN_STAGE: activation
+          TRANSFER_DIRECTORY: artifacts/deploy/activation-transfer
+        run: ./scripts/confidential_plan_transfer.sh delete
 
   post-deploy-smoke:
     name: Restricted-network live, ready, version, and prediction smoke
-    needs: [prerequisite-plan, publish-images, activation-apply]
+    needs: [prerequisite-plan, resolve-images, activation-apply]
     runs-on: [self-hosted, linux, x64, modelguard-demo]
     timeout-minutes: 30
     environment: demo
@@ -706,6 +1006,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
       API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
       SMOKE_BASE_URL: ${{ vars.DEMO_SMOKE_BASE_URL }}
       EXPECTED_MODEL_VERSION: ${{ inputs.model_version }}
@@ -718,26 +1019,18 @@ jobs:
           ref: ${{ inputs.source_commit }}
           persist-credentials: false
       - name: Download the published release evidence
+        if: ${{ inputs.governance_mode == 'team_protected' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: >-
             published-image-manifest-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/deploy/record-inputs/published
       - name: Download the verified model pointer
+        if: ${{ inputs.governance_mode == 'team_protected' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: verified-activation-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/deploy/record-inputs/verified
-      - name: Download the prerequisite plan identity
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: prerequisite-plan-redacted-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/deploy/record-inputs/prerequisite
-      - name: Download the activation plan identity
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: activation-plan-redacted-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/deploy/record-inputs/activation
       - name: Install pinned uv and Python
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -755,6 +1048,30 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Retrieve private deployment identities from encrypted audit storage
+        run: |
+          root=artifacts/deploy/record-inputs
+          mkdir -p "$root/prerequisite" "$root/activation" "$root/published" "$root/verified"
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          identity_prefix="deployments/plan-identities/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          aws s3api get-object --bucket "$audit_bucket" \
+            --key "${identity_prefix}/prerequisites.json" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            "$root/prerequisite/prerequisites.tfplan.identity.json" >/dev/null
+          aws s3api get-object --bucket "$audit_bucket" \
+            --key "${identity_prefix}/activation.json" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            "$root/activation/activation.tfplan.identity.json" >/dev/null
+          if [[ "${{ inputs.governance_mode }}" = "solo_portfolio" ]]; then
+            aws s3api get-object --bucket "$audit_bucket" \
+              --key "release-manifests/${{ inputs.source_commit }}.json" \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+              "$root/published/image-release-manifest.json" >/dev/null
+            aws s3api get-object --bucket "$audit_bucket" \
+              --key "deployments/activation-inputs/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/active-pointer.json" \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+              "$root/verified/active-pointer.json" >/dev/null
+          fi
       - name: Wait for ECS deployment stability
         run: >-
           aws ecs wait services-stable
@@ -831,13 +1148,14 @@ jobs:
             --github-repository "$GITHUB_REPOSITORY" \
             --github-run-id "$GITHUB_RUN_ID" \
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --governance-mode "$GOVERNANCE_MODE" \
             --output artifacts/deploy/smoke/last-known-good.json
           rm -f artifacts/deploy/smoke/live-pointer-response.json
       - name: Mark the verified runtime result before evidence storage
         id: smoke_result
         run: echo "passed=true" >>"$GITHUB_OUTPUT"
       - name: Upload deployment, smoke, and candidate-record evidence
-        if: ${{ always() }}
+        if: ${{ always() && inputs.governance_mode == 'team_protected' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: deployment-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -859,6 +1177,7 @@ jobs:
     name: Explicit ECS rollback; model pointer remains separate
     if: >-
       always() &&
+      inputs.governance_mode == 'team_protected' &&
       (needs.activation-apply.result == 'failure' ||
        needs.activation-apply.result == 'cancelled' ||
        (needs.activation-apply.result == 'success' &&
@@ -903,6 +1222,8 @@ jobs:
           aws s3api get-object --bucket "$audit_bucket" \
             --key deployments/last-known-good.json \
             artifacts/deploy/rollback/last-known-good.json >/dev/null
+          test "$(jq -r .deployment_governance_mode artifacts/deploy/rollback/last-known-good.json)" = \
+            "team_protected"
           uv run --frozen --no-sync python -m scripts.deployment_record rollback-outputs \
             --record artifacts/deploy/rollback/last-known-good.json \
             --github-output "$GITHUB_OUTPUT"

@@ -30,7 +30,7 @@ from modelguard.inference.loader import (
     ModelLoader,
     ModelLoadError,
     ModelLoadFailure,
-    VerifiedModelLoader,
+    default_model_loader,
 )
 
 
@@ -62,7 +62,7 @@ def create_app(
         sensitive_values=sensitive_values,
     )
     resolved_telemetry = telemetry or build_telemetry(resolved_settings)
-    resolved_loader = model_loader or VerifiedModelLoader()
+    resolved_loader = model_loader or default_model_loader(resolved_settings)
     resolved_event_sink = (
         event_sink
         if event_sink is not None

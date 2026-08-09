@@ -8,8 +8,16 @@ on:
         description: Exact protected-main Git commit to build once
         required: true
         type: string
+      governance_mode:
+        description: Exact configured governance mode
+        required: true
+        type: string
       confirmation:
         description: Exact protected pipeline confirmation
+        required: true
+        type: string
+      invocation_mode:
+        description: Exact reusable caller contract
         required: true
         type: string
     outputs:
@@ -31,6 +39,13 @@ on:
         description: Exact 40-character commit at protected main HEAD
         required: true
         type: string
+      governance_mode:
+        description: Exact configured governance mode
+        required: true
+        type: choice
+        options:
+          - team_protected
+          - solo_portfolio
       confirmation:
         description: Type PUBLISH modelguard-ai images
         required: true
@@ -53,9 +68,15 @@ jobs:
       security-events: write
     outputs:
       transfer_manifest_sha256: ${{ steps.transfer.outputs.manifest_sha256 }}
+      encrypted_transfer_sha256: ${{ steps.transfer.outputs.encrypted_sha256 }}
     env:
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       PROVENANCE_TAG: git-${{ inputs.source_commit }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+      INVOCATION_MODE: ${{ inputs.invocation_mode }}
+      IMAGE_TRANSFER_PUBLIC_KEY_B64: ${{ vars.IMAGE_TRANSFER_PUBLIC_KEY_B64 }}
     steps:
       - name: Refuse an unreviewed source or confirmation
         env:
@@ -79,6 +100,36 @@ jobs:
           enable-cache: true
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
+      - name: Verify the explicit image-publication governance entry
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_CONTEXT: ${{ toJSON(job) }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
+          entry_event="$GITHUB_EVENT_NAME"
+          if [[ -n "$INVOCATION_MODE" ]]; then
+            test "$INVOCATION_MODE" = "deploy_reusable"
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            entry_event="workflow_call"
+          fi
+          uv run --frozen --no-sync python -m scripts.deployment_governance entry \
+            --mode "$GOVERNANCE_MODE" \
+            --operation publish \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-visibility "$REPOSITORY_VISIBILITY" \
+            --event-name "$entry_event" \
+            --git-ref "$GITHUB_REF" \
+            --environment demo \
+            --workflow-ref "$WORKFLOW_REF" \
+            --job-workflow-ref "$job_workflow_ref" \
+            --source-commit "$SOURCE_COMMIT" \
+            --workflow-commit "$WORKFLOW_COMMIT" \
+            --job-workflow-commit "$job_workflow_commit" \
+            --confirmation "$CONFIRMATION"
       - name: Install only the checksum-verified Trivy binary
         run: uv run --frozen --no-sync python -m scripts.security_tools bootstrap --tool trivy
       - name: Refuse any release stage that bypasses a digest-pinned base
@@ -113,6 +164,8 @@ jobs:
       - name: Seal the scanned image transfer identity
         id: transfer
         run: |
+          set +x
+          test -n "$IMAGE_TRANSFER_PUBLIC_KEY_B64"
           docker save --output artifacts/image-build/images.tar \
             "modelguard-release-api:${PROVENANCE_TAG}" \
             "modelguard-release-dashboard:${PROVENANCE_TAG}" \
@@ -142,7 +195,15 @@ jobs:
               image_ids:{api:$api_id,dashboard:$dashboard_id,monitor:$monitor_id}
             }' >artifacts/image-build/build-transfer.json
           manifest_sha="$(sha256sum artifacts/image-build/build-transfer.json | awk '{print $1}')"
+          tar --create --file artifacts/image-transfer.tar --directory artifacts/image-build .
+          uv run --frozen --no-sync python -m scripts.confidential_artifact encrypt \
+            --input artifacts/image-transfer.tar \
+            --output artifacts/image-transfer.enc \
+            --public-key-b64 "$IMAGE_TRANSFER_PUBLIC_KEY_B64"
+          encrypted_sha="$(sha256sum artifacts/image-transfer.enc | awk '{print $1}')"
+          rm -rf artifacts/image-build artifacts/image-transfer.tar
           echo "manifest_sha256=${manifest_sha}" >>"$GITHUB_OUTPUT"
+          echo "encrypted_sha256=${encrypted_sha}" >>"$GITHUB_OUTPUT"
       - name: Upload only sanitized image SARIF to GitHub Code Scanning
         if: ${{ always() && hashFiles('artifacts/security/sarif/*.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
@@ -150,12 +211,12 @@ jobs:
           sarif_file: artifacts/security/sarif
           category: release-images-${{ inputs.source_commit }}
           wait-for-processing: true
-      - name: Upload the one-day same-run scanned image transfer
+      - name: Upload only the encrypted one-day same-run scanned image transfer
         if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: image-build-transfer-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/image-build/
+          path: artifacts/image-transfer.enc
           if-no-files-found: error
           retention-days: 1
 
@@ -181,6 +242,7 @@ jobs:
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       PROVENANCE_TAG: git-${{ inputs.source_commit }}
       TRANSFER_MANIFEST_SHA256: ${{ needs.build-scan.outputs.transfer_manifest_sha256 }}
+      ENCRYPTED_TRANSFER_SHA256: ${{ needs.build-scan.outputs.encrypted_transfer_sha256 }}
     steps:
       - name: Refuse an unreviewed source, confirmation, account, or Region
         env:
@@ -194,6 +256,7 @@ jobs:
           [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
           [[ "$AWS_REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]
           [[ "$TRANSFER_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ENCRYPTED_TRANSFER_SHA256" =~ ^[0-9a-f]{64}$ ]]
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -204,7 +267,7 @@ jobs:
         with:
           name: >-
             image-build-transfer-${{ inputs.source_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/image-release
+          path: artifacts/encrypted-image-release
       - name: Install pinned uv and Python
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -213,6 +276,27 @@ jobs:
           enable-cache: true
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
+      - name: Decrypt only the exact same-run scanned image transfer on the ephemeral runner
+        env:
+          IMAGE_TRANSFER_PRIVATE_KEY_B64: ${{ secrets.IMAGE_TRANSFER_PRIVATE_KEY_B64 }}
+        run: |
+          set +x
+          encrypted=artifacts/encrypted-image-release/image-transfer.enc
+          test "$(sha256sum "$encrypted" | awk '{print $1}')" = \
+            "$ENCRYPTED_TRANSFER_SHA256"
+          transfer_private_key="${IMAGE_TRANSFER_PRIVATE_KEY_B64:-}"
+          unset IMAGE_TRANSFER_PRIVATE_KEY_B64
+          test -n "$transfer_private_key"
+          printf '%s' "$transfer_private_key" | \
+            uv run --frozen --no-sync python -m scripts.confidential_artifact decrypt \
+              --input "$encrypted" \
+              --output artifacts/image-release.tar \
+              --private-key-stdin
+          transfer_private_key=
+          rm -f "$encrypted"
+          install -d -m 0700 artifacts/image-release
+          tar --extract --file artifacts/image-release.tar --directory artifacts/image-release
+          rm -f artifacts/image-release.tar
       - name: Verify and load only the exact scanned image transfer
         run: |
           transfer=artifacts/image-release/build-transfer.json
@@ -240,7 +324,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
-          mask-aws-account-id: false
+          mask-aws-account-id: true
       - name: Verify account, repositories, and create-only tags
         run: |
           actual_account="$(aws sts get-caller-identity --query Account --output text)"
@@ -283,8 +367,17 @@ jobs:
             --output artifacts/image-release/image-release-manifest.json \
             --github-output "$GITHUB_OUTPUT"
           rm -f artifacts/image-release/inspect-*.json artifacts/image-release/ecr-*.json
+      - name: Store the solo release manifest in the encrypted private audit bucket
+        if: ${{ inputs.governance_mode == 'solo_portfolio' }}
+        run: |
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api put-object \
+            --bucket "$audit_bucket" \
+            --key "release-manifests/${SOURCE_COMMIT}.json" \
+            --body artifacts/image-release/image-release-manifest.json \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
       - name: Upload immutable release and scan evidence
-        if: ${{ success() }}
+        if: ${{ success() && inputs.governance_mode == 'team_protected' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: >-

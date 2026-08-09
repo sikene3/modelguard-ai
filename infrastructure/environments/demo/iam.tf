@@ -216,6 +216,13 @@ resource "aws_iam_role_policy" "ecs_execution" {
 
 data "aws_iam_policy_document" "api" {
   statement {
+    sid       = "ReadExactModelBucketRegion"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [module.data_plane.bucket_arns["models"]]
+  }
+
+  statement {
     sid    = "ReadVersionedModelBundle"
     effect = "Allow"
     actions = [
@@ -226,29 +233,10 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
-    sid       = "ListModelBundlePrefix"
+    sid       = "ReadExactModelPointers"
     effect    = "Allow"
-    actions   = ["s3:ListBucket"]
-    resources = [module.data_plane.bucket_arns["models"]]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["model-bundles/*"]
-    }
-  }
-
-  statement {
-    sid    = "ReadExactModelPointers"
-    effect = "Allow"
-    actions = [
-      "ssm:GetParameter",
-      "ssm:GetParameters",
-    ]
-    resources = [
-      aws_ssm_parameter.active_model.arn,
-      aws_ssm_parameter.previous_model.arn,
-    ]
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.active_model.arn]
   }
 
   statement {
@@ -269,6 +257,16 @@ resource "aws_iam_role_policy" "api" {
 }
 
 data "aws_iam_policy_document" "dashboard" {
+  statement {
+    sid     = "ReadExactEvidenceBucketRegions"
+    effect  = "Allow"
+    actions = ["s3:GetBucketLocation"]
+    resources = [
+      module.data_plane.bucket_arns["models"],
+      module.data_plane.bucket_arns["reports"],
+    ]
+  }
+
   statement {
     sid       = "ReadActiveModelManifest"
     effect    = "Allow"
@@ -295,6 +293,22 @@ data "aws_iam_policy_document" "dashboard" {
       values   = ["monitoring/*"]
     }
   }
+
+  statement {
+    sid     = "ReadMonitorCompletionMetricIdentity"
+    effect  = "Allow"
+    actions = ["cloudwatch:ListMetrics"]
+    # CloudWatch ListMetrics does not support resource-level permissions. Namespace, metric name,
+    # and fixed dimensions are constrained by the runtime request contract.
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "ReadExactMonitorLogStreamMetadata"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogStreams"]
+    resources = ["${aws_cloudwatch_log_group.application["monitor"].arn}:*"]
+  }
 }
 
 resource "aws_iam_role_policy" "dashboard" {
@@ -305,6 +319,17 @@ resource "aws_iam_role_policy" "dashboard" {
 
 data "aws_iam_policy_document" "monitor" {
   statement {
+    sid     = "ReadExactMonitoringBucketRegions"
+    effect  = "Allow"
+    actions = ["s3:GetBucketLocation"]
+    resources = [
+      module.data_plane.bucket_arns["models"],
+      module.data_plane.bucket_arns["predictions"],
+      module.data_plane.bucket_arns["reports"],
+    ]
+  }
+
+  statement {
     sid    = "ReadVersionedModelBundleObjects"
     effect = "Allow"
     actions = [
@@ -312,19 +337,6 @@ data "aws_iam_policy_document" "monitor" {
       "s3:GetObjectVersion",
     ]
     resources = ["${module.data_plane.bucket_arns["models"]}/model-bundles/*"]
-  }
-
-  statement {
-    sid       = "ListVersionedModelBundlePrefix"
-    effect    = "Allow"
-    actions   = ["s3:ListBucket"]
-    resources = [module.data_plane.bucket_arns["models"]]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["model-bundles/*"]
-    }
   }
 
   statement {

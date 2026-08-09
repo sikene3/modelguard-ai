@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from botocore.exceptions import BotoCoreError, ClientError
 
+from modelguard.dashboard.aws_health import AwsDashboardHealth, DashboardAwsHealthProbe
 from modelguard.dashboard.config import DashboardSettings, load_dashboard_settings
 from modelguard.dashboard.parsing import DashboardSnapshot, load_dashboard_snapshot
 from modelguard.dashboard.presentation import (
@@ -581,6 +583,7 @@ def _render_dashboard(
     settings: DashboardSettings,
     repository: DashboardRepository,
     snapshot: DashboardSnapshot,
+    aws_health: AwsDashboardHealth | None = None,
 ) -> None:
     st.markdown(
         '<div class="mg-kicker">Read-only operations evidence</div>', unsafe_allow_html=True
@@ -591,6 +594,19 @@ def _render_dashboard(
         "change, and label-backed evidence—kept deliberately separate.</p>",
         unsafe_allow_html=True,
     )
+    if aws_health is not None:
+        source_summary = ", ".join(
+            f"{source.source}={source.state.value}" for source in aws_health.sources
+        )
+        if aws_health.state.value == "healthy":
+            st.success(
+                f"AWS evidence sources are reachable in {aws_health.region}: {source_summary}."
+            )
+        else:
+            st.warning(
+                f"AWS evidence-source health is {aws_health.state.value}; no healthy runtime "
+                f"claim is inferred. {source_summary}."
+            )
     st.markdown(
         '<div class="mg-snapshot"><span class="mg-dot"></span>'
         f"Snapshot read {escape(format_utc(snapshot.captured_at))} · "
@@ -661,7 +677,13 @@ def main() -> None:
         history_limit=settings.dashboard_history_limit,
         policy_problem=policy_problem,
     )
-    _render_dashboard(settings, repository, snapshot)
+    aws_health: AwsDashboardHealth | None = None
+    if settings.aws_health_required:
+        try:
+            aws_health = DashboardAwsHealthProbe(settings).probe()
+        except (BotoCoreError, ClientError, TimeoutError, ValueError):
+            st.error("AWS source-health verification failed closed; no healthy claim is available.")
+    _render_dashboard(settings, repository, snapshot, aws_health)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from modelguard.api.main import create_app
 from modelguard.core.config import ApiAccessMode, AppEnvironment, EventSink, Settings
 from modelguard.core.telemetry import build_telemetry
 from modelguard.inference.events import PredictionEventV1, freeze_local_event_snapshot
+from modelguard.inference.loader import VerifiedModelLoader
 
 
 class RecordingLogger:
@@ -141,6 +142,7 @@ def test_firehose_acceptance_and_failure_are_separate_fail_open_aws_signals(
         client = FakeFirehoseClient(fail=fail)
         app = create_app(
             base_settings,
+            model_loader=VerifiedModelLoader(),
             telemetry=telemetry,
             logger=logger,
             firehose_client=client,

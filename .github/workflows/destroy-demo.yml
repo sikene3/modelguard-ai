@@ -1,0 +1,273 @@
+name: Destroy protected demo
+
+# checkov:skip=CKV_GHA_7:Exact destructive inputs and two protected environment gates are mandatory. [owner=modelguard-maintainers; expires=2026-10-31]
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact 40-character protected-main commit
+        required: true
+        type: string
+      governance_mode:
+        description: Exact configured governance mode
+        required: true
+        type: choice
+        options:
+          - team_protected
+          - solo_portfolio
+      auto_destroy_date:
+        description: Exact AutoDestroyDate from the deployed state
+        required: true
+        type: string
+      confirmation:
+        description: Exact governance-mode destroy phrase
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelguard-demo-deploy
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  destroy-plan:
+    name: Create confidential destroy plan and redacted review evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: demo-destroy
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
+      BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+      PERMISSION_BOUNDARY_ARN: ${{ vars.TF_PERMISSION_BOUNDARY_ARN }}
+      ALERT_KMS_KEY_ARN: ${{ vars.TF_ALERT_KMS_KEY_ARN }}
+      OWNER_TAG: ${{ vars.DEMO_OWNER_TAG }}
+      ALB_ALLOWED_CIDR: ${{ vars.DEMO_ALB_ALLOWED_CIDR }}
+      API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
+      ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
+      PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+    steps:
+      - name: Check out the exact protected-main source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Verify exact destroy entry identity and typed confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          JOB_CONTEXT: ${{ toJSON(job) }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
+          uv run --frozen --no-sync python -m scripts.deployment_governance entry \
+            --mode "$GOVERNANCE_MODE" \
+            --operation destroy \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-visibility "$REPOSITORY_VISIBILITY" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --git-ref "$GITHUB_REF" \
+            --environment demo-destroy \
+            --workflow-ref "$WORKFLOW_REF" \
+            --job-workflow-ref "$job_workflow_ref" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --workflow-commit "$GITHUB_SHA" \
+            --job-workflow-commit "$job_workflow_commit" \
+            --confirmation "$CONFIRMATION"
+      - name: Assume the exact destroy environment role through OIDC
+        uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: modelguard-destroy-plan-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+      - name: Render exact destroy inputs and initialize retained backend
+        run: |
+          uv run --frozen --no-sync python -m scripts.render_ci_terraform \
+            --output-dir artifacts/destroy \
+            --stage prerequisites \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --owner-tag "$OWNER_TAG" \
+            --governance-mode "$GOVERNANCE_MODE" \
+            --auto-destroy-date "${{ inputs.auto_destroy_date }}" \
+            --backend-bucket "$BACKEND_BUCKET" \
+            --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
+            --permission-boundary-arn "$PERMISSION_BOUNDARY_ARN" \
+            --alert-kms-key-arn "$ALERT_KMS_KEY_ARN" \
+            --alb-allowed-cidr "$ALB_ALLOWED_CIDR" \
+            --access-mode "$API_ACCESS_MODE" \
+            --acm-certificate-arn "$ACM_CERTIFICATE_ARN" \
+            --prediction-token-ssm-arn "$PREDICTION_TOKEN_SSM_ARN"
+          rm -f artifacts/destroy/preflight.json
+          terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
+            -lockfile=readonly -backend-config="$GITHUB_WORKSPACE/artifacts/destroy/backend.hcl"
+          test "$(terraform -chdir=infrastructure/environments/demo workspace show)" = "default"
+          test "$(terraform -chdir=infrastructure/environments/demo output -raw deployment_governance_mode)" = \
+            "$GOVERNANCE_MODE"
+      - name: Create, seal, and summarize the exact destroy plan
+        run: |
+          activation="$(terraform -chdir=infrastructure/environments/demo output -json activation_state | jq -r '.activate_services')"
+          [[ "$activation" = "true" || "$activation" = "false" ]]
+          terraform -chdir=infrastructure/environments/demo plan -destroy -input=false \
+            -lock-timeout=5m -no-color \
+            -var-file="$GITHUB_WORKSPACE/artifacts/destroy/demo-ci.tfvars.json" \
+            -out="$GITHUB_WORKSPACE/artifacts/destroy/destroy.tfplan" >/dev/null 2>&1
+          uv run --frozen --no-sync python scripts/terraform_demo_guard.py seal-plan \
+            --plan artifacts/destroy/destroy.tfplan \
+            --var-file artifacts/destroy/demo-ci.tfvars.json \
+            --backend-config artifacts/destroy/backend.hcl \
+            --stage destroy \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --repository . \
+            --auto-destroy-date "${{ inputs.auto_destroy_date }}" \
+            --activate-services "$activation" \
+            --output artifacts/destroy/destroy.tfplan.identity.json
+          terraform -chdir=infrastructure/environments/demo show -json \
+            "$GITHUB_WORKSPACE/artifacts/destroy/destroy.tfplan" 2>/dev/null | \
+            uv run --frozen --no-sync python -m scripts.plan_evidence \
+              --manifest artifacts/destroy/destroy.tfplan.identity.json \
+              --output-json artifacts/destroy/destroy.redacted.json \
+              --output-markdown artifacts/destroy/destroy.redacted.md \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --workflow-ref "$GITHUB_WORKFLOW_REF"
+          cat artifacts/destroy/destroy.redacted.md >>"$GITHUB_STEP_SUMMARY"
+      - name: Transfer raw destroy inputs only through encrypted private S3
+        env:
+          PLAN_STAGE: destroy
+          TRANSFER_DIRECTORY: artifacts/destroy
+        run: ./scripts/confidential_plan_transfer.sh upload
+      - name: Upload only redacted destroy evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: destroy-plan-redacted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/destroy/destroy.redacted.json
+            artifacts/destroy/destroy.redacted.md
+          if-no-files-found: error
+          retention-days: 30
+
+  destroy-apply:
+    name: Apply only the explicitly reviewed destroy plan
+    needs: destroy-plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    environment: demo-destroy
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
+      BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Assume the exact destroy environment role through OIDC
+        uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: modelguard-destroy-apply-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+      - name: Retrieve only this run's encrypted private destroy transfer
+        env:
+          PLAN_STAGE: destroy
+          TRANSFER_DIRECTORY: artifacts/destroy-transfer
+        run: ./scripts/confidential_plan_transfer.sh download
+      - name: Verify the exact human-reviewed destroy evidence
+        env:
+          REVIEWED_PLAN_SHA256: ${{ vars.REVIEWED_DESTROY_PLAN_SHA256 }}
+          REVIEWED_PLAN_IDENTITY_SHA256: ${{ vars.REVIEWED_DESTROY_IDENTITY_SHA256 }}
+          REVIEWED_RUN_IDENTITY: ${{ vars.REVIEWED_DESTROY_RUN_IDENTITY }}
+          REVIEW_CONFIRMATION: ${{ vars.REVIEWED_DESTROY_CONFIRMATION }}
+        run: |
+          plan=artifacts/destroy-transfer/destroy.tfplan
+          identity=artifacts/destroy-transfer/destroy.tfplan.identity.json
+          uv run --frozen --no-sync python -m scripts.deployment_governance evidence \
+            --mode "$GOVERNANCE_MODE" \
+            --stage destroy \
+            --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:destroy" \
+            --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
+            --confirmation "$REVIEW_CONFIRMATION" \
+            --source-commit "${{ inputs.source_commit }}" \
+            --workflow-commit "$GITHUB_SHA" \
+            --plan-sha256 "$(sha256sum "$plan" | awk '{print $1}')" \
+            --reviewed-plan-sha256 "$REVIEWED_PLAN_SHA256" \
+            --plan-identity-sha256 "$(sha256sum "$identity" | awk '{print $1}')" \
+            --reviewed-plan-identity-sha256 "$REVIEWED_PLAN_IDENTITY_SHA256"
+      - name: Reverify and apply the exact destroy plan
+        env:
+          GITHUB_ACTIONS: "true"
+          MODELGUARD_GITHUB_ENVIRONMENT: demo-destroy
+          CONFIRM_APPLY: "YES"
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          BACKEND_BUCKET_NAME: ${{ vars.TF_BACKEND_BUCKET }}
+          BACKEND_CONFIG: ${{ github.workspace }}/artifacts/destroy-transfer/backend.hcl
+          TFVARS_FILE: ${{ github.workspace }}/artifacts/destroy-transfer/demo-ci.tfvars.json
+          PLAN_STAGE: destroy
+          DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+          PLAN_FILE: ${{ github.workspace }}/artifacts/destroy-transfer/destroy.tfplan
+          PLAN_MANIFEST: ${{ github.workspace }}/artifacts/destroy-transfer/destroy.tfplan.identity.json
+        run: ./scripts/ci_apply_saved_plan.sh
+      - name: Delete the exact confidential destroy transfer
+        env:
+          PLAN_STAGE: destroy
+          TRANSFER_DIRECTORY: artifacts/destroy-transfer
+        run: ./scripts/confidential_plan_transfer.sh delete
+      - name: Verify the exact demo inventory is empty
+        env:
+          EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          INVENTORY_OUTPUT: artifacts/destroy/post-destroy-inventory.json
+        run: ./scripts/verify_aws_teardown.sh

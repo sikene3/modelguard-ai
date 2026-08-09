@@ -50,9 +50,9 @@
     "report": "reports/phase-09.md"
   },
   "phase_10": {
-    "status": "not_started",
+    "status": "in_progress",
     "commit": null,
-    "report": null
+    "report": "reports/phase-10.md"
   },
   "phase_11": {
     "status": "not_started",

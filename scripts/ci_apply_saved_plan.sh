@@ -9,8 +9,8 @@ if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
   echo "Refusing apply outside protected main."
   exit 1
 fi
-if [[ "${MODELGUARD_GITHUB_ENVIRONMENT:-}" != "demo" ]]; then
-  echo "Refusing apply outside the protected demo environment."
+if [[ "${MODELGUARD_GITHUB_ENVIRONMENT:-}" != "demo" && "${MODELGUARD_GITHUB_ENVIRONMENT:-}" != "demo-destroy" ]]; then
+  echo "Refusing apply outside an exact protected demo environment."
   exit 1
 fi
 if [[ "${CONFIRM_APPLY:-}" != "YES" ]]; then
@@ -27,6 +27,7 @@ required_names=(
   PLAN_STAGE
   PLAN_FILE
   PLAN_MANIFEST
+  DEPLOYMENT_GOVERNANCE_MODE
   GITHUB_SHA
 )
 for required_name in "${required_names[@]}"; do
@@ -39,8 +40,20 @@ if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
   echo "Refusing apply: account identity is invalid."
   exit 1
 fi
-if [[ "$PLAN_STAGE" != "prerequisites" && "$PLAN_STAGE" != "activation" ]]; then
-  echo "Refusing apply: stage must be prerequisites or activation."
+if [[ "$PLAN_STAGE" != "prerequisites" && "$PLAN_STAGE" != "activation" && "$PLAN_STAGE" != "destroy" ]]; then
+  echo "Refusing apply: stage must be prerequisites, activation, or destroy."
+  exit 1
+fi
+if [[ "$PLAN_STAGE" = "destroy" && "$MODELGUARD_GITHUB_ENVIRONMENT" != "demo-destroy" ]]; then
+  echo "Refusing destroy outside the exact demo-destroy environment."
+  exit 1
+fi
+if [[ "$PLAN_STAGE" != "destroy" && "$MODELGUARD_GITHUB_ENVIRONMENT" != "demo" ]]; then
+  echo "Refusing non-destroy apply outside the exact demo environment."
+  exit 1
+fi
+if [[ "$DEPLOYMENT_GOVERNANCE_MODE" != "team_protected" && "$DEPLOYMENT_GOVERNANCE_MODE" != "solo_portfolio" ]]; then
+  echo "Refusing apply: deployment governance mode is invalid."
   exit 1
 fi
 
@@ -56,6 +69,11 @@ for input_path in "$BACKEND_CONFIG" "$TFVARS_FILE" "$PLAN_FILE" "$PLAN_MANIFEST"
 done
 if [[ "$(git -C "$repo_root" rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
   echo "Refusing apply: checked-out commit differs from the workflow source commit."
+  exit 1
+fi
+tfvars_mode="$(jq -er '.deployment_governance_mode | select(. == "team_protected" or . == "solo_portfolio")' "$TFVARS_FILE")"
+if [[ "$tfvars_mode" != "$DEPLOYMENT_GOVERNANCE_MODE" ]]; then
+  echo "Refusing apply: variable-file governance mode differs from the reviewed mode."
   exit 1
 fi
 
@@ -77,6 +95,13 @@ workspace="$(terraform -chdir="$env_dir" workspace show)"
 if [[ "$workspace" != "default" ]]; then
   echo "Refusing apply: only the default workspace is permitted."
   exit 1
+fi
+if [[ "$PLAN_STAGE" != "prerequisites" ]]; then
+  deployed_mode="$(terraform -chdir="$env_dir" output -raw deployment_governance_mode)"
+  if [[ "$deployed_mode" != "$DEPLOYMENT_GOVERNANCE_MODE" ]]; then
+    echo "Refusing apply: deployed governance mode cannot be downgraded or substituted."
+    exit 1
+  fi
 fi
 
 verify_plan() {

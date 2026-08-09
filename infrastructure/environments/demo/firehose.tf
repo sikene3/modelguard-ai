@@ -20,6 +20,7 @@ resource "aws_kinesis_firehose_delivery_stream" "predictions" {
     buffering_interval = 60
     buffering_size     = 5
     compression_format = "GZIP"
+    file_extension     = ".jsonl.gz"
     custom_time_zone   = "UTC"
 
     cloudwatch_logging_options {

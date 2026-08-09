@@ -1,6 +1,7 @@
 aws_account_id        = "123456789012"
 aws_region            = "us-east-1"
 owner_tag             = "portfolio-owner"
+deployment_governance_mode = "team_protected"
 auto_destroy_date     = "2026-08-09"
 backend_bucket_name   = "modelguard-ai-terraform-state-123456789012-us-east-1"
 permission_boundary_arn = "arn:aws:iam::123456789012:policy/modelguard-ai/bootstrap/modelguard-ai-workload-boundary"
@@ -18,10 +19,12 @@ prediction_token_ssm_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/modelgu
 deployment_stage = "prerequisites"
 activate_services = false
 runtime_contract_verified = false
+budget_prerequisite_verified = false
 
 # Activation saved plan only: set deployment_stage=activation, activate_services=true, and resolve
 # all three values from ECR DescribeImages. Never use mutable tags.
 # Set runtime_contract_verified=true only after the digest-pinned image contract tests pass.
+# Set budget_prerequisite_verified=true only after the value-free read-only USD 10 budget preflight.
 # Bind these values to the same verified active pointer; include all seven exact S3 VersionIds.
 # expected_model_version         = "1.0.0"
 # expected_model_manifest_sha256 = "<64-hex>"
@@ -38,5 +41,6 @@ runtime_contract_verified = false
 # dashboard_image_ref = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/dashboard@sha256:<64-hex>"
 # monitor_image_ref   = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo/monitor@sha256:<64-hex>"
 
-# The budget targets the non-secret SNS topic ARN in Terraform. Its one email endpoint is not a
-# Terraform variable; enroll and confirm it interactively after the prerequisite apply.
+# The retained USD 10 budget is created manually in the AWS Console with 50/80/100 percent actual
+# and 100 percent forecast alerts. Enter its endpoint only in the Console; it is never Terraform
+# input or state. Budget alerts are warnings and are not a hard spending cap.

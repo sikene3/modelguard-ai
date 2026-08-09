@@ -78,6 +78,8 @@ jobs:
       ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
       PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
       AUTO_DESTROY_DATE: ${{ vars.DEMO_AUTO_DESTROY_DATE }}
+      GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
     steps:
       - name: Check out the exact protected-main source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -97,6 +99,27 @@ jobs:
           enable-cache: true
       - name: Synchronize the locked environment
         run: uv sync --all-groups --locked
+      - name: Verify the exact plan-governance entry contract
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_CONTEXT: ${{ toJSON(job) }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          uv run --frozen --no-sync python -m scripts.deployment_governance entry \
+            --mode "$GOVERNANCE_MODE" \
+            --operation plan \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-visibility "$REPOSITORY_VISIBILITY" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --git-ref "$GITHUB_REF" \
+            --environment demo-plan \
+            --workflow-ref "$WORKFLOW_REF" \
+            --job-workflow-ref "$job_workflow_ref" \
+            --source-commit "$WORKFLOW_COMMIT" \
+            --workflow-commit "$WORKFLOW_COMMIT" \
+            --job-workflow-commit "$job_workflow_commit"
       - name: Assume the exact main-ref plan role through OIDC
         uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
         with:
@@ -118,6 +141,7 @@ jobs:
             --account-id "$AWS_ACCOUNT_ID" \
             --region "$AWS_REGION" \
             --owner-tag "$OWNER_TAG" \
+            --governance-mode "$GOVERNANCE_MODE" \
             --auto-destroy-date "$AUTO_DESTROY_DATE" \
             --backend-bucket "$BACKEND_BUCKET" \
             --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
@@ -183,6 +207,5 @@ jobs:
           path: |
             artifacts/terraform-plan/prerequisites.redacted.json
             artifacts/terraform-plan/prerequisites.redacted.md
-            artifacts/terraform-plan/prerequisites.tfplan.identity.json
           if-no-files-found: error
           retention-days: 14

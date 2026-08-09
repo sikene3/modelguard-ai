@@ -15,13 +15,19 @@ the video and screenshots, then destroy the demo resources.
 - Do not schedule the monitor more frequently than the demo requires.
 - Keep CloudWatch retention short and configurable.
 - Use S3 lifecycle policies to remove prediction events and reports after the demo retention period.
-- Require a small AWS Budget whose 80% notification targets the exact non-secret SNS topic ARN.
-  After prerequisite apply, enroll one confirmed human email endpoint for both budget and drift
-  alarms through the interactive human/SSO command; never place the address in Terraform, state, a
-  saved plan, workflow input, or artifact. The notification is not a hard spending cap.
+- Before deployment, manually create the retained `modelguard-ai-demo-monthly` AWS Cost Budget for
+  USD 10 with 50%, 80%, and 100% actual plus 100% forecast alerts. Enter and confirm its endpoint
+  only in the AWS Console. Never place it in source, Terraform, state, a saved plan, GitHub, a
+  workflow artifact, report, log, command, or example. The read-only preflight verifies only name,
+  amount, period, and thresholds and never reads subscribers. Budget alerts are warnings and do not
+  guarantee a hard spending cap.
+- Enroll the separate demo drift/alarm SNS endpoint only through the interactive human boundary;
+  Terraform and workflows still carry no endpoint value.
 - Tag every resource with `Project`, `Environment`, `Owner`, `ManagedBy`, and `AutoDestroyDate`.
   The date is a reminder and guard, not an automatic deletion mechanism.
 - Keep state and locking in a separate bootstrap layer; demo destroy must not own the state bucket.
+- Keep the exact-state-object CloudTrail trail, audit log bucket, and audit KMS key in the separate
+  retained audit bootstrap. Its CloudTrail, S3, and KMS usage can incur ongoing cost.
 
 ## Before apply
 

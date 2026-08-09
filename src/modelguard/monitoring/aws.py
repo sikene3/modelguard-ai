@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import gzip
-import os
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from datetime import datetime
+from io import BytesIO
+from typing import Any, Protocol, cast
 
 from botocore.exceptions import BotoCoreError, ClientError
-from pydantic import Field, model_validator
 
 from modelguard.core.hashing import sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import canonical_json_bytes
 from modelguard.monitoring.events import (
     EventIdentity,
     FrozenRawSnapshot,
     freeze_raw_payloads,
     target_identity_from_bundle,
-    verify_target_identity,
 )
 from modelguard.monitoring.persistence import (
     AlertDimension,
@@ -28,16 +27,28 @@ from modelguard.monitoring.persistence import (
     AlertSendResult,
     AlertSendStatus,
     AlertSink,
+    RunStatusArtifact,
 )
 from modelguard.monitoring.report import MonitoringReport, render_offline_html
-from modelguard.training.bundle import EXPECTED_FILENAMES, ValidatedBundleMetadata, inspect_bundle
+from modelguard.storage.versioned_bundle import (
+    ActiveMonitoringPointer,
+    SsmTargetSnapshotResolver,
+    VersionedBundleLocation,
+    download_versioned_bundle,
+)
+from modelguard.training.bundle import ValidatedBundleMetadata
 
-
-class SsmClient(Protocol):
-    def get_parameter(self, **kwargs: Any) -> Mapping[str, Any]: ...
+__all__ = [
+    "ActiveMonitoringPointer",
+    "SsmTargetSnapshotResolver",
+    "VersionedBundleLocation",
+    "download_versioned_bundle",
+]
 
 
 class S3Client(Protocol):
+    def get_bucket_location(self, **kwargs: Any) -> Mapping[str, Any]: ...
+
     def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
     def head_object(self, **kwargs: Any) -> Mapping[str, Any]: ...
@@ -51,101 +62,27 @@ class SnsClient(Protocol):
     def publish(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
-class VersionedBundleLocation(StrictArtifactModel):
-    bucket: str = Field(min_length=3)
-    key_prefix: str = Field(min_length=1)
-    object_version_ids: dict[str, str]
-
-    @model_validator(mode="after")
-    def validate_exact_bundle(self) -> VersionedBundleLocation:
-        if set(self.object_version_ids) != EXPECTED_FILENAMES:
-            raise ValueError("AWS bundle pointer must version every exact bundle object")
-        if not all(self.object_version_ids.values()):
-            raise ValueError("AWS bundle VersionIds cannot be empty")
-        if not self.key_prefix.endswith("/") or self.key_prefix.startswith("/"):
-            raise ValueError("bundle key prefix must be relative and end in slash")
-        return self
-
-
-class ActiveMonitoringPointer(StrictArtifactModel):
-    pointer_schema_version: Literal["modelguard.active-monitor-target.v1"] = (
-        "modelguard.active-monitor-target.v1"
-    )
-    target_identity: EventIdentity
-    bundle: VersionedBundleLocation
-
-
-class SsmTargetSnapshotResolver:
-    """Read and validate the active target once per resolver/run, then return the frozen value."""
-
-    def __init__(self, client: SsmClient, *, parameter_name: str) -> None:
-        if not parameter_name:
-            raise ValueError("SSM parameter name cannot be empty")
-        self._client = client
-        self._parameter_name = parameter_name
-        self._snapshot: ActiveMonitoringPointer | None = None
-
-    def resolve_once(self) -> ActiveMonitoringPointer:
-        if self._snapshot is None:
-            response = self._client.get_parameter(
-                Name=self._parameter_name,
-                WithDecryption=False,
-            )
-            parameter = response.get("Parameter")
-            if not isinstance(parameter, Mapping) or not isinstance(parameter.get("Value"), str):
-                raise ValueError("SSM active target response lacks a string pointer value")
-            self._snapshot = ActiveMonitoringPointer.model_validate_json(parameter["Value"])
-        return self._snapshot
-
-
 class StreamingBody(Protocol):
-    def read(self) -> bytes: ...
+    def read(self, amount: int = -1) -> bytes: ...
+
+    def close(self) -> None: ...
 
 
-def _body_bytes(response: Mapping[str, Any]) -> bytes:
+def _body_bytes(response: Mapping[str, Any], *, maximum_bytes: int = 64 * 1024 * 1024) -> bytes:
     body = response.get("Body")
     if body is None or not hasattr(body, "read"):
         raise ValueError("AWS object response lacks a readable body")
-    payload = cast(StreamingBody, body).read()
+    reader = cast(StreamingBody, body)
+    try:
+        payload = reader.read(maximum_bytes + 1)
+    finally:
+        with suppress(AttributeError, OSError):
+            reader.close()
     if not isinstance(payload, bytes):
         raise ValueError("AWS object body did not return bytes")
+    if len(payload) > maximum_bytes:
+        raise ValueError("AWS object body exceeds the bounded read limit")
     return payload
-
-
-def _create_file(path: Path, payload: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written <= 0:
-                raise OSError("versioned bundle download made no progress")
-            offset += written
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def download_versioned_bundle(
-    client: S3Client,
-    pointer: ActiveMonitoringPointer,
-    destination: Path,
-) -> ValidatedBundleMetadata:
-    """Download exact VersionIds, inspect every checksum/contract, and verify the target tuple."""
-
-    destination.mkdir(parents=True, exist_ok=False)
-    for filename in sorted(EXPECTED_FILENAMES):
-        response = client.get_object(
-            Bucket=pointer.bundle.bucket,
-            Key=f"{pointer.bundle.key_prefix}{filename}",
-            VersionId=pointer.bundle.object_version_ids[filename],
-        )
-        _create_file(destination / filename, _body_bytes(response))
-    metadata = inspect_bundle(destination)
-    verify_target_identity(metadata, pointer.target_identity)
-    return metadata
 
 
 @dataclass(frozen=True)
@@ -153,13 +90,33 @@ class S3ObjectSnapshot:
     key: str
     version_id: str | None
     etag: str
+    content_length: int
 
 
-def _enumerate_s3_objects(client: S3Client, *, bucket: str, prefix: str) -> list[str]:
+PREDICTION_OBJECT_SUFFIXES = (".jsonl.gz",)
+
+
+def _enumerate_s3_objects(
+    client: S3Client,
+    *,
+    bucket: str,
+    prefix: str,
+    maximum_objects: int,
+    maximum_pages: int = 100,
+    maximum_entries: int = 50_000,
+) -> list[str]:
+    if not prefix or maximum_objects < 1 or maximum_pages < 1 or maximum_entries < 1:
+        raise ValueError("S3 prediction enumeration bounds and prefix must be positive")
     keys: list[str] = []
     token: str | None = None
+    seen_tokens: set[str] = set()
+    page_count = 0
+    entry_count = 0
     while True:
-        request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+        page_count += 1
+        if page_count > maximum_pages:
+            raise ValueError("S3 prediction snapshot exceeds the pagination limit")
+        request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1_000}
         if token is not None:
             request["ContinuationToken"] = token
         response = client.list_objects_v2(**request)
@@ -170,13 +127,31 @@ def _enumerate_s3_objects(client: S3Client, *, bucket: str, prefix: str) -> list
             if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
                 raise ValueError("S3 listing contains an invalid key entry")
             key = item["Key"]
-            if key.endswith((".jsonl", ".jsonl.gz")):
+            entry_count += 1
+            if entry_count > maximum_entries:
+                raise ValueError("S3 prediction snapshot exceeds the listing-entry limit")
+            if not key.startswith(prefix):
+                raise ValueError("S3 listing returned a key outside the requested prefix")
+            if key.endswith(PREDICTION_OBJECT_SUFFIXES):
                 keys.append(key)
-        if not response.get("IsTruncated", False):
+                if len(keys) > maximum_objects:
+                    raise ValueError("S3 prediction snapshot exceeds the object-count limit")
+        if "IsTruncated" not in response:
+            raise ValueError("S3 listing lacks a truncation marker")
+        is_truncated = response["IsTruncated"]
+        if not isinstance(is_truncated, bool):
+            raise ValueError("S3 listing truncation marker must be a boolean")
+        if not is_truncated:
             break
         next_token = response.get("NextContinuationToken")
-        if not isinstance(next_token, str) or not next_token or next_token == token:
+        if (
+            not isinstance(next_token, str)
+            or not next_token
+            or next_token == token
+            or next_token in seen_tokens
+        ):
             raise ValueError("S3 listing pagination token is invalid")
+        seen_tokens.add(next_token)
         token = next_token
     if len(keys) != len(set(keys)):
         raise ValueError("S3 snapshot enumeration returned duplicate keys")
@@ -188,32 +163,68 @@ def freeze_s3_raw_snapshot(
     *,
     bucket: str,
     prefix: str,
+    maximum_objects: int = 10_000,
+    maximum_object_bytes: int = 64 * 1024 * 1024,
+    maximum_snapshot_bytes: int = 256 * 1024 * 1024,
 ) -> FrozenRawSnapshot:
     """Enumerate once, pin each object by VersionId/ETag, then freeze logical records."""
 
     objects: list[S3ObjectSnapshot] = []
-    for key in _enumerate_s3_objects(client, bucket=bucket, prefix=prefix):
+    total_bytes = 0
+    for key in _enumerate_s3_objects(
+        client,
+        bucket=bucket,
+        prefix=prefix,
+        maximum_objects=maximum_objects,
+    ):
         metadata = client.head_object(Bucket=bucket, Key=key)
         etag = metadata.get("ETag")
         version_id = metadata.get("VersionId")
+        content_length = metadata.get("ContentLength")
         if not isinstance(etag, str) or not etag:
             raise ValueError("S3 snapshot object lacks an ETag")
         if version_id is not None and not isinstance(version_id, str):
             raise ValueError("S3 snapshot VersionId must be a string when present")
-        objects.append(S3ObjectSnapshot(key=key, version_id=version_id, etag=etag))
+        if not isinstance(content_length, int) or not 0 <= content_length <= maximum_object_bytes:
+            raise ValueError("S3 prediction object exceeds its bounded size contract")
+        total_bytes += content_length
+        if total_bytes > maximum_snapshot_bytes:
+            raise ValueError("S3 prediction snapshot exceeds its aggregate size contract")
+        objects.append(
+            S3ObjectSnapshot(
+                key=key,
+                version_id=version_id,
+                etag=etag,
+                content_length=content_length,
+            )
+        )
     payloads: list[bytes] = []
+    decoded_total_bytes = 0
     for item in objects:
         request: dict[str, Any] = {"Bucket": bucket, "Key": item.key}
         if item.version_id is not None:
             request["VersionId"] = item.version_id
         else:
             request["IfMatch"] = item.etag
-        payload = _body_bytes(client.get_object(**request))
+        response = client.get_object(**request)
+        if item.version_id is not None and response.get("VersionId") != item.version_id:
+            raise ValueError("S3 prediction response VersionId changed after snapshot")
+        if item.version_id is None and response.get("ETag") != item.etag:
+            raise ValueError("S3 prediction response ETag changed after snapshot")
+        payload = _body_bytes(response, maximum_bytes=maximum_object_bytes)
+        if len(payload) != item.content_length:
+            raise ValueError("S3 prediction response length changed after snapshot")
         if item.key.endswith(".gz"):
             try:
-                payload = gzip.decompress(payload)
+                with gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as compressed:
+                    payload = compressed.read(maximum_object_bytes + 1)
             except (gzip.BadGzipFile, EOFError) as error:
                 raise ValueError("S3 prediction object is not valid GZIP JSONL") from error
+            if len(payload) > maximum_object_bytes:
+                raise ValueError("decompressed prediction object exceeds the size limit")
+        decoded_total_bytes += len(payload)
+        if decoded_total_bytes > maximum_snapshot_bytes:
+            raise ValueError("decoded prediction snapshot exceeds the aggregate size contract")
         payloads.append(payload)
     return freeze_raw_payloads(payloads)
 
@@ -259,6 +270,7 @@ class S3PublishedReport:
     html_sha256: str
     latest_updated: bool
     alert_marker_keys: tuple[str, ...]
+    alert_failure_count: int = 0
 
 
 def _client_error_code(error: ClientError) -> str:
@@ -379,6 +391,7 @@ class S3ReportStore:
 
         latest_key = f"{self._prefix}latest.json"
         latest_updated = False
+        latest_decided = False
         claims: list[tuple[str, str, AlertNotification]] = []
         for _ in range(5):
             current = self._get(latest_key)
@@ -386,6 +399,7 @@ class S3ReportStore:
                 MonitoringReport.model_validate_json(current[0]) if current is not None else None
             )
             if previous is not None and report.window.end <= previous.window.end:
+                latest_decided = True
                 break
             request: dict[str, Any] = {
                 "Bucket": self._bucket,
@@ -404,14 +418,19 @@ class S3ReportStore:
                     continue
                 raise
             latest_updated = True
+            latest_decided = True
             # Only the publisher that wins the conditional latest update evaluates and claims
             # transitions. Claims are still durable before any SNS call, but a losing contender
             # cannot strand an unsent marker and suppress the winner.
             claims = self._claim_markers(report, previous)
             break
 
+        if not latest_decided:
+            raise RuntimeError("S3 latest report conditional update did not converge")
+
         sink = alert_sink
         marker_keys: list[str] = []
+        alert_failure_count = 0
         if latest_updated:
             for key, etag, notification in claims:
                 result = (
@@ -420,6 +439,8 @@ class S3ReportStore:
                     else AlertSendResult(status=AlertSendStatus.NOT_CONFIGURED)
                 )
                 marker = AlertMarker(notification=notification, send_result=result)
+                if result.status is AlertSendStatus.FAILED:
+                    alert_failure_count += 1
                 self._client.put_object(
                     Bucket=self._bucket,
                     Key=key,
@@ -435,6 +456,90 @@ class S3ReportStore:
             html_sha256=sha256_bytes(html_bytes),
             latest_updated=latest_updated,
             alert_marker_keys=tuple(marker_keys),
+            alert_failure_count=alert_failure_count,
+        )
+
+
+class S3RunStateStore:
+    """Conditionally persist the latest one-shot attempt without losing prior success."""
+
+    def __init__(self, client: S3Client, *, bucket: str, prefix: str = "monitoring/") -> None:
+        if not bucket or prefix.startswith("/") or not prefix.endswith("/"):
+            raise ValueError("S3 run-state bucket/prefix configuration is invalid")
+        self._client = client
+        self._bucket = bucket
+        self._key = f"{prefix}run-status.json"
+
+    def _read(self) -> tuple[RunStatusArtifact, str] | None:
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=self._key)
+        except ClientError as error:
+            if _is_missing(error):
+                return None
+            raise
+        etag = response.get("ETag")
+        if not isinstance(etag, str) or not etag:
+            raise ValueError("S3 run-status object lacks ETag")
+        return RunStatusArtifact.model_validate_json(_body_bytes(response)), etag
+
+    def _write_if_current(self, status: RunStatusArtifact) -> bool:
+        for _ in range(5):
+            current = self._read()
+            candidate = status
+            if current is not None:
+                artifact, etag = current
+                if status.latest_attempt_at < artifact.latest_attempt_at:
+                    return False
+                if status.latest_attempt_state == "failed":
+                    candidate = status.model_copy(
+                        update={
+                            "latest_success_at": artifact.latest_success_at,
+                            "latest_report_id": artifact.latest_report_id,
+                        }
+                    )
+                payload = canonical_json_bytes(candidate) + b"\n"
+                if status.latest_attempt_at == artifact.latest_attempt_at:
+                    if canonical_json_bytes(artifact) + b"\n" != payload:
+                        raise ValueError("same-time AWS run-status attempts conflict")
+                    return False
+                condition: dict[str, str] = {"IfMatch": etag}
+            else:
+                payload = canonical_json_bytes(candidate) + b"\n"
+                condition = {"IfNoneMatch": "*"}
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=self._key,
+                    Body=payload,
+                    ContentType="application/json",
+                    **condition,
+                )
+                return True
+            except ClientError as error:
+                if not _is_precondition(error):
+                    raise
+        raise RuntimeError("S3 run-status conditional update did not converge")
+
+    def record_success(self, *, completed_at: datetime, report_id: str) -> bool:
+        return self._write_if_current(
+            RunStatusArtifact(
+                latest_attempt_state="succeeded",
+                latest_attempt_at=completed_at,
+                latest_success_at=completed_at,
+                latest_report_id=report_id,
+                failure_reason=None,
+            )
+        )
+
+    def record_failure(self, *, attempted_at: datetime, reason: str) -> bool:
+        return self._write_if_current(
+            RunStatusArtifact(
+                latest_attempt_state="failed",
+                latest_attempt_at=attempted_at,
+                latest_success_at=None,
+                latest_report_id=None,
+                failure_reason=reason,
+            )
         )
 
 

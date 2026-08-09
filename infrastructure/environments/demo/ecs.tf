@@ -16,6 +16,7 @@ resource "aws_ecs_cluster" "this" {
 locals {
   api_environment = merge({
     APP_ENV                           = "aws"
+    RUNTIME_COMPONENT                 = "api"
     HOME                              = "/tmp"
     LOG_LEVEL                         = "INFO"
     MODEL_BUNDLE_PATH                 = "/runtime/model-bundle"
@@ -65,6 +66,15 @@ locals {
     DASHBOARD_PRESIGNED_URL_TTL_SECONDS   = "300"
     DASHBOARD_AWS_CONNECT_TIMEOUT_SECONDS = "0.5"
     DASHBOARD_AWS_READ_TIMEOUT_SECONDS    = "2.0"
+    DASHBOARD_IDENTIFIER                  = "modelguard-ai-demo-operations"
+    AWS_HEALTH_REQUIRED                   = "true"
+    DASHBOARD_SOURCE_REGION               = var.aws_region
+    DASHBOARD_METRIC_NAMESPACE            = "ModelGuardAI"
+    DASHBOARD_HEALTH_METRIC_NAME          = "MonitorCompletions"
+    DASHBOARD_MONITOR_LOG_GROUP           = aws_cloudwatch_log_group.application["monitor"].name
+    DASHBOARD_S3_ENDPOINT_URL             = "https://s3.${var.aws_region}.amazonaws.com"
+    DASHBOARD_CLOUDWATCH_ENDPOINT_URL     = "https://monitoring.${var.aws_region}.amazonaws.com"
+    DASHBOARD_LOGS_ENDPOINT_URL           = "https://logs.${var.aws_region}.amazonaws.com"
     MONITORING_CONFIG_PATH                = "/app/configs/phase-05-monitoring.json"
   }
 }
@@ -141,6 +151,7 @@ locals {
   monitor_environment = [
     for name in sort(keys({
       APP_ENV                    = "aws"
+      RUNTIME_COMPONENT          = "monitor"
       HOME                       = "/tmp"
       LOG_LEVEL                  = "INFO"
       EVENT_SINK                 = "disabled"
@@ -153,10 +164,12 @@ locals {
       REPORT_BUCKET              = module.data_plane.bucket_names["reports"]
       SNS_TOPIC_ARN              = aws_sns_topic.alerts.arn
       MIN_MONITORING_SAMPLES     = tostring(var.minimum_monitor_records)
+      MONITORING_CONFIG_PATH     = "/app/configs/phase-05-monitoring.json"
       })) : {
       name = name
       value = {
         APP_ENV                    = "aws"
+        RUNTIME_COMPONENT          = "monitor"
         HOME                       = "/tmp"
         LOG_LEVEL                  = "INFO"
         EVENT_SINK                 = "disabled"
@@ -169,6 +182,7 @@ locals {
         REPORT_BUCKET              = module.data_plane.bucket_names["reports"]
         SNS_TOPIC_ARN              = aws_sns_topic.alerts.arn
         MIN_MONITORING_SAMPLES     = tostring(var.minimum_monitor_records)
+        MONITORING_CONFIG_PATH     = "/app/configs/phase-05-monitoring.json"
       }[name]
     }
   ]

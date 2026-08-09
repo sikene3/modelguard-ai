@@ -32,10 +32,20 @@ private `monitoring/` and `model-bundles/` prefixes. HTML access first checks th
 then returns an HTTPS-only, five-minute presigned attachment URL. The URL is not written to state or
 logs. Unit tests use fakes and make no network calls.
 
-Phase 06 does not create AWS infrastructure or an AWS monitor orchestrator. Its S3 reader expects
-`monitoring/run-status.json` using the existing `modelguard.monitor-run-status.v1` contract. Phase 08
-must grant the dashboard read-only access and make the scheduled monitor persist that object before
-deployed AWS run-state/freshness is claimed.
+The Phase 10 code-only AWS path keeps that repository boundary and adds a separate source-health
+probe. It binds the canonical Region, model/report buckets, exact regional endpoints, dashboard ID,
+`ModelGuardAI/MonitorCompletions` identity, fixed low-cardinality dimensions, and exact monitor log
+group. Returned metric dimensions and log-stream metadata must match their typed identities; merely
+receiving a nonempty AWS response is not healthy evidence. Task-role permissions are read-only.
+
+Each bucket, metric, and log source is independently `healthy`, `missing_data`,
+`permission_denied`, `wrong_region`, `malformed_response`, or `unavailable`. A partial failure is
+degraded and a total inaccessible source set is unavailable. This source-health result is displayed
+apart from run, data-quality, drift, and performance. It never rewrites a report, treats source
+reachability as model quality, or converts stale/unknown evidence into healthy evidence.
+
+The local implementation and injected-client failure tests do not prove deployed IAM, ECS
+connectivity, or AWS data availability. Those remain live Phase 10 gates.
 
 ## Freshness and failure behavior
 

@@ -588,7 +588,8 @@ def test_oidc_subjects_and_workflow_permissions_are_exact(repository_root: Path)
     assert "environment: demo" in publish
     assert "id-token: write" in publish
     assert "aws-access-key-id" not in publish.casefold()
-    assert "mask-aws-account-id: false" in publish
+    assert "mask-aws-account-id: false" not in publish
+    assert "mask-aws-account-id: true" in publish
 
     for workflow_name in ("terraform-plan.yml", "deploy-demo.yml"):
         workflow = _workflow(repository_root, workflow_name)
@@ -741,6 +742,11 @@ def test_plan_summary_never_copies_before_after_or_sensitive_values() -> None:
     assert "before" not in summary["resource_changes"][0]
     assert summary["action_counts"] == {"update": 1}
     assert summary["identity"]["activate_services"] is False
+    assert summary["identity"]["account_id_masked"] == "********9012"
+    assert "123456789012" not in rendered
+    assert "modelguard-ai-terraform-state-123456789012-us-east-1" not in rendered
+    assert "backend_bucket" not in summary["identity"]
+    assert "backend_key" not in summary["identity"]
     assert "AutoDestroyDate" in render_markdown(summary)
 
 
@@ -755,6 +761,7 @@ def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
         "account_id": "123456789012",
         "region": "us-east-1",
         "owner_tag": "portfolio-owner",
+        "governance_mode": "team_protected",
         "auto_destroy_date": (date.today() + timedelta(days=7)).isoformat(),
         "backend_bucket": "modelguard-ai-terraform-state-123456789012-us-east-1",
         "backend_kms_key_arn": (
@@ -773,6 +780,7 @@ def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
     paths = render_inputs(**common)
     tfvars = json.loads(paths["tfvars"].read_text(encoding="utf-8"))
     assert tfvars["activate_services"] is False
+    assert tfvars["deployment_governance_mode"] == "team_protected"
     assert tfvars["runtime_contract_verified"] is False
     assert not any(key.endswith("_image_ref") for key in tfvars)
     assert "expected_model_version" not in tfvars
@@ -783,20 +791,38 @@ def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
         assert "notification_email" not in rendered
 
     registry = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo"
+    image_refs = {
+        "api": f"{registry}/api@sha256:{'1' * 64}",
+        "dashboard": f"{registry}/dashboard@sha256:{'2' * 64}",
+        "monitor": f"{registry}/monitor@sha256:{'3' * 64}",
+    }
     activation = {
         **common,
         "output_dir": tmp_path / "activation",
         "stage": "activation",
-        "image_refs": {
-            "api": f"{registry}/api@sha256:{'1' * 64}",
-            "dashboard": f"{registry}/dashboard@sha256:{'2' * 64}",
-            "monitor": f"{registry}/monitor@sha256:{'3' * 64}",
-        },
+        "image_refs": image_refs,
         "active_pointer": _pointer(),
+        "budget_prerequisite_verified": True,
+        "runtime_verification": {
+            "contracts": {
+                "api": "hydration-fail-closed",
+                "dashboard": "typed-aws-health",
+                "monitor": "one-shot-aws-run",
+            },
+            "images": image_refs,
+            "mode": "immutable_digest",
+            "schema_version": "modelguard.runtime-contract-verification.v2",
+            "source_commit": "a" * 40,
+            "source_revision": "a" * 40,
+            "status": "passed",
+            "uv_lock_sha256": hashlib.sha256(Path("uv.lock").read_bytes()).hexdigest(),
+        },
+        "source_commit": "a" * 40,
     }
     activation_paths = render_inputs(**activation)
     activation_tfvars = json.loads(activation_paths["tfvars"].read_text(encoding="utf-8"))
     assert activation_tfvars["activate_services"] is True
+    assert activation_tfvars["budget_prerequisite_verified"] is True
     assert all(
         "@sha256:" in activation_tfvars[f"{name}_image_ref"] for name in activation["image_refs"]
     )
@@ -839,6 +865,10 @@ def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
         render_inputs(
             **{**activation, "image_refs": {"api": None, "dashboard": None, "monitor": None}}
         )
+    with pytest.raises(RenderInputError, match="runtime_verification"):
+        render_inputs(**{**activation, "runtime_verification": None})
+    with pytest.raises(RenderInputError, match="source_commit"):
+        render_inputs(**{**activation, "source_commit": "b" * 40})
 
 
 def test_saved_plan_workflows_and_terraform_cannot_accept_notification_pii(
@@ -868,7 +898,9 @@ def test_saved_plan_workflows_and_terraform_cannot_accept_notification_pii(
     assert "subscriber_email_addresses" not in terraform
     assert 'resource "aws_sns_topic_subscription"' not in terraform
     assert "ignore_changes = [notification]" not in terraform
-    assert "subscriber_sns_topic_arns = [aws_sns_topic.alerts.arn]" in terraform
+    assert 'resource "aws_budgets_budget"' not in terraform
+    assert 'check "manual_budget_prerequisite"' in terraform
+    assert "budget_prerequisite_verified" in terraform
     assert "kms_master_key_id = var.alert_kms_key_arn" in terraform
     assert "alias/aws/sns" not in terraform
     assert 'resource "aws_sns_topic_policy" "alerts"' in terraform
@@ -1650,14 +1682,20 @@ def test_deployment_record_binds_smoke_model_plans_images_and_tasks(tmp_path: Pa
         github_repository="owner/repository",
         github_run_id="123",
         github_run_attempt="1",
+        governance_mode="team_protected",
         now=datetime.now(tz=UTC),
     )
     assert record.active_model_pointer.target_identity["model_version"] == "1.0.0"
+    assert record.deployment_governance_mode == "team_protected"
     assert set(record.task_definitions) == {"api", "dashboard", "monitor"}
     wrong_bucket = record.model_dump(mode="json")
     wrong_bucket["active_model_pointer"]["bundle"]["bucket"] = "untrusted-model-bucket"
     with pytest.raises(ValidationError, match="model bucket"):
         DeploymentRecord.model_validate(wrong_bucket)
+    wrong_mode = record.model_dump(mode="json")
+    wrong_mode["deployment_governance_mode"] = "unbound"
+    with pytest.raises(ValidationError, match="deployment_governance_mode"):
+        DeploymentRecord.model_validate(wrong_mode)
 
     changed_live_pointer = _pointer()
     changed_live_pointer["bundle"]["object_version_ids"]["manifest.json"] = "new-version-id"
@@ -1684,6 +1722,7 @@ def test_deployment_record_binds_smoke_model_plans_images_and_tasks(tmp_path: Pa
             github_repository="owner/repository",
             github_run_id="123",
             github_run_attempt="1",
+            governance_mode="team_protected",
         )
     (tmp_path / "live-pointer-response.json").write_text(
         json.dumps(payloads["live-pointer-response.json"]), encoding="utf-8"
@@ -1707,6 +1746,7 @@ def test_deployment_record_binds_smoke_model_plans_images_and_tasks(tmp_path: Pa
             github_repository="owner/repository",
             github_run_id="123",
             github_run_attempt="1",
+            governance_mode="team_protected",
         )
     (tmp_path / "deployed-images.json").write_text(
         json.dumps(payloads["deployed-images.json"]), encoding="utf-8"
@@ -1727,6 +1767,7 @@ def test_deployment_record_binds_smoke_model_plans_images_and_tasks(tmp_path: Pa
             github_repository="owner/repository",
             github_run_id="123",
             github_run_attempt="1",
+            governance_mode="team_protected",
         )
 
 
@@ -1750,9 +1791,12 @@ def test_failed_smoke_has_explicit_ecs_rollback_and_separate_model_policy(
     smoke_job = deploy.split("  post-deploy-smoke:", maxsplit=1)[1].split(
         "  rollback-on-failure:", maxsplit=1
     )[0]
-    assert "prerequisite-plan-redacted-" in smoke_job
-    assert "activation-plan-redacted-" in smoke_job
-    assert "plan-transfer-" not in smoke_job
+    assert "deployments/plan-identities/" in smoke_job
+    assert "prerequisites.tfplan.identity.json" in smoke_job
+    assert "activation.tfplan.identity.json" in smoke_job
+    assert "actions/download-artifact" not in "\n".join(
+        line for line in smoke_job.splitlines() if "plan" in line.casefold()
+    )
     assert smoke_job.count("PREDICTION_BEARER_TOKEN:") == 1
     assert "env.API_ACCESS_MODE == 'http_cidr_only'" in smoke_job
     assert deploy.count("aws ecs update-service") >= 2

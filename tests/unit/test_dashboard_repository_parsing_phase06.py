@@ -67,6 +67,12 @@ def test_dashboard_settings_are_local_first_and_require_private_s3_inputs() -> N
         dashboard_repository=DashboardRepositoryMode.S3,
         model_bucket="private-models",
         report_bucket="private-reports",
+        aws_health_required=True,
+        dashboard_source_region="us-east-1",
+        dashboard_monitor_log_group="/modelguard-ai/demo/monitor",
+        dashboard_s3_endpoint_url="https://s3.us-east-1.amazonaws.com",
+        dashboard_cloudwatch_endpoint_url="https://monitoring.us-east-1.amazonaws.com",
+        dashboard_logs_endpoint_url="https://logs.us-east-1.amazonaws.com",
     )
     assert aws.dashboard_presigned_url_ttl_seconds == 300
 

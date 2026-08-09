@@ -1,0 +1,156 @@
+name: Roll back protected demo runtime
+
+# checkov:skip=CKV_GHA_7:Exact record hash, source, mode, environment, and phrase gate the manual rollback. [owner=modelguard-maintainers; expires=2026-10-31]
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact protected-main deployment source commit
+        required: true
+        type: string
+      governance_mode:
+        description: Exact configured governance mode
+        required: true
+        type: choice
+        options:
+          - team_protected
+          - solo_portfolio
+      deployment_record_sha256:
+        description: Reviewed SHA-256 of encrypted last-known-good record
+        required: true
+        type: string
+      confirmation:
+        description: Exact governance-mode rollback phrase
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelguard-demo-deploy
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Apply exact last-known-good ECS identities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: demo
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
+      REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      REVIEWED_RECORD_SHA256: ${{ inputs.deployment_record_sha256 }}
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.12.1
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked environment
+        run: uv sync --all-groups --locked
+      - name: Verify exact manual rollback identity and typed confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          JOB_CONTEXT: ${{ toJSON(job) }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
+          test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
+          [[ "$REVIEWED_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          uv run --frozen --no-sync python -m scripts.deployment_governance entry \
+            --mode "$GOVERNANCE_MODE" \
+            --operation rollback \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-visibility "$REPOSITORY_VISIBILITY" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --git-ref "$GITHUB_REF" \
+            --environment demo \
+            --workflow-ref "$WORKFLOW_REF" \
+            --job-workflow-ref "$job_workflow_ref" \
+            --source-commit "$SOURCE_COMMIT" \
+            --workflow-commit "$GITHUB_SHA" \
+            --job-workflow-commit "$job_workflow_commit" \
+            --confirmation "$CONFIRMATION"
+      - name: Assume the exact protected deploy identity through OIDC
+        uses: aws-actions/configure-aws-credentials@acca2b1b2070338fb9fd1ca27ecee81d687e58e5 # v6.1.2
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: modelguard-manual-rollback-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+      - name: Retrieve and verify the exact encrypted rollback record
+        id: record
+        run: |
+          mkdir -p artifacts/rollback
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api get-object \
+            --bucket "$audit_bucket" \
+            --key deployments/last-known-good.json \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            artifacts/rollback/last-known-good.json >/dev/null
+          test "$(sha256sum artifacts/rollback/last-known-good.json | awk '{print $1}')" = \
+            "$REVIEWED_RECORD_SHA256"
+          test "$(jq -r .source_commit artifacts/rollback/last-known-good.json)" = "$SOURCE_COMMIT"
+          uv run --frozen --no-sync python -m scripts.deployment_record rollback-outputs \
+            --record artifacts/rollback/last-known-good.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Refuse a governance-mode downgrade or substitution
+        env:
+          RECORDED_GOVERNANCE_MODE: ${{ steps.record.outputs.deployment_governance_mode }}
+        run: test "$RECORDED_GOVERNANCE_MODE" = "$GOVERNANCE_MODE"
+      - name: Roll back only API, dashboard, and scheduled monitor task identities
+        env:
+          API_TASK_DEFINITION: ${{ steps.record.outputs.api_task_definition }}
+          DASHBOARD_TASK_DEFINITION: ${{ steps.record.outputs.dashboard_task_definition }}
+          MONITOR_TASK_DEFINITION: ${{ steps.record.outputs.monitor_task_definition }}
+        run: |
+          aws ecs update-service --cluster modelguard-ai-demo \
+            --service modelguard-ai-demo-api --task-definition "$API_TASK_DEFINITION" \
+            --desired-count 1 --force-new-deployment >/dev/null
+          aws ecs update-service --cluster modelguard-ai-demo \
+            --service modelguard-ai-demo-dashboard --task-definition "$DASHBOARD_TASK_DEFINITION" \
+            --desired-count 1 --force-new-deployment >/dev/null
+          aws scheduler get-schedule \
+            --group-name modelguard-ai-demo-monitor \
+            --name modelguard-ai-demo-monitor >artifacts/rollback/schedule-before.json
+          # security-suppression:
+          # finding=SC2016
+          # justification=The jq filter consumes only the exact validated task-definition input.
+          # owner=modelguard-maintainers
+          # expires=2026-10-31
+          # shellcheck disable=SC2016
+          jq --arg task "$MONITOR_TASK_DEFINITION" \
+            'del(.Arn,.CreationDate,.LastModificationDate) |
+             .Target.EcsParameters.TaskDefinitionArn=$task | .State="ENABLED"' \
+            artifacts/rollback/schedule-before.json >artifacts/rollback/schedule.json
+          aws scheduler update-schedule \
+            --cli-input-json file://artifacts/rollback/schedule.json >/dev/null
+          aws ecs wait services-stable --cluster modelguard-ai-demo \
+            --services modelguard-ai-demo-api modelguard-ai-demo-dashboard
+      - name: Persist value-free rollback success privately
+        run: |
+          printf '{"model_pointer_action":"none","status":"ecs_rollback_completed"}\n' \
+            >artifacts/rollback/summary.json
+          audit_bucket="modelguard-ai-demo-${AWS_ACCOUNT_ID}-${AWS_REGION}-audit"
+          aws s3api put-object \
+            --bucket "$audit_bucket" \
+            --key "deployments/rollbacks/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}.json" \
+            --body artifacts/rollback/summary.json \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null

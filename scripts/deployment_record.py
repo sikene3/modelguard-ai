@@ -27,8 +27,9 @@ class StrictModel(BaseModel):
 
 
 class DeploymentRecord(StrictModel):
-    schema_version: Literal["modelguard.last-known-good.v1"]
+    schema_version: Literal["modelguard.last-known-good.v2"]
     status: Literal["smoke_passed"]
+    deployment_governance_mode: Literal["team_protected", "solo_portfolio"]
     source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     github_repository: str = Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     github_run_id: str = Field(pattern=r"^[0-9]+$")
@@ -135,6 +136,7 @@ def create_record(
     github_repository: str,
     github_run_id: str,
     github_run_attempt: str,
+    governance_mode: Literal["team_protected", "solo_portfolio"],
     now: datetime | None = None,
 ) -> DeploymentRecord:
     """Bind the successful smoke result to all independent rollback targets."""
@@ -177,8 +179,9 @@ def create_record(
     if prerequisite.region != activation.region or activation.region != image_manifest.aws_region:
         raise DeploymentRecordError("deployment_record_region_mismatch")
     return DeploymentRecord(
-        schema_version="modelguard.last-known-good.v1",
+        schema_version="modelguard.last-known-good.v2",
         status="smoke_passed",
+        deployment_governance_mode=governance_mode,
         source_commit=image_manifest.source_commit,
         github_repository=github_repository,
         github_run_id=github_run_id,
@@ -215,6 +218,7 @@ def _write_record(path: Path, record: DeploymentRecord) -> None:
 
 def _append_rollback_outputs(path: Path, record: DeploymentRecord) -> None:
     with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"deployment_governance_mode={record.deployment_governance_mode}\n")
         handle.write(f"api_task_definition={record.task_definitions['api']}\n")
         handle.write(f"dashboard_task_definition={record.task_definitions['dashboard']}\n")
         handle.write(f"monitor_task_definition={record.task_definitions['monitor']}\n")
@@ -242,6 +246,9 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--github-repository", required=True)
     create.add_argument("--github-run-id", required=True)
     create.add_argument("--github-run-attempt", required=True)
+    create.add_argument(
+        "--governance-mode", choices=("team_protected", "solo_portfolio"), required=True
+    )
     create.add_argument("--output", type=Path, required=True)
     rollback = subparsers.add_parser("rollback-outputs")
     rollback.add_argument("--record", type=Path, required=True)
@@ -265,6 +272,7 @@ def main() -> int:
                 github_repository=args.github_repository,
                 github_run_id=args.github_run_id,
                 github_run_attempt=args.github_run_attempt,
+                governance_mode=args.governance_mode,
             )
             _write_record(args.output, record)
         else:

@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from modelguard.core.serialization import parse_strict_json_bytes
 from scripts.terraform_demo_guard import BACKEND_KEY, PreflightContext
 
 
@@ -28,6 +29,59 @@ def _load_pointer(path: Path | None) -> dict[str, Any] | None:
     return value
 
 
+def _load_runtime_verification(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    value = parse_strict_json_bytes(path.read_bytes())
+    if not isinstance(value, dict):
+        raise RenderInputError("runtime_verification_root_not_object")
+    return value
+
+
+def _verify_runtime_evidence(
+    evidence: dict[str, Any] | None,
+    *,
+    image_refs: dict[str, str | None],
+    expected_source_commit: str | None,
+) -> bool:
+    if evidence is None:
+        return False
+    if (
+        evidence.get("schema_version") != "modelguard.runtime-contract-verification.v2"
+        or evidence.get("status") != "passed"
+        or evidence.get("mode") != "immutable_digest"
+        or evidence.get("images") != image_refs
+        or evidence.get("contracts")
+        != {
+            "api": "hydration-fail-closed",
+            "dashboard": "typed-aws-health",
+            "monitor": "one-shot-aws-run",
+        }
+    ):
+        raise RenderInputError("runtime_verification_evidence_mismatch")
+    source_commit = evidence.get("source_commit")
+    expected_lock_sha256 = _sha256(Path("uv.lock"))
+    if (
+        expected_source_commit is None
+        or re.fullmatch(r"[0-9a-f]{40}", expected_source_commit) is None
+        or source_commit != expected_source_commit
+        or evidence.get("source_revision") != expected_source_commit
+        or evidence.get("uv_lock_sha256") != expected_lock_sha256
+    ):
+        raise RenderInputError("runtime_verification_source_commit_invalid")
+    return True
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def render_inputs(
     *,
     output_dir: Path,
@@ -35,6 +89,7 @@ def render_inputs(
     account_id: str,
     region: str,
     owner_tag: str,
+    governance_mode: Literal["team_protected", "solo_portfolio"],
     auto_destroy_date: str,
     backend_bucket: str,
     backend_kms_key_arn: str,
@@ -46,6 +101,9 @@ def render_inputs(
     prediction_token_ssm_arn: str | None = None,
     image_refs: dict[str, str | None] | None = None,
     active_pointer: dict[str, Any] | None = None,
+    budget_prerequisite_verified: bool = False,
+    runtime_verification: dict[str, Any] | None = None,
+    source_commit: str | None = None,
 ) -> dict[str, Path]:
     """Render ephemeral files and validate the complete non-secret deployment identity."""
 
@@ -53,12 +111,22 @@ def render_inputs(
         raise RenderInputError("owner_tag_invalid")
     refs = image_refs or {"api": None, "dashboard": None, "monitor": None}
     activate = stage == "activation"
+    runtime_verified = _verify_runtime_evidence(
+        runtime_verification,
+        image_refs=refs,
+        expected_source_commit=source_commit,
+    )
+    if activate and not runtime_verified:
+        raise RenderInputError("activation_runtime_verification_missing")
+    if not activate and runtime_verification is not None:
+        raise RenderInputError("prerequisite_runtime_verification_forbidden")
     model_bucket = f"modelguard-ai-demo-{account_id}-{region}-models"
     preflight_payload = {
         "account_id": account_id,
         "region": region,
         "project": "modelguard-ai",
         "environment": "demo",
+        "deployment_governance_mode": governance_mode,
         "backend_bucket": backend_bucket,
         "backend_key": BACKEND_KEY,
         "backend_kms_key_arn": backend_kms_key_arn,
@@ -66,7 +134,8 @@ def render_inputs(
         "alert_kms_key_arn": alert_kms_key_arn,
         "stage": stage,
         "activate_services": activate,
-        "runtime_contract_verified": activate,
+        "runtime_contract_verified": runtime_verified,
+        "budget_prerequisite_verified": budget_prerequisite_verified,
         "alb_allowed_cidr": alb_allowed_cidr,
         "access_mode": access_mode,
         "acm_certificate_arn": acm_certificate_arn,
@@ -82,6 +151,7 @@ def render_inputs(
         "aws_account_id": account_id,
         "aws_region": region,
         "owner_tag": owner_tag,
+        "deployment_governance_mode": governance_mode,
         "auto_destroy_date": auto_destroy_date,
         "backend_bucket_name": backend_bucket,
         "permission_boundary_arn": permission_boundary_arn,
@@ -90,7 +160,8 @@ def render_inputs(
         "api_access_mode": access_mode,
         "deployment_stage": stage,
         "activate_services": activate,
-        "runtime_contract_verified": activate,
+        "runtime_contract_verified": runtime_verified,
+        "budget_prerequisite_verified": budget_prerequisite_verified,
         "availability_zones": [f"{region}a", f"{region}b"],
     }
     if access_mode == "https_token":
@@ -143,6 +214,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--account-id", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--owner-tag", required=True)
+    parser.add_argument(
+        "--governance-mode",
+        choices=("team_protected", "solo_portfolio"),
+        required=True,
+    )
     parser.add_argument("--auto-destroy-date", required=True)
     parser.add_argument("--backend-bucket", required=True)
     parser.add_argument("--backend-kms-key-arn", required=True)
@@ -156,6 +232,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dashboard-image-ref", default="")
     parser.add_argument("--monitor-image-ref", default="")
     parser.add_argument("--active-pointer-file", type=Path)
+    parser.add_argument("--budget-prerequisite-verified", action="store_true")
+    parser.add_argument("--runtime-verification-file", type=Path)
+    parser.add_argument("--source-commit", default="")
     return parser
 
 
@@ -164,12 +243,14 @@ def main() -> int:
     try:
         stage = cast(Literal["prerequisites", "activation"], args.stage)
         access_mode = cast(Literal["https_token", "http_cidr_only"], args.access_mode)
+        governance_mode = cast(Literal["team_protected", "solo_portfolio"], args.governance_mode)
         render_inputs(
             output_dir=args.output_dir,
             stage=stage,
             account_id=args.account_id,
             region=args.region,
             owner_tag=args.owner_tag,
+            governance_mode=governance_mode,
             auto_destroy_date=args.auto_destroy_date,
             backend_bucket=args.backend_bucket,
             backend_kms_key_arn=args.backend_kms_key_arn,
@@ -185,6 +266,9 @@ def main() -> int:
                 "monitor": _optional(args.monitor_image_ref),
             },
             active_pointer=_load_pointer(args.active_pointer_file),
+            budget_prerequisite_verified=args.budget_prerequisite_verified,
+            runtime_verification=_load_runtime_verification(args.runtime_verification_file),
+            source_commit=_optional(args.source_commit),
         )
         print(json.dumps({"status": "passed", "stage": stage}))
         return 0

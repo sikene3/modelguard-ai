@@ -12,8 +12,14 @@ performance into a misleading overall status.
   metric. Firehose/S3 freshness remains separate infrastructure telemetry.
 - Local monitoring copies the logical records from a frozen enumeration of closed `.jsonl` or
   `.jsonl.gz` files before analysis. Active `.jsonl.open` writers are excluded.
-- AWS helpers enumerate S3 once and pin every object by VersionId, or by ETag with `If-Match` when a
-  VersionId is unavailable, before reading it.
+- Firehose explicitly writes GZIP objects with the `.jsonl.gz` extension. AWS monitoring accepts
+  exactly that suffix; local `.jsonl` compatibility does not widen the AWS object-name contract.
+- AWS helpers verify all three bucket Regions, enumerate S3 once with explicit `MaxKeys`, page,
+  total-entry, recognized-object, compressed-byte, and decoded-byte bounds, and reject every key
+  outside the exact prefix. They pin every object by VersionId, or by ETag with `If-Match` when a
+  VersionId is unavailable, before reading it. A changed identity, partial length, invalid or
+  cycling pagination token, missing truncation marker, excessive irrelevant entries, corrupt GZIP
+  body, or aggregate overflow fails the cycle.
 - Tests and evidence always pass explicit `--window-end` and `--as-of`; no test depends on wall
   clock time.
 
@@ -33,6 +39,18 @@ verified `--bundle`, after which the service verifies the tuple again. Known non
 come only from separately verified bundles. AWS mode uses the strict
 `modelguard.active-monitor-target.v1` SSM pointer and caches its single read for the run; versioned
 S3 bundle objects are downloaded and checked before use.
+
+The scheduled image exposes `aws-run`, which executes exactly one cycle and exits. It requires the
+canonical `us-east-1` Region, exact active-pointer parameter, distinct buckets in that Region, exact
+regional SNS topic, absolute runtime volume, the locked in-image monitoring configuration, and a
+sample threshold consistent with runtime settings. It uses only the ECS task-role/default SDK
+credential chain; there is no profile or static credential input. Unlike local `run`, `aws-run`
+does not expose `--config`, so drift bins, thresholds, sample limits, or policy semantics cannot be
+replaced at invocation time.
+The canonical semantic policy SHA-256 is
+`edd3177bc4a692262858b6ec2e60a991cdce1bc844ef7eb0becac6846df56c73`; changing bins,
+thresholds, sample limits, feature ordering, or performance semantics changes that identity and
+fails before any AWS operation.
 
 The report separately records:
 
@@ -174,7 +192,9 @@ artifacts/reports/alerts/*.json
 
 An exact rerun returns the same report/checksums. `latest.json` is replaced atomically only for a
 strictly newer window. AWS history/markers use `If-None-Match: *`, and latest uses `If-Match` or
-`If-None-Match` conditional writes.
+`If-None-Match` conditional writes. Five unresolved conditional conflicts fail persistence rather
+than silently reporting success. The conditional run-status object keeps the newest attempt and
+preserves the last successful timestamp/report identity when a later attempt fails.
 
 After a successful newer report, a conditional marker is claimed before SNS on entry into exactly
 three states: data-quality invalid, drift degraded, and performance degraded. The marker then stores
@@ -184,6 +204,12 @@ not promise exactly-once delivery. Run failures and staleness belong to CloudWat
 AWS completion emits one EMF record with only `Service` and `Environment` dimensions, completion
 and reconciled counts, and accepted-event freshness. It contains no request/event IDs, features,
 secrets, or arbitrary model-version dimensions, and its freshness field is not delivery lateness.
+
+`aws-run` writes one canonical `modelguard.monitor-aws-run-output.v1` JSON object to stdout and EMF
+only to stderr. Exit `0` means a complete persisted cycle; `2` is invalid or contradictory
+configuration, `3` is AWS credential, authorization, or provider access failure, `4` is corrupt or
+incomplete evidence, and `5` is report, alert, telemetry, or run-status persistence failure. A
+nonzero cycle is never converted into scheduler success.
 
 ## Local deterministic demo
 

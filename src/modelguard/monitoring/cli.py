@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from modelguard.core.config import Settings, load_settings
+from modelguard.monitoring.aws_run import execute_aws_monitoring_once, parse_optional_utc, utc_now
 from modelguard.monitoring.config import MonitoringConfig, load_monitoring_config
 from modelguard.monitoring.events import (
     EventIdentity,
@@ -30,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
         "--as-of", required=True, help="explicit UTC finalization time ending in Z"
     )
     run_parser.add_argument("--bundle", type=Path)
-    run_parser.add_argument("--config", type=Path, default=Path("configs/phase-05-monitoring.json"))
+    run_parser.add_argument("--config", type=Path)
     run_parser.add_argument("--event-dir", type=Path)
     run_parser.add_argument("--report-dir", type=Path)
     run_parser.add_argument("--label-dir", type=Path)
@@ -46,6 +47,13 @@ def _parser() -> argparse.ArgumentParser:
         "--as-of", required=True, help="explicit UTC observation time ending in Z"
     )
     status_parser.add_argument("--report-dir", type=Path)
+
+    aws_parser = subparsers.add_parser(
+        "aws-run",
+        help="execute exactly one fail-closed AWS monitoring cycle",
+    )
+    aws_parser.add_argument("--as-of", help="optional explicit UTC time ending in Z")
+    aws_parser.add_argument("--window-end", help="optional explicit UTC window end ending in Z")
     return parser
 
 
@@ -86,7 +94,7 @@ def _run(args: argparse.Namespace, settings: Settings) -> int:
     )
     status_store = LocalRunStateStore(report_directory)
     try:
-        config = load_monitoring_config(args.config)
+        config = load_monitoring_config(args.config or settings.monitoring_config_path)
         requested_minimum = (
             args.minimum_accepted_events
             if args.minimum_accepted_events is not None
@@ -152,9 +160,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run or inspect persistent monitoring state using explicit observation time."""
 
     args = _parser().parse_args(argv)
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except ValueError:
+        if args.command != "aws-run":
+            raise
+        _print_json(
+            {
+                "as_of": "1970-01-01T00:00:00Z",
+                "category": "invalid_aws_run_configuration",
+                "output_schema_version": "modelguard.monitor-aws-run-output.v1",
+                "status": "failed",
+            }
+        )
+        return 2
     if args.command == "run":
         return _run(args, settings)
+    if args.command == "aws-run":
+        try:
+            as_of = parse_optional_utc(args.as_of, name="as_of") or utc_now()
+            window_end = parse_optional_utc(args.window_end, name="window_end")
+            config = load_monitoring_config(settings.monitoring_config_path)
+        except (OSError, ValueError):
+            _print_json(
+                {
+                    "as_of": "1970-01-01T00:00:00Z",
+                    "category": "invalid_aws_run_configuration",
+                    "output_schema_version": "modelguard.monitor-aws-run-output.v1",
+                    "status": "failed",
+                }
+            )
+            return 2
+        execution = execute_aws_monitoring_once(
+            settings,
+            config=config,
+            as_of=as_of,
+            window_end=window_end,
+        )
+        _print_json(execution.output.model_dump(mode="json"))
+        return int(execution.exit_code)
     as_of = parse_utc_timestamp(args.as_of, name="as_of")
     report_directory = args.report_dir or settings.local_report_dir
     config = MonitoringConfig(minimum_accepted_events=settings.min_monitoring_samples)

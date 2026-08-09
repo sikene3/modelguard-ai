@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+governance_mode="${DEPLOYMENT_GOVERNANCE_MODE:-}"
+if [[ -z "$governance_mode" ]]; then
+  echo "Refusing to destroy: DEPLOYMENT_GOVERNANCE_MODE is required."
+  exit 2
+fi
+if [[ "$governance_mode" != "team_protected" && "$governance_mode" != "solo_portfolio" ]]; then
+  echo "Refusing to destroy: invalid deployment governance mode."
+  exit 2
+fi
+
 if [[ "${CONFIRM_DESTROY:-}" != "YES" ]]; then
   echo "Refusing to destroy. Run with CONFIRM_DESTROY=YES after reviewing the target account, region, workspace, and plan."
   exit 1
@@ -13,6 +23,7 @@ required_names=(
   BACKEND_CONFIG
   TFVARS_FILE
   AUTO_DESTROY_DATE
+  AWS_PROFILE
 )
 for required_name in "${required_names[@]}"; do
   if [[ -z "${!required_name:-}" ]]; then
@@ -25,6 +36,11 @@ if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
   echo "Refusing to destroy: EXPECTED_AWS_ACCOUNT_ID must contain 12 digits."
   exit 1
 fi
+if [[ "$AWS_PROFILE" != "modelguard-bootstrap" ]]; then
+  echo "Refusing to destroy: AWS_PROFILE must be modelguard-bootstrap."
+  exit 1
+fi
+export AWS_PROFILE
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_dir="$repo_root/infrastructure/environments/demo"
@@ -35,19 +51,25 @@ if [[ ! -d "$env_dir" ]]; then
 fi
 
 guard=(uv run --frozen --no-sync python "$repo_root/scripts/terraform_demo_guard.py")
+human_guard=(uv run --frozen --no-sync python -m scripts.human_aws_login verify)
 "${guard[@]}" verify-backend \
   --input "$BACKEND_CONFIG" \
   --bucket "$BACKEND_BUCKET_NAME" \
   --account-id "$EXPECTED_AWS_ACCOUNT_ID" \
   --region "$AWS_REGION"
 
-actual_account="$(aws sts get-caller-identity --query Account --output text)"
+"${human_guard[@]}" \
+  --profile "$AWS_PROFILE" \
+  --region "$AWS_REGION" \
+  --expected-account-id "$EXPECTED_AWS_ACCOUNT_ID" >/dev/null
+
+actual_account="$(aws sts get-caller-identity --profile "$AWS_PROFILE" --region "$AWS_REGION" --query Account --output text)"
 if [[ "$actual_account" != "$EXPECTED_AWS_ACCOUNT_ID" ]]; then
   echo "Refusing to destroy: caller account does not match EXPECTED_AWS_ACCOUNT_ID."
   exit 1
 fi
 
-configured_region="$(aws configure get region)"
+configured_region="$(aws configure get region --profile "$AWS_PROFILE")"
 if [[ "$configured_region" != "$AWS_REGION" ]]; then
   echo "Refusing to destroy: configured AWS Region does not match AWS_REGION."
   exit 1
@@ -57,6 +79,12 @@ terraform -chdir="$env_dir" init -reconfigure -backend-config="$BACKEND_CONFIG"
 workspace="$(terraform -chdir="$env_dir" workspace show)"
 if [[ "$workspace" != "default" ]]; then
   echo "Refusing to destroy: only the default Terraform workspace is permitted."
+  exit 1
+fi
+tfvars_mode="$(jq -er '.deployment_governance_mode | select(. == "team_protected" or . == "solo_portfolio")' "$TFVARS_FILE")"
+deployed_mode="$(terraform -chdir="$env_dir" output -raw deployment_governance_mode)"
+if [[ "$tfvars_mode" != "$governance_mode" || "$deployed_mode" != "$governance_mode" ]]; then
+  echo "Refusing to destroy: deployed governance mode cannot be downgraded or substituted."
   exit 1
 fi
 
@@ -90,9 +118,13 @@ fi
   --activate-services "$activation_value" \
   --output "$manifest_path"
 
-printf 'Type DESTROY to apply the reviewed destroy plan: '
+expected_final="DESTROY TEAM modelguard-ai demo"
+if [[ "$governance_mode" = "solo_portfolio" ]]; then
+  expected_final="DESTROY SOLO modelguard-ai demo"
+fi
+printf 'Type the exact documented destroy confirmation to apply the reviewed plan: '
 read -r final
-if [[ "$final" != "DESTROY" ]]; then
+if [[ "$final" != "$expected_final" ]]; then
   echo "Destroy cancelled."
   exit 1
 fi

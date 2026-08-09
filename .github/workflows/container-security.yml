@@ -92,7 +92,7 @@ jobs:
           category: trivy-image-${{ matrix.component }}-${{ github.sha }}
           wait-for-processing: true
       - name: Upload image metadata, SBOM, and vulnerability evidence
-        if: ${{ always() }}
+        if: ${{ always() && vars.DEPLOYMENT_GOVERNANCE_MODE == 'team_protected' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: >-

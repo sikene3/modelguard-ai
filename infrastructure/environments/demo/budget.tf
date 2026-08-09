@@ -1,27 +1,18 @@
-resource "aws_budgets_budget" "demo" {
-  account_id   = var.aws_account_id
-  name         = "${local.name_prefix}-monthly"
-  budget_type  = "COST"
-  limit_amount = tostring(var.budget_limit_usd)
-  limit_unit   = "USD"
-  time_unit    = "MONTHLY"
+locals {
+  required_budget_name = "${local.name_prefix}-monthly"
+  required_budget_alerts = [
+    "50-percent-actual",
+    "80-percent-actual",
+    "100-percent-actual",
+    "100-percent-forecast",
+  ]
+}
 
-  cost_filter {
-    name   = "TagKeyValue"
-    values = [format("user:Project$%s", var.project_name)]
+# The budget and its email notification are a manual retained account prerequisite. Keeping it out
+# of this disposable saved plan prevents subscriber PII from entering Terraform state or artifacts.
+check "manual_budget_prerequisite" {
+  assert {
+    condition     = !var.activate_services || var.budget_prerequisite_verified
+    error_message = "Activation requires the value-free USD 10 budget preflight to pass."
   }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-monthly" })
-
-  # Terraform carries only the non-secret topic ARN. The topic's email subscriber is enrolled
-  # interactively outside Terraform so no address can enter state or a saved plan.
-  notification {
-    comparison_operator       = "GREATER_THAN"
-    threshold                 = 80
-    threshold_type            = "PERCENTAGE"
-    notification_type         = "ACTUAL"
-    subscriber_sns_topic_arns = [aws_sns_topic.alerts.arn]
-  }
-
-  depends_on = [aws_sns_topic_policy.alerts]
 }

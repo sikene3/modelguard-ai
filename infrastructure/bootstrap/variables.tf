@@ -83,6 +83,17 @@ variable "github_repository_id" {
   }
 }
 
+variable "deployment_governance_mode" {
+  description = "Explicit human-governance contract; solo mode is not separation of duties."
+  type        = string
+  default     = "team_protected"
+
+  validation {
+    condition     = contains(["team_protected", "solo_portfolio"], var.deployment_governance_mode)
+    error_message = "deployment_governance_mode must be team_protected or solo_portfolio."
+  }
+}
+
 variable "github_oidc_use_immutable_subject" {
   description = "Must exactly match the repository OIDC template use_immutable_subject setting."
   type        = bool
@@ -167,13 +178,24 @@ variable "github_publish_workflow_path" {
 }
 
 variable "github_destroy_workflow_path" {
-  description = "Exact dormant destroy workflow path; no such workflow is implemented in Phase 09."
+  description = "Exact protected destroy workflow path allowed to assume the deploy role."
   type        = string
   default     = ".github/workflows/destroy-demo.yml"
 
   validation {
     condition     = var.github_destroy_workflow_path == ".github/workflows/destroy-demo.yml"
-    error_message = "The dormant destroy subject is pinned to .github/workflows/destroy-demo.yml."
+    error_message = "The protected destroy subject is pinned to .github/workflows/destroy-demo.yml."
+  }
+}
+
+variable "github_rollback_workflow_path" {
+  description = "Exact protected manual rollback workflow path allowed to assume the deploy role."
+  type        = string
+  default     = ".github/workflows/rollback-demo.yml"
+
+  validation {
+    condition     = var.github_rollback_workflow_path == ".github/workflows/rollback-demo.yml"
+    error_message = "The rollback subject is pinned to .github/workflows/rollback-demo.yml."
   }
 }
 

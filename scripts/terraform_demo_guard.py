@@ -160,6 +160,7 @@ class PreflightContext(StrictModel):
     region: str = Field(pattern=r"^[a-z]{2}(-[a-z]+)+-[0-9]+$")
     project: Literal["modelguard-ai"]
     environment: Literal["demo"]
+    deployment_governance_mode: Literal["team_protected", "solo_portfolio"]
     backend_bucket: str = Field(min_length=3)
     backend_key: Literal["modelguard-ai/demo/terraform.tfstate"]
     backend_kms_key_arn: str = Field(
@@ -172,6 +173,7 @@ class PreflightContext(StrictModel):
     stage: Literal["prerequisites", "activation", "destroy"]
     activate_services: bool
     runtime_contract_verified: bool = False
+    budget_prerequisite_verified: bool = False
     alb_allowed_cidr: str
     access_mode: Literal["https_token", "http_cidr_only"]
     acm_certificate_arn: str | None = None
@@ -233,6 +235,8 @@ class PreflightContext(StrictModel):
         if self.stage == "activation":
             if not self.runtime_contract_verified:
                 raise ValueError("activation runtime image contract is not verified")
+            if not self.budget_prerequisite_verified:
+                raise ValueError("activation USD 10 budget prerequisite is not verified")
             if self.active_pointer is None:
                 raise ValueError("activation requires a promoted active pointer")
             if self.active_pointer.bundle.get("bucket") != self.model_bucket:
@@ -251,6 +255,8 @@ class PreflightContext(StrictModel):
             reference is not None for reference in self.image_refs.values()
         ):
             raise ValueError("prerequisites must not smuggle activation image references")
+        if self.stage == "prerequisites" and self.budget_prerequisite_verified:
+            raise ValueError("prerequisite plan must not claim the later budget preflight")
         return self
 
 

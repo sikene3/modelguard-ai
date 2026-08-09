@@ -153,6 +153,7 @@ def test_aws_https_token_and_http_cidr_only_route_matrix(
         )
         https_app = create_app(
             https_settings,
+            model_loader=VerifiedModelLoader(),
             telemetry=PrometheusTelemetry(),
             logger=RecordingLogger(),
         )
@@ -223,6 +224,7 @@ def test_aws_https_token_and_http_cidr_only_route_matrix(
         )
         fallback_app = create_app(
             fallback_settings,
+            model_loader=VerifiedModelLoader(),
             telemetry=PrometheusTelemetry(),
             logger=RecordingLogger(),
         )
@@ -276,7 +278,12 @@ def test_token_comparison_runs_for_missing_and_presented_credentials(
     )
 
     async def exercise() -> None:
-        app = create_app(settings, telemetry=PrometheusTelemetry(), logger=RecordingLogger())
+        app = create_app(
+            settings,
+            model_loader=VerifiedModelLoader(),
+            telemetry=PrometheusTelemetry(),
+            logger=RecordingLogger(),
+        )
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -422,7 +429,12 @@ def test_application_logs_never_include_token_query_header_or_body(
     )
 
     async def exercise() -> None:
-        app = create_app(settings, telemetry=PrometheusTelemetry(), logger=logger)
+        app = create_app(
+            settings,
+            model_loader=VerifiedModelLoader(),
+            telemetry=PrometheusTelemetry(),
+            logger=logger,
+        )
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

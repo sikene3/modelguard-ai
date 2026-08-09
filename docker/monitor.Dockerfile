@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG SOURCE_REVISION=local-uncommitted
-ARG UV_LOCK_SHA256=a8a841251ea3520a988d8042be7efabddcb93014f6cd24a40ffb3cf22812aefc
+ARG UV_LOCK_SHA256=9280d58d41655d0d06899ec465b8147844912a800d213e16321522337cd947be
 LABEL org.opencontainers.image.title="ModelGuard AI Monitor" \
       org.opencontainers.image.description="One-shot deterministic local drift monitor" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
@@ -36,6 +36,7 @@ RUN apk add --no-cache libgomp libstdc++ \
     && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 COPY --from=dependencies --chown=10001:10001 /build/.venv /app/.venv
 COPY --chown=10001:10001 src /app/src
+COPY --chown=10001:10001 configs/phase-05-monitoring.json /app/configs/phase-05-monitoring.json
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=2 \
     CMD ["python", "-c", "import os; import modelguard.monitoring.cli; raise SystemExit(0 if os.geteuid() != 0 else 1)"]

@@ -18,6 +18,9 @@ LABEL_SCHEMA_VERSION: Literal["modelguard.label.v1"] = "modelguard.label.v1"
 PERFORMANCE_SCOPE_WORDING: Literal[
     "synthetic-policy cost on the labeled subset versus held-out synthetic reference"
 ] = "synthetic-policy cost on the labeled subset versus held-out synthetic reference"
+AWS_LOCKED_MONITORING_POLICY_SHA256 = (
+    "edd3177bc4a692262858b6ec2e60a991cdce1bc844ef7eb0becac6846df56c73"
+)
 
 
 class MonitoringConfig(StrictArtifactModel):

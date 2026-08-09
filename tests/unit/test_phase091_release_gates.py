@@ -279,7 +279,7 @@ def test_image_scan_and_transfer_bind_exact_content_digest_before_aws() -> None:
 
 def test_suppression_registry_is_exact_owned_and_time_bounded() -> None:
     counts = validate(ROOT, as_of=date(2026, 8, 4))
-    assert counts == {"checkov": 50, "shellcheck": 6, "trivy": 3, "gitleaks": 1}
+    assert counts == {"checkov": 61, "shellcheck": 7, "trivy": 3, "gitleaks": 1}
     with pytest.raises((SecurityPolicyError, ValueError), match="expired"):
         validate(ROOT, as_of=date(2026, 11, 1))
 

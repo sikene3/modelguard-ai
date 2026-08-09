@@ -37,5 +37,7 @@ infrastructure
 !src/modelguard/**/
 !src/modelguard/**/*.py
 !src/modelguard/py.typed
+!configs/
+!configs/phase-05-monitoring.json
 !.streamlit/
 !.streamlit/config.toml

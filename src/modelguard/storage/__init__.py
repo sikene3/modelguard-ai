@@ -1,1 +1,1 @@
-"""Storage package reserved for later local and AWS adapters."""
+"""Storage boundaries shared by runtime components."""

@@ -2,7 +2,7 @@
 
 Phase 09 defines the GitHub Actions control plane for ModelGuard AI. It does not authorize an AWS
 deployment by itself: the retained Phase 08 bootstrap must first be applied by a human using
-short-lived SSO credentials, GitHub protections must be configured, and the exact runtime contract
+temporary browser-authenticated credentials, GitHub protections must be configured, and the exact runtime contract
 must pass. No workflow accepts or uses a long-lived AWS access key.
 
 ## Trust and workflow matrix
@@ -12,14 +12,14 @@ must pass. No workflow accepts or uses a long-lived AWS access key.
 | `ci.yml` | pull request, protected `main`, manual | none | none | test, coverage, Bandit, dependency-audit, and sanitized repository-scan SARIF |
 | `container-security.yml` | relevant pull request/`main` changes, manual | none | local runner images only | per-image inspect metadata, CycloneDX evidence, and sanitized SARIF |
 | `terraform-plan.yml` | relevant pull request/`main` changes, manual | exact customized `demo-plan`/main/workflow plan subject | saved plan only; never apply | value-free resource/action summary plus sealed plan identity |
-| `publish-images.yml` | protected manual dispatch or protected reusable call | exact `demo` environment deploy role | create-only Git-SHA ECR tags | image/SBOM/source/digest release manifest |
+| `publish-images.yml` | protected manual dispatch or team-protected reusable call rooted in manual deploy | exact `demo` environment deploy role | create-only Git-SHA ECR tags | image/SBOM/source/digest release manifest |
 | `deploy-demo.yml` | protected manual dispatch on `main` | exact `demo` environment deploy role | reviewed prerequisite apply, then reviewed activation apply | plan identities, release manifest, verified inputs, smoke/deployment record, rollback evidence |
+| `rollback-demo.yml` | protected manual dispatch on `main` | exact `demo` environment deploy role | exact last-known-good ECS/schedule identities only | private value-free rollback result |
+| `destroy-demo.yml` | protected manual dispatch on `main` | exact `demo-destroy` environment deploy role | reviewed saved destroy plan only | redacted plan summary and private plan identity |
 
 Pull-request jobs have only `contents: read`. They have no `id-token: write`, AWS credential action,
-backend access, or apply command. AWS jobs declare `id-token: write` at job scope only and mask the
-account ID where it is not an output. The publisher deliberately leaves that non-secret provenance
-value unmasked because GitHub otherwise suppresses ECR digest job outputs containing it; the action
-still validates `allowed-account-ids`, and temporary credential values remain protected. A source
+backend access, or apply command. AWS jobs declare `id-token: write` at job scope only and always
+request GitHub's account-ID masking. A source
 commit must be the exact 40-character SHA selected by the protected `main` dispatch; mutable image
 tags are never passed to Terraform.
 
@@ -53,18 +53,19 @@ The authoritative formats and customization semantics are in GitHub's
 [repository OIDC REST contract](https://docs.github.com/en/rest/actions/oidc).
 
 The read-only role accepts only `terraform-plan.yml` at `refs/heads/main` in `demo-plan`. The deploy
-role accepts exact subjects for `deploy-demo.yml` and direct `publish-images.yml` dispatches in
-`demo`, plus the dormant `destroy-demo.yml` subject in `demo-destroy`. A reusable
-`publish-images.yml` job receives the calling `deploy-demo.yml` `workflow_ref`; the local reusable
-workflow is resolved from that same exact source commit. This design intentionally uses
-`workflow_ref`, not a wildcard or a standalone custom claim.
+role accepts exact subjects for `deploy-demo.yml`, direct `publish-images.yml`, and
+`rollback-demo.yml` in `demo`, plus `destroy-demo.yml` in `demo-destroy`. A reusable
+`publish-images.yml` job receives the calling `deploy-demo.yml` `workflow_ref`; the repository-owned
+entry guard additionally verifies the called job's exact `publish-images.yml` `job_workflow_ref` and
+requires both identities at the same source revision. Direct dispatch requires both identities to be
+`publish-images.yml`. Neither contract uses a wildcard.
 
 Apply the subject contract in this fail-closed order:
 
 1. Read the repository owner ID, repository ID, current immutable-subject setting, exact repository
    name, and protected workflow/ref/environment names. Put the reviewed non-secret values in the
    bootstrap tfvars.
-2. Using human/SSO AWS access, review and apply the bootstrap change so IAM first trusts only the new
+2. Using temporary browser-authenticated AWS access, review and apply the bootstrap change so IAM first trusts only the new
    exact customized subjects. Existing default-subject OIDC tokens will temporarily fail.
 3. Compare Terraform outputs `github_oidc_subjects` and `github_oidc_customization` with the reviewed
    values and `.github/oidc-subject-template.json`.
@@ -74,8 +75,12 @@ Apply the subject contract in this fail-closed order:
 5. Prove the expected claim through a protected workflow before retiring any previous trust. A
    repository/ref/environment/workflow/audience mismatch must remain an IAM denial.
 
-The optional destroy workflow is intentionally not added in Phase 09; Phase 10 continues to use the
-guarded human/SSO `scripts/safe_destroy.sh` path until live deployment and teardown evidence exist.
+Phase 10 adds explicit manual `rollback-demo.yml` and `destroy-demo.yml` boundaries. The destroy
+workflow creates a private saved plan, publishes only value-free review evidence, then pauses at the
+separate protected apply job. It requires the exact run identity, raw plan and identity hashes,
+governance mode, source commit, environment, and mode-specific phrase. The browser-authenticated
+`scripts/safe_destroy.sh` path remains a separate human-only fallback with the same mandatory mode;
+omitting the mode never selects a weaker default.
 
 ## Required GitHub protections
 
@@ -91,7 +96,8 @@ Use path-aware rules or required-workflow rules for container and Terraform chec
 path-filtered check globally required on repositories where GitHub leaves an untriggered check in a
 pending state.
 
-Create `demo-plan` with required reviewers, no self-review/admin bypass, and only protected `main`.
+In `team_protected`, create `demo-plan` with required reviewers, no self-review/admin bypass, and
+only protected `main`.
 It contains the read-only plan variables listed below and no secrets. Create the `demo` GitHub
 Environment with all of these controls:
 
@@ -105,14 +111,18 @@ Environment with all of these controls:
 - pinned Python/uv dependencies plus Docker, AWS CLI v2, `curl`, and `jq` installed on that runner;
 - no general-purpose workloads or unreviewed repositories on that runner.
 
-The AWS deployment repository must remain private while it can create raw saved-plan transfer
-artifacts; `deploy-demo.yml` checks the workflow-dispatch repository payload and refuses a public
-repository. If a public portfolio copy is desired, publish a secret-free mirror with deployment
-workflows disabled and keep the exact OIDC-trusted deployment repository private.
+Repository visibility is selected with the governance mode. `team_protected` supports the Private
+deployment repository and requires a real independent reviewer. `solo_portfolio` is available only
+after the controlled publication checklist passes and the repository is deliberately Public while
+Actions remains disabled; it truthfully lacks separation of duties. The governance script refuses
+the wrong visibility. Public conversion and Actions enablement are separate external approvals. Raw
+saved plans use only the encrypted private retained-backend transfer and are never GitHub artifacts
+in either mode.
 
-Create `demo-destroy` separately with its own required reviewers, exact protected-`main` branch
-restriction, and stronger confirmation procedure. Its exact OIDC subject already exists, but no
-Phase 09 workflow consumes it.
+Create `demo-destroy` separately with its own exact protected-`main` branch restriction and stronger
+confirmation procedure. Team mode requires a real independent reviewer at every mutation gate. Solo
+mode may use owner approval only after the redacted plan has been inspected and the exact reviewed
+hash variables have been entered; that is a manual pause, not independent separation of duties.
 
 Environment review is deliberately repeated at the plan, apply, publish, input-verification,
 activation, smoke, and rollback boundaries. Reviewers must inspect the redacted plan artifact before
@@ -124,27 +134,40 @@ Map the retained bootstrap outputs to GitHub variables; do not copy credentials 
 
 | Name | Scope | Meaning |
 | --- | --- | --- |
-| `AWS_ACCOUNT_ID` | repository, `demo-plan`, or `demo` environment | exact 12-digit demo account |
-| `AWS_REGION` | repository, `demo-plan`, or `demo` environment | one reviewed commercial AWS Region |
+| `AWS_ACCOUNT_ID` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | exact 12-digit demo account |
+| `AWS_REGION` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | canonical `us-east-1` |
 | `AWS_PLAN_ROLE_ARN` | `demo-plan` environment | bootstrap `ci_plan_role_arn` |
-| `AWS_DEPLOY_ROLE_ARN` | `demo` environment | bootstrap `ci_deploy_role_arn` |
-| `TF_BACKEND_BUCKET` | repository, `demo-plan`, or `demo` environment | bootstrap `state_bucket_name` |
-| `TF_BACKEND_KMS_KEY_ARN` | repository, `demo-plan`, or `demo` environment | bootstrap `state_kms_key_arn` |
-| `TF_ALERT_KMS_KEY_ARN` | repository, `demo-plan`, or `demo` environment | bootstrap `alert_kms_key_arn`; same retained key, exact SNS context only |
-| `TF_PERMISSION_BOUNDARY_ARN` | repository, `demo-plan`, or `demo` environment | bootstrap `permission_boundary_arn` |
-| `DEMO_OWNER_TAG` | repository, `demo-plan`, or `demo` environment | reviewed non-email owner tag |
-| `DEMO_ALB_ALLOWED_CIDR` | repository, `demo-plan`, or `demo` environment | exact restricted, canonical CIDR |
-| `DEMO_API_ACCESS_MODE` | repository, `demo-plan`, or `demo` environment | preferred `https_token` or disclosed `http_cidr_only` |
-| `DEMO_ACM_CERTIFICATE_ARN` | repository, `demo-plan`, or `demo` environment | required only for `https_token` |
-| `DEMO_PREDICTION_TOKEN_SSM_ARN` | repository, `demo-plan`, or `demo` environment | SecureString ARN only; never its value |
+| `AWS_DEPLOY_ROLE_ARN` | `demo` and `demo-destroy` environments | bootstrap `ci_deploy_role_arn` |
+| `TF_BACKEND_BUCKET` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | bootstrap `state_bucket_name` |
+| `TF_BACKEND_KMS_KEY_ARN` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | bootstrap `state_kms_key_arn` |
+| `TF_ALERT_KMS_KEY_ARN` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | bootstrap `alert_kms_key_arn`; same retained key, exact SNS context only |
+| `TF_PERMISSION_BOUNDARY_ARN` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | bootstrap `permission_boundary_arn` |
+| `DEMO_OWNER_TAG` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | reviewed non-email owner tag |
+| `DEMO_ALB_ALLOWED_CIDR` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | exact restricted, canonical CIDR |
+| `DEMO_API_ACCESS_MODE` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | preferred `https_token` or disclosed `http_cidr_only` |
+| `DEMO_ACM_CERTIFICATE_ARN` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | required only for `https_token` |
+| `DEMO_PREDICTION_TOKEN_SSM_ARN` | repository plus `demo-plan`, `demo`, and `demo-destroy` as used | SecureString ARN only; never its value |
 | `DEMO_AUTO_DESTROY_DATE` | repository or `demo-plan` environment | current UTC plan date, no more than 14 days away |
 | `DEMO_SMOKE_BASE_URL` | `demo` environment | exact ALB/custom-domain origin, with no path |
+| `DEPLOYMENT_GOVERNANCE_MODE` | repository, `demo-plan`, `demo`, and `demo-destroy` | exact `team_protected` or `solo_portfolio`; never inferred |
+| `IMAGE_TRANSFER_PUBLIC_KEY_B64` | repository | non-secret Base64 DER RSA public key used only to encrypt scanned-image transfer bytes |
+| `REVIEWED_PREREQUISITE_*` | `demo` environment | exact run identity, plan hash, identity hash, and mode-specific apply phrase copied only after redacted-plan review |
+| `REVIEWED_ACTIVATION_*` | `demo` environment | exact run identity, plan/identity/pointer hashes, three image digests, and mode-specific activation phrase copied only after review |
+| `REVIEWED_DESTROY_*` | `demo-destroy` environment | exact destroy run identity, plan/identity hashes, and mode-specific destroy phrase copied only after review |
 
 Configure these GitHub secrets:
 
 | Name | Scope | Handling |
 | --- | --- | --- |
 | `DEMO_PREDICTION_BEARER_TOKEN` | `demo` environment only | smoke request only in `https_token` mode; never passed to Terraform, curl argv/environment, or evidence |
+| `IMAGE_TRANSFER_PRIVATE_KEY_B64` | `demo` environment only | Base64 DER RSA private key supplied to the decryptor through stdin after removal from the child environment; never uploaded or logged |
+
+`team_protected` requires a genuine independent reviewer, prevents self-review, and disables
+administrator bypass. The current owner has no such reviewer, so that mode cannot be used for a live
+deployment. `solo_portfolio` does not pretend otherwise: it requires the controlled Public
+conversion before Actions, manual privileged entry, exact source/image/plan/confirmation evidence,
+and separate plan/deploy/destroy identities. See `docs/DEPLOYMENT_GOVERNANCE.md`. Automated checks
+never count as independent approval.
 
 The HTTPS smoke script disables shell tracing before reading the secret, copies it to a non-exported
 variable, unsets `PREDICTION_BEARER_TOKEN` before launching any child process, and accepts only
@@ -155,27 +178,32 @@ prediction request supplies its Authorization header only through `curl --config
 stdin pipe; neither argv nor the curl environment contains the token, and the local copy is cleared
 after use. Smoke output and evidence contain only validated response data and value-free status.
 
-No notification address is a Terraform or GitHub Actions input. Terraform configures the budget's
-80% notification with only the non-secret exact SNS topic ARN. After the prerequisite apply creates
-that budget and topic, a human with short-lived SSO credentials runs this command from an interactive
-terminal:
+No notification address is a Terraform or GitHub Actions input. The retained USD 10 budget is
+created manually in the AWS Console with 50/80/100 percent actual and 100 percent forecast alerts;
+the operator enters its endpoint only in the Console. The value-free read-only preflight verifies
+the budget identity and thresholds without requesting subscribers.
+
+After prerequisite apply creates the separate drift/alarm topic, a human with temporary browser
+credentials runs this command from an interactive terminal:
 
 ```bash
 uv run --frozen --no-sync python -m scripts.notification_enrollment enroll \
+  --profile modelguard-bootstrap \
   --account-id 123456789012 \
   --region us-east-1 \
   --confirmation "ENROLL modelguard-ai notifications"
 ```
 
-The command reads one mandatory SNS email address without echo, verifies the exact account, uses the
-fixed topic identity, writes no file, and emits only value-free status. That one subscriber receives
-both budget and drift alarms. The command refuses `GITHUB_ACTIONS=true`, refuses any pre-existing
+The command reads one mandatory SNS endpoint without echo, verifies the exact account, uses the
+fixed topic identity, writes no file, and emits only value-free status. That subscriber receives
+drift and CloudWatch alarms, not the separately retained budget alerts. The command refuses
+`GITHUB_ACTIONS=true`, refuses any pre-existing
 different or additional subscriber, and requires the AWS email confirmation before the protected
-deployment gate passes. Terraform owns the budget, its non-secret SNS target, and the topic lifecycle,
-so demo destroy still removes them; it never owns or refreshes the email subscription. The gate uses
+deployment gate passes. Terraform owns the disposable topic lifecycle but neither endpoint and not
+the retained budget; demo destroy removes only the topic. The gate uses
 only `ListSubscriptionsByTopic` and never emits an endpoint.
 
-The separately protected human/SSO operator needs only `sts:GetCallerIdentity` and SNS
+The separately protected browser-authenticated human operator needs only `sts:GetCallerIdentity` and SNS
 list/subscribe for
 `arn:aws:sns:<region>:<account>:modelguard-ai-demo-alerts`. Do not grant this enrollment operation to
 an untrusted workflow or a long-lived user. The deployment workflow executes only read-only
@@ -191,14 +219,18 @@ The protected deployment is deliberately two-stage:
 1. Validate the dispatch confirmation, exact protected-main SHA, model version, model-manifest hash,
    account, Region, backend, and bounded UTC destroy date.
 2. Create a prerequisite plan with services disabled, seal its raw hash/source/account/Region/
-   backend/workspace identity, publish a value-free review summary, and apply only that saved plan.
-3. Pause before any image publication. Enroll the one mandatory SNS email subscriber interactively
-   through the human/SSO command above, confirm it through AWS email, and rerun the failed value-free
-   notification gate. The same topic carries budget and drift alarms; no endpoint enters the workflow
-   or saved plan.
+   backend/workspace identity, transfer plaintext only through the encrypted retained-backend
+   prefix, and publish a value-free review summary. A second protected job runs only after the
+   operator records the exact reviewed run/plan/identity hashes and typed phrase, rechecks them, and
+   applies only that saved plan.
+3. Before any apply, verify the manually retained USD 10 budget with the value-free preflight. After
+   prerequisite apply, enroll the separate drift/alarm SNS subscriber interactively, confirm it, and
+   rerun the value-free notification gate. No endpoint enters the workflow or saved plan.
 4. Build each of the API, dashboard, and monitor images once from a digest-pinned base. Scan that
    exact local image once, create a CycloneDX report, and refuse any high/critical finding before
-   authenticating to ECR or pushing.
+   authenticating to ECR or pushing. The cross-job transfer is RSA/AES-GCM encrypted; its private
+   key reaches only the protected publisher through stdin, and a Public solo repository exposes
+   neither the image archive nor inspect/SBOM metadata as plaintext artifacts.
 5. Push the already-scanned local images under `git-<40-character-sha>`, re-resolve the ECR digest,
    and bind source labels, Dockerfile/base digest, local image ID, SBOM hash, and ECR digest in one
    release manifest.
@@ -208,9 +240,10 @@ The protected deployment is deliberately two-stage:
    metadata, certificate hostname, and all digest-pinned runtime interfaces. The verified version,
    manifest hash, and seven VersionIds are inputs to the activation plan; Terraform refuses if its
    fresh SSM read differs.
-7. Only after verification succeeds, create and review a second activation plan containing
-   `repository@sha256:...` references, reverify every saved-plan identity, and apply it. No workflow
-   contains `terraform -target`.
+7. Only after verification succeeds, create the second activation plan containing
+   `repository@sha256:...` references. The protected apply job binds the reviewed run identity,
+   plan/identity/pointer hashes, all three image digests, governance mode, and typed phrase before it
+   can apply. No workflow contains `terraform -target`.
 8. Wait for ECS stability, then require `/health/live`, `/health/ready`, `/version` with the exact
    model-manifest SHA, and one prediction with the expected model version. A failed smoke step fails
    the workflow.
@@ -219,27 +252,32 @@ ECR tag immutability is fail-closed. If a network/service failure leaves only pa
 release published, the workflow refuses to overwrite those tags. Use a new reviewed source commit or
 a separately authorized human cleanup; do not weaken repository immutability to retry in place.
 
-The current Phase 08 runtime images do not yet satisfy activation: the API has no AWS bundle-
-hydration path for its empty ECS runtime volume, the dashboard image lacks its AWS monitoring
-configuration file, and the monitor lacks the one-shot `aws-run` command. The exact-image verifier
-refuses the dashboard/monitor interfaces; ECS readiness and smoke remain the final API hydration
-proof. Phase 10 must implement and test all three runtime paths before the first protected deploy can
-pass.
+The three code-only runtime paths are implemented: exact SSM/S3 API hydration, typed regional
+dashboard source health, and one-shot monitor `aws-run`. The exact-image verifier executes these
+interfaces and negative fail-closed probes inside each image, then emits a record bound to the source
+commit and image references. Activation rendering refuses a missing, local-only, malformed, or
+mismatched record. ECS readiness, IAM authorization, and live smoke remain deployment-time proof.
 
 ## Saved-plan confidentiality and review evidence
 
-Deployment plan/apply pairs use a same-run artifact named with `run_id` and `run_attempt`. The raw
-saved plan, generated non-secret tfvars, backend configuration, and sealed identity have one-day
-retention. Access remains limited to users and jobs authorized for that private repository/workflow
-run. Only the corresponding apply job downloads that exact raw artifact name from its own run;
-later evidence jobs consume the separate redacted identity artifact.
+Deployment plan/apply pairs never upload a raw saved plan, tfvars, backend configuration, active
+pointer, identity manifest, account/KMS/CIDR/SSM/model metadata, or image metadata as a plaintext
+GitHub artifact. Raw Terraform inputs use only the encrypted, public-blocked retained state bucket at
+`reviewed-plans/<run>/<attempt>/<stage>/`, with exact KMS, owner, run, attempt, and stage checks and a
+one-day lifecycle. The corresponding protected apply job downloads that exact prefix and deletes it
+only after success. GitHub receives only value-free resource/action summaries with a masked account
+suffix. Solo release/model/runtime evidence stays in encrypted private S3; team-only artifacts are
+conditioned on `team_protected`. The scanned-image cross-job transfer is authenticated ciphertext,
+not a plaintext image archive or metadata directory. The ordinary container-security workflow also
+withholds image inspect, SBOM, and vulnerability-detail artifacts in `solo_portfolio`; only
+sanitized Code Scanning SARIF remains public-facing.
 
-Terraform has no email variable or email-subscription resource. Its budget notification contains only
-the non-secret exact SNS topic ARN, and the out-of-band SNS subscriber is not part of any
-Terraform-managed resource. No GitHub secret is mapped to `TF_VAR_*`, and the CI renderer ignores
-ambient notification variables. Therefore state and raw saved plans may carry the topic ARN but
-cannot acquire the subscriber endpoint through configuration or refresh. Retention, masking, and
-redaction are defense in depth, not the subscriber-protection mechanism.
+Terraform has no email variable, email-subscription resource, or AWS Budget resource. The
+out-of-band drift/alarm SNS subscriber is not part of any Terraform-managed resource. No GitHub
+secret is mapped to `TF_VAR_*`, and the CI renderer ignores ambient notification variables.
+Therefore state and raw saved plans may carry the drift/alarm topic ARN but cannot acquire a budget
+endpoint or subscriber endpoint through configuration or refresh. Retention, masking, and redaction
+are defense in depth, not the endpoint-protection mechanism.
 
 The encrypted topic uses the retained bootstrap customer-managed key because AWS Budgets requires a
 customer-managed key policy for encrypted SNS delivery. Its Budget and CloudWatch service-principal
@@ -314,7 +352,7 @@ All suppressions are version-controlled and policy-checked before their scanner 
 
 | Scanner | Approved records | Boundary |
 | --- | ---: | --- |
-| Checkov | 50 inline directives producing 59 resource/file result-instance skips | exact finding and affected block/file, justification, owner `modelguard-maintainers`, expiry 2026-10-31 |
+| Checkov | 59 inline directives producing 68 result-instance skips | exact finding and affected block/file, justification, owner `modelguard-maintainers`, expiry 2026-10-31 |
 | ShellCheck | 6 directives | adjacent exact finding, justification, owner, expiry 2026-10-31 |
 | Trivy repository config | 3 path-scoped records | exact misconfiguration ID and path, justification, owner, expiry 2026-10-31 |
 | Trivy images | 0 | exact image/CVE/package registry remains empty |
@@ -325,6 +363,11 @@ The three repository Trivy configuration suppressions retain the reviewed demo a
 internet-facing ALB still has an exact non-world CIDR; restricted-CIDR HTTP remains a disclosed
 token-free fallback while HTTPS is preferred; and the teardown-safe delivery bucket keeps mandatory
 SSE-S3. None suppresses a vulnerability or secret finding, and any expiry makes the gate fail.
+
+The Phase 10 local audit raised GitPython from 3.1.57 to the fixed 3.1.58 floor and regenerated the
+127-package lock. Streamlit's unused Git integration is additionally excluded from the dashboard
+runtime image, so the production image does not carry GitPython, gitdb, or smmap. No vulnerability
+suppression was added; the full hashed dependency audit and each exact-image scan remain blocking.
 
 ## Supply-chain pins
 
@@ -368,14 +411,18 @@ a commit/checksum/digest with a floating tag.
 After smoke passes, the workflow writes a versioned history record and the current
 `deployments/last-known-good.json` record to the private, versioned audit bucket. The record binds all
 three image digests, API/dashboard/monitor task-definition ARNs, active model pointer and object
-VersionIds, both reviewed plan hashes, smoke hash, source commit, and GitHub run identity.
+VersionIds, both reviewed plan hashes, smoke hash, source commit, GitHub run identity, and the exact
+persisted deployment-governance mode.
 Before creating that record, the workflow reads each task definition back from ECS and refuses any
 container image that differs from its published `repository@sha256:...` identity. It also re-reads
 the live SSM pointer and requires exact equality with the verified pointer before publishing the
 successful runtime signal.
 
-Activation-apply failure/cancellation, or any non-successful smoke result after a successful apply,
-triggers the protected rollback job. It restores the API and dashboard services plus the scheduled
+In team mode, activation-apply failure/cancellation, or any non-successful smoke result after a
+successful apply triggers the protected rollback job. Solo mode never performs an unreviewed
+automatic AWS mutation: it requires a separate `rollback-demo.yml` dispatch, exact record hash,
+source, governance mode, environment, and `ROLLBACK SOLO modelguard-ai demo` phrase. Either path
+restores the API and dashboard services plus the scheduled
 monitor target to the last-known-good task definitions and waits for service stability. ECS circuit-
 breaker rollback remains enabled independently. The model pointer is never changed by this job:
 model rollback is a distinct protected pointer operation. Terraform drift detection is evidence
@@ -408,11 +455,7 @@ make security-tools-bootstrap
 make security-tools-check
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync ruff format --check .
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync ruff check .
-UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync mypy src \
-  scripts/terraform_demo_guard.py scripts/notification_enrollment.py \
-  scripts/secret_scan_policy.py scripts/plan_evidence.py \
-  scripts/render_ci_terraform.py scripts/release_manifest.py \
-  scripts/verify_deployment_inputs.py scripts/deployment_record.py
+make typecheck
 UV_CACHE_DIR="$PWD/.cache/uv" uv run --frozen --no-sync pytest -q
 ./scripts/check_shell.sh
 ./scripts/check_no_secrets.sh

@@ -16,6 +16,13 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from scripts.human_aws_login import (
+    APPROVED_PROFILE,
+    HumanLoginRefusal,
+    verify_human_login_identity,
+    verify_workflow_oidc_identity,
+)
+
 ACCOUNT_PATTERN = re.compile(r"^[0-9]{12}$")
 REGION_PATTERN = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]+$")
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -66,7 +73,8 @@ def _validate_email(value: str, *, required: bool) -> str | None:
 def _sns_subscriptions(client: SnsClient, topic_arn: str) -> list[dict[str, Any]]:
     subscriptions: list[dict[str, Any]] = []
     token: str | None = None
-    while True:
+    seen_tokens: set[str] = set()
+    for _ in range(100):
         arguments: dict[str, Any] = {"TopicArn": topic_arn}
         if token is not None:
             arguments["NextToken"] = token
@@ -75,9 +83,18 @@ def _sns_subscriptions(client: SnsClient, topic_arn: str) -> list[dict[str, Any]
             dict(item) for item in response.get("Subscriptions", []) if isinstance(item, Mapping)
         )
         next_token = response.get("NextToken")
-        if not isinstance(next_token, str) or not next_token:
+        if next_token is None:
             return subscriptions
+        if (
+            not isinstance(next_token, str)
+            or not next_token
+            or next_token == token
+            or next_token in seen_tokens
+        ):
+            raise NotificationEnrollmentError("notification_pagination_invalid")
+        seen_tokens.add(next_token)
         token = next_token
+    raise NotificationEnrollmentError("notification_pagination_exceeded")
 
 
 def _verify_account(sts_client: StsClient, account_id: str) -> None:
@@ -164,16 +181,20 @@ def verify_notification_enrollment(
     return {"notification_subscribers_confirmed": 1, "status": "passed"}
 
 
-def _clients(region: str) -> tuple[StsClient, SnsClient]:
+def _clients(region: str, profile: str | None = None) -> tuple[StsClient, SnsClient, str | None]:
     config = Config(
         connect_timeout=5,
         read_timeout=15,
         retries={"max_attempts": 3, "mode": "standard"},
         user_agent_extra="modelguard-notification-enrollment/1",
     )
+    session = boto3.Session(profile_name=profile, region_name=region)
+    credentials = session.get_credentials()
+    method = None if credentials is None else credentials.method
     return (
-        cast(StsClient, boto3.client("sts", region_name=region, config=config)),
-        cast(SnsClient, boto3.client("sns", region_name=region, config=config)),
+        cast(StsClient, session.client("sts", region_name=region, config=config)),
+        cast(SnsClient, session.client("sns", region_name=region, config=config)),
+        method,
     )
 
 
@@ -185,13 +206,17 @@ def _parser() -> argparse.ArgumentParser:
         item.add_argument("--account-id", required=True)
         item.add_argument("--region", required=True)
     subparsers.choices["enroll"].add_argument("--confirmation", required=True)
+    subparsers.choices["enroll"].add_argument(
+        "--profile", choices=(APPROVED_PROFILE,), required=True
+    )
+    subparsers.choices["verify"].add_argument("--workflow-role-arn", required=True)
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
     try:
-        sts_client, sns_client = _clients(args.region)
+        profile = args.profile if args.command == "enroll" else None
         if args.command == "enroll":
             if os.environ.get("GITHUB_ACTIONS", "").casefold() == "true":
                 raise NotificationEnrollmentError("workflow_enrollment_forbidden")
@@ -199,7 +224,26 @@ def main() -> int:
                 raise NotificationEnrollmentError("enrollment_confirmation_invalid")
             if not sys.stdin.isatty():
                 raise NotificationEnrollmentError("interactive_terminal_required")
-            notification_email = getpass.getpass("Budget and drift notification email: ")
+        sts_client, sns_client, credential_method = _clients(args.region, profile)
+        if args.command == "enroll":
+            identity = sts_client.get_caller_identity()
+            verify_human_login_identity(
+                profile=args.profile,
+                region=args.region,
+                expected_account_id=args.account_id,
+                credential_method=credential_method,
+                identity=identity,
+                environment_credential_names={
+                    name
+                    for name in (
+                        "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY",
+                        "AWS_SESSION_TOKEN",
+                    )
+                    if name in os.environ
+                },
+            )
+            notification_email = getpass.getpass("Drift and alarm notification email: ")
             result = enroll_notifications(
                 account_id=args.account_id,
                 region=args.region,
@@ -208,6 +252,16 @@ def main() -> int:
                 sns_client=sns_client,
             )
         else:
+            identity = sts_client.get_caller_identity()
+            account_id = identity.get("Account")
+            if not isinstance(account_id, str) or account_id != args.account_id:
+                raise NotificationEnrollmentError("aws_account_mismatch")
+            verify_workflow_oidc_identity(
+                expected_account_id=args.account_id,
+                expected_role_arn=args.workflow_role_arn,
+                credential_method=credential_method,
+                identity=identity,
+            )
             result = verify_notification_enrollment(
                 account_id=args.account_id,
                 region=args.region,
@@ -216,7 +270,7 @@ def main() -> int:
             )
         print(json.dumps(result, sort_keys=True))
         return 0
-    except NotificationEnrollmentError as error:
+    except (HumanLoginRefusal, NotificationEnrollmentError) as error:
         print(json.dumps({"reason": str(error), "status": "refused"}), file=sys.stderr)
         return 2
     except (BotoCoreError, ClientError):

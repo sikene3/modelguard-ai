@@ -35,11 +35,16 @@ ModelGuard AI is a compact production-style MLOps reliability system that trains
 - Request ID, model version, latency, risk score, and decision in every successful prediction
   response; error/health contracts expose only fields appropriate to their schemas.
 - Structured JSON logs without raw secrets or sensitive identifiers.
+- AWS startup resolves the exact active SSM pointer once, downloads all seven S3 object VersionIds
+  into an isolated bounded staging directory, verifies the immutable bundle and cross-artifact
+  identity before deserialization, and atomically installs it on the empty ECS runtime volume.
+  Hydration failure leaves predictions not ready and never falls back to stale or partial bytes.
 
 ### Prediction event pipeline
 - Local MVP mode writes newline-delimited JSONL under `artifacts/predictions/`; Parquet is deferred.
 - AWS mode sends events to Kinesis Data Firehose.
-- Firehose batches GZIP JSONL into UTC date/hour S3 prefixes; model identity remains in the payload.
+- Firehose batches GZIP JSONL with an explicit `.jsonl.gz` object suffix into UTC date/hour S3
+  prefixes; model identity remains in the payload.
 - Producer acceptance, Firehose delivery, and S3-prefix freshness are separate signals. A producer
   failure is observable and does not make prediction requests fail closed.
 
@@ -60,12 +65,17 @@ ModelGuard AI is a compact production-style MLOps reliability system that trains
 - Writes the latest status artifact and historical reports.
 - Sends deduplicated SNS alerts after successful monitor runs for entry into data-quality `invalid`,
   drift `degraded`, or performance `degraded`; run failure/staleness is alarmed by CloudWatch.
+- AWS scheduling invokes exactly one `aws-run` cycle. It snapshots one pointer and bounded S3 input
+  set, persists immutable report/run evidence conditionally, emits one machine-readable result, and
+  exits with a documented nonzero category for configuration, access, evidence, or sink failures.
 
 ### Dashboard
 - Current status, model version, last report time, sample volume, and top drifting features.
 - Prediction distribution and drift trend charts.
 - Links to recent reports where available.
 - Local mode reads local artifacts; AWS mode reads S3.
+- AWS mode validates exact regional S3, CloudWatch metric, and CloudWatch Logs endpoints and renders
+  source health as healthy, degraded, or unavailable without changing monitor-computed states.
 
 ### Cloud and delivery
 - Terraform-managed AWS infrastructure.
@@ -83,14 +93,24 @@ ModelGuard AI is a compact production-style MLOps reliability system that trains
   restricted HTTP is a short-lived synthetic-only fallback that must not transmit a reusable token.
 - Private ECS tasks across two AZs with desired count one, one documented non-HA NAT, and an S3
   gateway endpoint; this is intentionally not a highly available service.
-- Separate IAM responsibilities, exact OIDC claims, mandatory budget notification, alarm matrix,
-  lifecycle cleanup, guarded deployment/destroy, and durable rollback targets.
+- Separate IAM responsibilities, exact OIDC claims, a retained manually created USD 10 monthly
+  budget prerequisite, alarm matrix, lifecycle cleanup, guarded deployment/destroy, and durable
+  rollback targets. Budget email entry occurs only in the AWS Console; it is never project input or
+  evidence, and alerts are not a hard spending limit.
 - Durable model identity includes semantic version plus manifest digest. Initial deployment is
   staged: create prerequisites with runtimes disabled, publish and verify images/model/pointer, then
   apply a second reviewed plan to activate services and the monitor schedule.
 - Each deployable image is built and scanned once, then deployed by immutable digest without rebuild.
 - Prometheus remains the local/test interface; AWS custom application signals reach CloudWatch via
   bounded-dimension Embedded Metric Format (EMF) logs, alongside native service metrics.
+- Deployment governance has two explicit modes. `team_protected` requires a real independent
+  reviewer and prevents self-review/admin bypass. `solo_portfolio` discloses the lack of separation
+  of duties, requires a Public repository before Actions are enabled, and adds exact manual source,
+  digest, plan-identity, confirmation, OIDC, lifetime, and destroy gates. Automated checks are not a
+  substitute for independent review, and a documented upgrade returns to `team_protected`.
+- A separate retained Terraform design records exact future state-object CloudTrail data events into
+  private versioned KMS-encrypted storage with bounded retention and `prevent_destroy`; it is never
+  owned by the disposable demo lifecycle.
 
 ## 5. Explicitly out of scope for MVP
 

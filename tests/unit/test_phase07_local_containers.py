@@ -212,6 +212,11 @@ def test_dockerfiles_are_digest_pinned_minimal_labeled_non_root_and_healthy(
             assert 'CMD ["python", "-m", "uvicorn"' in content
         elif component == "dashboard":
             assert 'CMD ["python", "-m", "streamlit"' in content
+            # Streamlit's Git integration is not used with the production file watcher
+            # disabled. Exclude the unnecessary GitPython dependency chain from the image.
+            assert "--no-install-package gitpython" in content
+            assert "--no-install-package gitdb" in content
+            assert "--no-install-package smmap" in content
         else:
             assert 'ENTRYPOINT ["python", "-m", "modelguard.monitoring.cli"]' in content
         assert 'org.opencontainers.image.revision="${SOURCE_REVISION}"' in content

@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG SOURCE_REVISION=local-uncommitted
-ARG UV_LOCK_SHA256=a8a841251ea3520a988d8042be7efabddcb93014f6cd24a40ffb3cf22812aefc
+ARG UV_LOCK_SHA256=9280d58d41655d0d06899ec465b8147844912a800d213e16321522337cd947be
 LABEL org.opencontainers.image.title="ModelGuard AI API" \
       org.opencontainers.image.description="Local-first versioned fraud-risk inference API" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \

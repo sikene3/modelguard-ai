@@ -457,7 +457,12 @@ def build_dashboard_repository(
         try:
             client = cast(
                 DashboardS3Client,
-                boto3.client("s3", region_name=settings.aws_region, config=boto_config),
+                boto3.client(
+                    "s3",
+                    region_name=settings.aws_region,
+                    endpoint_url=settings.dashboard_s3_endpoint_url,
+                    config=boto_config,
+                ),
             )
         except (BotoCoreError, ValueError) as error:
             raise DashboardRepositoryError("s3_client_unavailable") from error

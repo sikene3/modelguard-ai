@@ -1,13 +1,19 @@
 output "activation_state" {
   description = "Non-secret runtime barrier summary."
   value = {
-    deployment_stage        = var.deployment_stage
-    activate_services       = var.activate_services
-    api_desired_count       = local.runtime_desired_count
-    dashboard_desired_count = local.runtime_desired_count
-    monitor_schedule_state  = local.monitor_schedule_state
-    image_reference_mode    = "repository@sha256"
+    deployment_stage           = var.deployment_stage
+    activate_services          = var.activate_services
+    api_desired_count          = local.runtime_desired_count
+    dashboard_desired_count    = local.runtime_desired_count
+    monitor_schedule_state     = local.monitor_schedule_state
+    image_reference_mode       = "repository@sha256"
+    deployment_governance_mode = var.deployment_governance_mode
   }
+}
+
+output "deployment_governance_mode" {
+  description = "Persisted exact mode that every later activation and destroy must match."
+  value       = var.deployment_governance_mode
 }
 
 output "alb_url" {
@@ -60,8 +66,19 @@ output "workload_role_arns" {
 }
 
 output "alert_topic_arn" {
-  description = "KMS-encrypted budget/drift topic; its email endpoint is enrolled outside Terraform."
+  description = "KMS-encrypted drift/alarm topic; its email endpoint is enrolled outside Terraform."
   value       = aws_sns_topic.alerts.arn
+}
+
+output "manual_budget_contract" {
+  description = "Value-free retained budget prerequisite; no subscriber endpoint is queried or stored."
+  value = {
+    name                = local.required_budget_name
+    amount_usd          = 10
+    required_alerts     = local.required_budget_alerts
+    preflight_verified  = var.budget_prerequisite_verified
+    hard_spending_limit = false
+  }
 }
 
 output "post_destroy_inventory_identity" {

@@ -94,18 +94,17 @@ def summarize_plan(
                 "sensitive": bool(raw_output.get("after_sensitive", False)),
             }
         )
+    masked_account = f"********{manifest.account_id[-4:]}"
     return {
         "schema_version": "modelguard.redacted-terraform-plan.v1",
         "redaction": (
             "all before/after values, configuration, variables, and sensitive payloads omitted"
         ),
         "identity": {
-            "account_id": manifest.account_id,
+            "account_id_masked": masked_account,
             "activate_services": manifest.activate_services,
             "auto_destroy_date": manifest.auto_destroy_date.isoformat(),
-            "backend_bucket": manifest.backend_bucket,
             "backend_config_sha256": manifest.backend_config_sha256,
-            "backend_key": manifest.backend_key,
             "git_commit": manifest.git_commit,
             "plan_sha256": manifest.plan_sha256,
             "project": manifest.project,
@@ -147,8 +146,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- Source commit: `{identity['git_commit']}`",
         f"- Plan SHA-256: `{identity['plan_sha256']}`",
-        f"- AWS account / Region: `{identity['account_id']}` / `{identity['region']}`",
-        f"- Backend: `{identity['backend_bucket']}` / `{identity['backend_key']}`",
+        f"- AWS account / Region: `{identity['account_id_masked']}` / `{identity['region']}`",
+        f"- Backend configuration SHA-256: `{identity['backend_config_sha256']}`",
         f"- Workspace: `{identity['workspace']}`",
         f"- Runtime activation: `{str(identity['activate_services']).lower()}`",
         f"- AutoDestroyDate: `{identity['auto_destroy_date']}`",

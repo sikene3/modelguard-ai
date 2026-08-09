@@ -20,6 +20,7 @@ from modelguard.monitoring.aws import (
     SnsAlertSink,
     SsmTargetSnapshotResolver,
     VersionedBundleLocation,
+    _enumerate_s3_objects,
     download_versioned_bundle,
     freeze_s3_raw_snapshot,
     pointer_matches_metadata,
@@ -65,7 +66,14 @@ class FakeSsm:
 
     def get_parameter(self, **kwargs: Any) -> Mapping[str, Any]:
         self.calls.append(kwargs)
-        return {"Parameter": {"Value": self.pointer.model_dump_json()}}
+        return {
+            "Parameter": {
+                "Name": kwargs["Name"],
+                "Type": "String",
+                "Value": self.pointer.model_dump_json(),
+                "Version": 1,
+            }
+        }
 
 
 def test_ssm_target_is_snapshotted_exactly_once_and_strictly_versioned(
@@ -85,6 +93,50 @@ def test_ssm_target_is_snapshotted_exactly_once_and_strictly_versioned(
         )
 
 
+@pytest.mark.parametrize("conflicting", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_ssm_pointer_rejects_identical_and_conflicting_duplicate_json_keys(
+    monitoring_target: EventIdentity,
+    conflicting: bool,
+    nested: bool,
+) -> None:
+    pointer = _pointer(monitoring_target)
+    payload = pointer.model_dump_json()
+    if nested:
+        original = '"bucket":"modelguard-test-bucket"'
+        replacement = (
+            original
+            + ',"bucket":"'
+            + ("modelguard-substituted" if conflicting else "modelguard-test-bucket")
+            + '"'
+        )
+        payload = payload.replace(original, replacement, 1)
+    else:
+        payload = (
+            payload[:-1]
+            + ',"pointer_schema_version":"'
+            + ("substituted" if conflicting else "modelguard.active-monitor-target.v1")
+            + '"}'
+        )
+
+    class DuplicatePointerSsm:
+        def get_parameter(self, **kwargs: Any) -> Mapping[str, Any]:
+            return {
+                "Parameter": {
+                    "Name": kwargs["Name"],
+                    "Type": "String",
+                    "Value": payload,
+                    "Version": 1,
+                }
+            }
+
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        SsmTargetSnapshotResolver(
+            DuplicatePointerSsm(),
+            parameter_name="/modelguard/active-model",
+        ).resolve_once()
+
+
 class VersionedBundleS3:
     def __init__(self, bundle_path: Path) -> None:
         self.bundle_path = bundle_path
@@ -94,7 +146,12 @@ class VersionedBundleS3:
         self.calls.append(kwargs)
         filename = str(kwargs["Key"]).rsplit("/", 1)[-1]
         assert kwargs["VersionId"] == f"version-{filename}"
-        return {"Body": BytesIO((self.bundle_path / filename).read_bytes())}
+        payload = (self.bundle_path / filename).read_bytes()
+        return {
+            "Body": BytesIO(payload),
+            "ContentLength": len(payload),
+            "VersionId": kwargs["VersionId"],
+        }
 
 
 def test_historical_bundle_download_uses_every_exact_version_then_verifies_identity(
@@ -124,14 +181,24 @@ class SnapshotS3:
         }
 
     def head_object(self, **kwargs: Any) -> Mapping[str, Any]:
-        return {"ETag": f'"etag-{kwargs["Key"]}"', "VersionId": f"version-{kwargs['Key']}"}
+        payload = self.payloads[str(kwargs["Key"])]
+        return {
+            "ContentLength": len(payload),
+            "ETag": f'"etag-{kwargs["Key"]}"',
+            "VersionId": f"version-{kwargs['Key']}",
+        }
 
     def get_object(self, **kwargs: Any) -> Mapping[str, Any]:
         self.get_calls.append(kwargs)
-        return {"Body": BytesIO(self.payloads[str(kwargs["Key"])])}
+        payload = self.payloads[str(kwargs["Key"])]
+        return {
+            "Body": BytesIO(payload),
+            "ETag": f'"etag-{kwargs["Key"]}"',
+            "VersionId": f"version-{kwargs['Key']}",
+        }
 
 
-def test_s3_raw_snapshot_pins_versions_decompresses_and_ignores_repartitioning() -> None:
+def test_s3_raw_snapshot_pins_versions_and_accepts_only_exact_firehose_suffix() -> None:
     first = b'{"row":1}\n'
     second = b'{"row":2}\n'
     client = SnapshotS3(
@@ -146,9 +213,105 @@ def test_s3_raw_snapshot_pins_versions_decompresses_and_ignores_repartitioning()
         prefix="predictions/",
     )
 
-    assert snapshot.digest == freeze_raw_payloads([second + first]).digest
-    assert len(snapshot.records) == 2
+    assert snapshot.digest == freeze_raw_payloads([second]).digest
+    assert len(snapshot.records) == 1
     assert all("VersionId" in call and "IfMatch" not in call for call in client.get_calls)
+
+
+def test_s3_enumeration_binds_prefix_max_keys_and_rejects_malformed_pages() -> None:
+    class ListingS3:
+        def __init__(self, responses: list[Mapping[str, Any]]) -> None:
+            self.responses = responses
+            self.calls: list[dict[str, Any]] = []
+
+        def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
+            self.calls.append(kwargs)
+            return self.responses[len(self.calls) - 1]
+
+    valid = ListingS3(
+        [
+            {
+                "Contents": [{"Key": "predictions/first.jsonl.gz"}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            },
+            {
+                "Contents": [{"Key": "predictions/second.jsonl"}],
+                "IsTruncated": False,
+            },
+        ]
+    )
+    assert _enumerate_s3_objects(
+        valid,
+        bucket="events",
+        prefix="predictions/",
+        maximum_objects=2,
+    ) == ["predictions/first.jsonl.gz"]
+    assert valid.calls == [
+        {"Bucket": "events", "Prefix": "predictions/", "MaxKeys": 1_000},
+        {
+            "Bucket": "events",
+            "Prefix": "predictions/",
+            "MaxKeys": 1_000,
+            "ContinuationToken": "page-2",
+        },
+    ]
+
+    cases = [
+        [{"Contents": [{"Key": "outside/events.jsonl"}], "IsTruncated": False}],
+        [{"Contents": [], "NextContinuationToken": "missing-marker"}],
+        [{"Contents": "invalid", "IsTruncated": False}],
+        [
+            {"Contents": [], "IsTruncated": True, "NextContinuationToken": "cycle"},
+            {"Contents": [], "IsTruncated": True, "NextContinuationToken": "cycle"},
+        ],
+    ]
+    for responses in cases:
+        with pytest.raises(ValueError):
+            _enumerate_s3_objects(
+                ListingS3(responses),
+                bucket="events",
+                prefix="predictions/",
+                maximum_objects=2,
+            )
+
+
+def test_s3_enumeration_rejects_excess_pages_entries_and_changing_tokens() -> None:
+    class InfiniteS3:
+        def __init__(self, *, with_entries: bool) -> None:
+            self.calls = 0
+            self.with_entries = with_entries
+
+        def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
+            assert kwargs["MaxKeys"] == 1_000
+            self.calls += 1
+            contents = (
+                [{"Key": f"predictions/ignored-{self.calls}.txt"}] if self.with_entries else []
+            )
+            return {
+                "Contents": contents,
+                "IsTruncated": True,
+                "NextContinuationToken": f"token-{self.calls}",
+            }
+
+    with pytest.raises(ValueError, match="pagination limit"):
+        _enumerate_s3_objects(
+            InfiniteS3(with_entries=False),
+            bucket="events",
+            prefix="predictions/",
+            maximum_objects=1,
+            maximum_pages=3,
+            maximum_entries=10,
+        )
+    with pytest.raises(ValueError, match="listing-entry limit"):
+        _enumerate_s3_objects(
+            InfiniteS3(with_entries=True),
+            bucket="events",
+            prefix="predictions/",
+            maximum_objects=1,
+            maximum_pages=10,
+            maximum_entries=2,
+        )
 
 
 class ConditionalS3:
@@ -244,6 +407,30 @@ def test_s3_history_is_create_only_and_latest_uses_conditional_monotonic_updates
     latest_puts = [call for call in client.put_calls if call["Key"] == "monitoring/latest.json"]
     assert latest_puts[0].get("IfNoneMatch") == "*"
     assert "IfMatch" in latest_puts[1]
+
+
+def test_s3_latest_update_fails_closed_when_conditional_writes_never_converge(
+    tmp_path: Path,
+    monitoring_event_factory: Any,
+    monitoring_target: EventIdentity,
+    monitoring_metadata: ValidatedBundleMetadata,
+) -> None:
+    report = _service_report(
+        tmp_path,
+        hour=1,
+        event_factory=monitoring_event_factory,
+        target=monitoring_target,
+        metadata=monitoring_metadata,
+    )
+
+    class ContendedLatestS3(ConditionalS3):
+        def put_object(self, **kwargs: Any) -> Mapping[str, Any]:
+            if kwargs["Key"] == "monitoring/latest.json":
+                raise _error("PreconditionFailed", "PutObject")
+            return super().put_object(**kwargs)
+
+    with pytest.raises(RuntimeError, match="did not converge"):
+        S3ReportStore(ContendedLatestS3(), bucket="modelguard-reports").publish(report)
 
 
 def json_report_id(payload: bytes) -> str:

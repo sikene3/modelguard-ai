@@ -59,6 +59,7 @@ def _preflight(*, activation: bool, today: date) -> dict[str, Any]:
         "region": "us-east-1",
         "project": "modelguard-ai",
         "environment": "demo",
+        "deployment_governance_mode": "team_protected",
         "backend_bucket": "modelguard-ai-terraform-state-123456789012-us-east-1",
         "backend_key": "modelguard-ai/demo/terraform.tfstate",
         "backend_kms_key_arn": (
@@ -71,6 +72,7 @@ def _preflight(*, activation: bool, today: date) -> dict[str, Any]:
         "stage": "activation" if activation else "prerequisites",
         "activate_services": activation,
         "runtime_contract_verified": activation,
+        "budget_prerequisite_verified": activation,
         "alb_allowed_cidr": "203.0.113.10/32",
         "access_mode": "https_token",
         "acm_certificate_arn": (
@@ -110,6 +112,7 @@ def test_preflight_refuses_every_activation_barrier_and_token_value_field() -> N
     assert PreflightContext.model_validate(valid).activate_services
 
     mutations: tuple[tuple[str, Any], ...] = (
+        ("deployment_governance_mode", "unbound"),
         ("activate_services", False),
         ("runtime_contract_verified", False),
         ("alb_allowed_cidr", "0.0.0.0/0"),
@@ -630,7 +633,7 @@ def test_operator_scripts_refuse_without_explicit_confirmation(repository_root: 
             text=True,
             env={},
         )
-        assert result.returncode == 1
+        assert result.returncode != 0
         assert "Refusing" in result.stdout
 
 
@@ -640,7 +643,8 @@ def test_bootstrap_iam_uses_current_budget_actions_and_scoped_managed_policies(
     iam = _read(repository_root, "infrastructure/bootstrap/iam.tf")
 
     assert '"budgets:ViewBudget"' in iam
-    assert '"budgets:ModifyBudget"' in iam
+    assert '"budgets:ModifyBudget"' not in iam
+    assert '"aws-portal:ModifyBilling"' not in iam
     assert "budgets:DescribeBudget" not in iam
     assert "budgets:CreateBudget" not in iam
     assert "budgets:DeleteBudget" not in iam

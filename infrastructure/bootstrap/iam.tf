@@ -36,6 +36,15 @@ locals {
       "workflow_ref",
       "${local.github_workflow_ref_prefix}${var.github_publish_workflow_path}@${var.github_allowed_ref}",
     ])
+    rollback = join(":", [
+      local.github_repository_subject,
+      "ref",
+      var.github_allowed_ref,
+      "environment",
+      var.github_deploy_environment,
+      "workflow_ref",
+      "${local.github_workflow_ref_prefix}${var.github_rollback_workflow_path}@${var.github_allowed_ref}",
+    ])
     destroy = join(":", [
       local.github_repository_subject,
       "ref",
@@ -427,6 +436,30 @@ data "aws_iam_policy_document" "remote_state_deploy" {
       "s3:PutObject",
     ]
     resources = ["${aws_s3_bucket.state.arn}/${var.state_backend_key}"]
+  }
+
+  statement {
+    sid       = "ListExactConfidentialPlanTransfers"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["reviewed-plans/*"]
+    }
+  }
+
+  statement {
+    sid    = "ManageExactConfidentialPlanTransfers"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["${aws_s3_bucket.state.arn}/reviewed-plans/*"]
   }
 }
 
@@ -929,23 +962,6 @@ data "aws_iam_policy_document" "ci_deploy_operations" {
     resources = [aws_kms_key.state.arn]
   }
 
-  statement {
-    sid    = "ManageExactDemoBudget"
-    effect = "Allow"
-    actions = [
-      "budgets:ModifyBudget",
-      "budgets:TagResource",
-      "budgets:UntagResource",
-    ]
-    resources = [local.budget_arn]
-  }
-
-  statement {
-    sid       = "ModifyBillingOnlyForBudgetApi"
-    effect    = "Allow"
-    actions   = ["aws-portal:ModifyBilling"]
-    resources = ["*"]
-  }
 }
 
 data "aws_iam_policy_document" "ci_deploy_iam" {

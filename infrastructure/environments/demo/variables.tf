@@ -51,6 +51,16 @@ variable "owner_tag" {
   }
 }
 
+variable "deployment_governance_mode" {
+  description = "Exact governance mode persisted in demo state to prevent destroy/apply downgrade."
+  type        = string
+
+  validation {
+    condition     = contains(["team_protected", "solo_portfolio"], var.deployment_governance_mode)
+    error_message = "deployment_governance_mode must be team_protected or solo_portfolio."
+  }
+}
+
 variable "auto_destroy_date" {
   description = "UTC YYYY-MM-DD teardown reminder no more than 14 days after planning; never automatic."
   type        = string
@@ -387,13 +397,8 @@ variable "maximum_rejected_records" {
   }
 }
 
-variable "budget_limit_usd" {
-  description = "Mandatory small monthly budget; SNS email endpoint enrollment is a separate human/SSO operation."
-  type        = number
-  default     = 25
-
-  validation {
-    condition     = var.budget_limit_usd >= 5 && var.budget_limit_usd <= 100
-    error_message = "budget_limit_usd must stay between USD 5 and USD 100."
-  }
+variable "budget_prerequisite_verified" {
+  description = "Value-free proof that the retained USD 10 manual budget contract passed read-only preflight."
+  type        = bool
+  default     = false
 }

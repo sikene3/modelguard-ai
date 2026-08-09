@@ -82,7 +82,7 @@ aws sts get-caller-identity
 aws configure list
 ```
 
-Never ask an agent to create access keys. Use AWS SSO or a local short-lived profile, and use GitHub
+Never ask an agent to create access keys. Use the approved browser-based AWS login profile, and use GitHub
 OIDC in CI.
 
 ## Terraform state or backend problems

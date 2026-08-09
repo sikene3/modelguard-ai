@@ -135,6 +135,14 @@ startup, verifies and loads the bundle once, and becomes ready afterward; promot
 a controlled ECS deployment rather than hot reload. Manifest lineage covers dataset, persisted
 split, schema, baseline, source tree/Git revision, config, dependency lock, and MLflow run.
 
+The AWS API and one-shot monitor hydrate the bundle into an empty writable runtime volume using the
+task role/default SDK credential chain. They request every object by the exact VersionId recorded in
+the pointer, enforce an exact filename set and bounded object sizes, verify returned identities,
+checksums, schema/version/manifest lineage, and cross-artifact consistency, and only then permit
+trusted deserialization. A same-filesystem rename publishes the verified directory atomically.
+Interrupted, mixed-version, substituted, corrupt, or partial downloads are removed and cannot make
+the API ready or produce a successful monitor result.
+
 ## 6. Monitoring logic
 
 ### Numeric features
@@ -164,6 +172,12 @@ split, schema, baseline, source tree/Git revision, config, dependency lock, and 
   hashes. Historical reports are immutable; `latest` updates atomically only to a newer window.
   Conditional transition markers suppress routine duplicate alerts without claiming exactly-once
   SNS delivery.
+- The scheduled AWS entry point is `aws-run`, which performs exactly one cycle and exits. It does
+  not daemonize. It freezes the SSM target and bounded S3 object identities once, evaluates the same
+  pure contract as local monitoring, writes immutable history/latest/run-status records with
+  conditional operations, emits bounded EMF to stderr and one canonical JSON result to stdout, and
+  uses distinct exit codes for invalid configuration, AWS access, incomplete evidence, and
+  persistence/alert failures.
 
 ### Independent dimensions
 - Run: `never_run | succeeded | failed | stale`.
@@ -189,6 +203,8 @@ full-window guarantee, real-world economic claim, or proof that drift caused a p
 - Model cannot load: readiness fails; liveness remains available where practical.
 - Firehose unavailable: prediction succeeds, event failure is logged and counted.
 - S3 report unavailable: dashboard shows stale/unknown state, not healthy.
+- AWS dashboard source permission, Region, endpoint, response, or partial-outage failures are shown
+  as explicit degraded/unavailable source health and never converted into a healthy report claim.
 - Small sample: data quality is `insufficient_data`, drift is `unknown`, never healthy.
 - ECS health failure targets recorded last-known-good task state. Model-pointer rollback is separate;
   drift alone never rolls back a model.
@@ -206,6 +222,31 @@ Initial AWS deployment uses two separately reviewed saved plans, never ad hoc `t
 Bootstrap owns remote state, GitHub OIDC roles, and the mandatory permission boundary; demo deploy
 roles cannot modify that trust boundary. Deployment roles can create only bounded workload roles
 under the boundary, and `iam:PassRole` is limited to exact roles and services.
+
+Human governance is selected explicitly:
+
+- `team_protected` retains protected `main`, a real independent required reviewer, prevention of
+  self-review, no administrator bypass, and exact environment/OIDC claims.
+- `solo_portfolio` is a disclosed portfolio-only mode with no independent approval and no
+  production-grade separation of duties. Before Actions or public Code Scanning can be enabled the
+  repository must be Public. Privileged entry is manual, source/image/saved-plan identities and
+  typed phrases are exact, plan and deploy roles remain separate, the deploy role never trusts
+  `demo-plan`, lifetime is bounded, and destroy is separately confirmed. Any missing evidence
+  refuses the action. When a real trusted reviewer becomes available, the repository must upgrade
+  to `team_protected`; automation does not count as that reviewer.
+
+The retained `modelguard-ai-demo-monthly` AWS Budget is a manual account prerequisite at USD 10 with
+50%, 80%, and 100% actual plus 100% forecast alerts. The operator enters its endpoint only in the AWS
+Console. Terraform, workflows, state, plans, reports, logs, commands, and project configuration carry
+neither the endpoint nor any substitute. The read-only preflight checks only the budget identity and
+threshold contract and never queries subscriber endpoints. Budget alerts do not stop spending.
+
+CloudTrail state-object auditing is also retained outside the demo lifecycle. The independent
+`infrastructure/audit-bootstrap` root targets only the two exact future state and lock object ARNs,
+uses a private versioned KMS-encrypted log bucket, public-access blocking, TLS-only delivery,
+log-file validation, finite lifecycle retention, least-privilege service conditions, and
+`prevent_destroy`. Its initial local state requires encrypted offline preservation before any later
+apply. CloudTrail, KMS, and S3 usage can incur cost and finite retention limits recovery.
 
 `/metrics` is the local/test Prometheus surface. AWS alarms use native ALB/Firehose/Scheduler metrics
 and a small fixed set of low-cardinality EMF events written to stdout for application/monitor signals.

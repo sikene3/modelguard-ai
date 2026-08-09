@@ -31,6 +31,11 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 - [x] No raw AWS credentials, tokens, or full environment dumps appear in logs.
 - [x] API contract tests pass.
 - [x] Prometheus metrics endpoint exposes request count, latency, predictions, and event-write failures.
+- [x] AWS API startup hydrates every exact pointer VersionId into an isolated bounded staging
+      directory, verifies all immutable and cross-artifact contracts before deserialization,
+      proves the exact bucket Region, rejects duplicate-key SSM JSON and unproven existing bytes,
+      installs atomically under measured task-safe size bounds, and remains not-ready after
+      corruption, substitution, or interruption.
 
 ## Event logging
 
@@ -60,6 +65,12 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
       policy; all public wording limits conclusions to the labeled subset and synthetic reference.
 - [x] Report identity is independent of enumeration/file boundaries; immutable history, monotonic
       latest status, restart safety, and conditional alert deduplication are tested.
+- [x] `aws-run` executes exactly one bounded AWS monitoring cycle, emits one machine-readable v1
+      result, persists conditional evidence, preserves local `run`/`status`, and returns documented
+      fail-closed codes for configuration, permission, evidence, Region, and sink failures.
+- [x] AWS prediction enumeration accepts only Terraform's exact Firehose `.jsonl.gz` suffix, binds
+      prefix and `MaxKeys`, bounds pages and every returned entry, rejects token cycles and malformed
+      pages, and requires the canonical semantic monitoring-policy SHA-256 before AWS access.
 
 ## Dashboard
 
@@ -68,6 +79,11 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 - [x] Shows top drifting features and distributions.
 - [x] Handles missing/stale reports honestly.
 - [x] Loads from local storage and S3 through the same repository interface.
+- [x] AWS dashboard configuration binds exact Region, S3/CloudWatch/Logs endpoints, metric/log
+      identities, and dashboard identity; missing, denied, wrong-Region, malformed, and partial
+      sources render explicit degraded/unavailable health without mutating report states. Health
+      and report reads use the same exact validated S3 endpoint, and the completion metric is
+      consistently `MonitorCompletions` from EMF through Terraform and the dashboard.
 
 ## Containers and local integration
 
@@ -99,19 +115,34 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Security jobs have no AWS identity or deployment authority; supported scanner evidence is
       sanitized SARIF, and no raw secret match, cache, database, state, or saved plan is uploaded.
 - [x] ALB requires explicit restricted CIDR; private tasks have no public IP.
-- [x] Two AZs, one documented NAT, S3 endpoint, state bootstrap, budget alert, alarm matrix, and
-      guarded verified destroy are implemented.
-- [x] The budget targets only the exact non-secret SNS topic ARN; one confirmed human SNS email
-      destination is enrolled through a protected interactive human/SSO boundary after prerequisite
-      apply and receives budget/drift alarms. No address enters Terraform, state, a saved plan, or a
-      workflow artifact; alerts remain non-enforcing.
+- [x] Two AZs, one documented NAT, S3 endpoint, state bootstrap, alarm matrix, and guarded verified
+      destroy design are implemented.
+- [x] The retained manual budget contract is exactly `modelguard-ai-demo-monthly`, USD 10 monthly,
+      with 50/80/100 percent actual and 100 percent forecast alerts. Its read-only preflight never
+      retrieves subscriber endpoints; no address enters project files, Terraform, state, saved
+      plans, workflows, artifacts, reports, logs, commands, or examples; alerts are non-enforcing.
+- [ ] The retained manual USD 10 budget and its Console-entered notification endpoint exist in the
+      target AWS account and pass the value-free read-only preflight.
+- [x] A separate retained CloudTrail Terraform design limits S3 data events to the exact future
+      state and lock objects, uses protected encrypted storage with finite retention and
+      `prevent_destroy`, and documents encrypted local-state preservation and usage costs.
+- [ ] The retained CloudTrail prerequisite has been separately reviewed, applied, state-preserved,
+      and verified in AWS.
 - [x] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
       image/model/token prerequisites, then uses a second reviewed digest-pinned activation plan.
 - [x] ECS deployment circuit breaker/rollback is enabled.
 - [ ] Scheduled monitor task can read inputs and write reports.
-- [x] SNS email enrollment is interactive, fail-closed before publication, and absent from Terraform
-      state/plans and workflow artifacts. Budget and CloudWatch key-policy statements each enforce
-      exact source-account, source-ARN, topic-context, and regional SNS ViaService conditions.
+- [x] The local production-equivalent runtime verifier checks actual API hydration, typed dashboard
+      AWS health, and one-shot monitor contents/entrypoints; activation evidence must match all three
+      immutable image references before `runtime_contract_verified` can be true in rendered inputs.
+- [x] A sealed three-image verifier run has passed all required host controls and produced a record
+      bound to the exact immutable local image IDs, source revision, and `uv.lock`. AppArmor,
+      built-in seccomp, and genuine `no-new-privileges` passed. The Terraform default remains false
+      until a future authorized activation supplies matching immutable registry-digest evidence.
+- [x] Drift/alarm SNS email enrollment is interactive, fail-closed before publication, and absent
+      from Terraform state/plans and workflow artifacts. Retained Budget and CloudWatch key-policy
+      statements remain independently restricted by exact source-account, source-ARN, topic-context,
+      and regional SNS ViaService conditions; the manual budget itself is not Terraform-owned.
 - [x] CloudWatch logs and alarms exist; every alarm has a tested native-service or bounded EMF source,
       and scheduler submission is not treated as monitor completion.
 - [ ] `terraform destroy` removes the demo environment without orphaned resources.
@@ -121,6 +152,18 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Pull-request workflows define lint, typecheck, tests, and security scans without AWS access.
 - [x] Infrastructure plan is reviewable and not auto-applied from untrusted PRs.
 - [x] Deployment workflow is manual and protected.
+- [x] `team_protected` and `solo_portfolio` governance contracts are distinct and fail closed;
+      solo mode truthfully lacks independent review, requires Public visibility before Actions,
+      preserves exact OIDC/role separation, and has a documented upgrade path to team protection.
+- [x] Solo plan/apply and destroy are real separate protected manual boundaries that bind exact
+      run/source/plan/identity/image/model evidence and typed phrases. Raw plans and image metadata
+      use confidential transfers or private storage, never Public artifacts; deployed state and the
+      last-known-good record prevent governance-mode downgrade by omission or variable change.
+- [x] Human apply, destroy, enrollment, and readiness helpers require the exact
+      `modelguard-bootstrap` browser-login profile and reject root, static keys, environment
+      credentials, and workflow callers; workflow checks separately require the exact OIDC role.
+- [ ] The repository has passed the future-publication audit, been deliberately made Public with
+      Actions disabled, and had the selected governance mode configured in GitHub.
 - [x] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
       actions/base images are pinned.
 - [ ] Post-deploy smoke test runs.

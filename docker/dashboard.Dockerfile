@@ -12,11 +12,14 @@ RUN apk add --no-cache build-base gfortran linux-headers
 RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}"
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --frozen --only-group docker-dashboard --no-install-project
+    uv sync --frozen --only-group docker-dashboard --no-install-project \
+      --no-install-package gitpython \
+      --no-install-package gitdb \
+      --no-install-package smmap
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG SOURCE_REVISION=local-uncommitted
-ARG UV_LOCK_SHA256=a8a841251ea3520a988d8042be7efabddcb93014f6cd24a40ffb3cf22812aefc
+ARG UV_LOCK_SHA256=9280d58d41655d0d06899ec465b8147844912a800d213e16321522337cd947be
 LABEL org.opencontainers.image.title="ModelGuard AI Dashboard" \
       org.opencontainers.image.description="Read-only local operations evidence dashboard" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
@@ -37,6 +40,7 @@ RUN apk add --no-cache libgomp libstdc++ \
     && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 COPY --from=dependencies --chown=10001:10001 /build/.venv /app/.venv
 COPY --chown=10001:10001 src /app/src
+COPY --chown=10001:10001 configs/phase-05-monitoring.json /app/configs/phase-05-monitoring.json
 COPY --chown=10001:10001 .streamlit/config.toml /home/modelguard/.streamlit/config.toml
 USER 10001:10001
 EXPOSE 8501

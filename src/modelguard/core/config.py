@@ -45,6 +45,13 @@ class ApiAccessMode(StrEnum):
     HTTP_CIDR_ONLY = "http_cidr_only"
 
 
+class RuntimeComponent(StrEnum):
+    """Process role used to keep API-only validation away from one-shot workers."""
+
+    API = "api"
+    MONITOR = "monitor"
+
+
 SSM_PARAMETER_ARN_PATTERN = re.compile(
     r"^arn:(?:aws|aws-us-gov|aws-cn):ssm:[a-z0-9-]+:[0-9]{12}:parameter/.+$"
 )
@@ -62,6 +69,7 @@ class Settings(BaseSettings):
     )
 
     app_env: AppEnvironment = AppEnvironment.LOCAL
+    runtime_component: RuntimeComponent = RuntimeComponent.API
     log_level: LogLevel = LogLevel.INFO
     model_bundle_path: Path = Path("artifacts/model-bundles/1.0.0")
     active_model_version: str = "1.0.0"
@@ -83,6 +91,7 @@ class Settings(BaseSettings):
     firehose_max_attempts: int = Field(default=2, ge=1, le=5)
     firehose_retry_base_delay_seconds: float = Field(default=0.025, ge=0.0, le=1.0)
     local_report_dir: Path = Path("artifacts/reports")
+    monitoring_config_path: Path = Path("configs/phase-05-monitoring.json")
     min_monitoring_samples: int = Field(default=500, ge=1)
     aws_region: str = "us-east-1"
     model_bucket: str | None = None
@@ -98,11 +107,22 @@ class Settings(BaseSettings):
 
         if self.api_inference_workers > self.api_max_concurrency:
             raise ValueError("API_INFERENCE_WORKERS cannot exceed API_MAX_CONCURRENCY")
-        if self.app_env is AppEnvironment.AWS:
+        if self.app_env is AppEnvironment.AWS and self.runtime_component is RuntimeComponent.API:
             if self.api_access_mode is ApiAccessMode.LOCAL_OPEN:
                 raise ValueError("AWS deployments cannot use local_open API access")
             if self.alb_allowed_cidr is None:
                 raise ValueError("AWS deployments require an explicit ALB_ALLOWED_CIDR")
+
+        if self.runtime_component is RuntimeComponent.MONITOR:
+            if self.api_access_mode is not ApiAccessMode.LOCAL_OPEN:
+                raise ValueError("monitor processes must not configure an API access mode")
+            if self.alb_allowed_cidr is not None:
+                raise ValueError("monitor processes must not configure ALB_ALLOWED_CIDR")
+            if (
+                self.prediction_token_ssm_arn is not None
+                or self.prediction_bearer_token is not None
+            ):
+                raise ValueError("monitor processes must not receive API token settings")
 
         if self.alb_allowed_cidr is not None:
             try:

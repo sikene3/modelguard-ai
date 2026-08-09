@@ -15,11 +15,13 @@ Phase 09.1 makes the five release scanners reproducible: one reviewed lock pins 
 ShellCheck, Checkov, Trivy, and Gitleaks; the same repository scripts enforce them locally and in
 GitHub Actions; and only sanitized SARIF is eligible for Code Scanning upload.
 
-No GitHub workflow or AWS plan/apply/destroy has run from this tree. The deployment remains
-deliberately fail-closed because the current API/dashboard/monitor images do not yet satisfy the AWS
-runtime contract; Phase 10 must implement and test those interfaces before activation. See
+Phase 10 implements and adversarially tests the three AWS runtime paths plus dual deployment
+governance, but it remains uncommitted and `in_progress`. No GitHub workflow or AWS
+plan/apply/destroy has run from this tree. Deployment remains deliberately fail-closed because the
+final repaired images have not produced a sealed immutable-digest runtime record; the current Docker
+host lacks buildx and its Snap/AppArmor runtime rejects the required `no-new-privileges` probe. See
 [`docs/CICD_SECURITY.md`](docs/CICD_SECURITY.md),
-[`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-09.md`.
+[`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-10.md`.
 
 The architecture and acceptance contract are defined in [ARCHITECTURE.md](ARCHITECTURE.md),
 [PROJECT_SPEC.md](PROJECT_SPEC.md), and [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
@@ -240,12 +242,13 @@ The dashboard includes:
   restricted to reports with matching target, baseline, and policy identities;
 - an offline HTML download in local mode, or a short-lived HTTPS presigned download in S3 mode.
 
-Local mode reads `MODEL_BUNDLE_PATH`, `LOCAL_REPORT_DIR`, and `MONITORING_CONFIG_PATH`. AWS mode sets
-`DASHBOARD_REPOSITORY=s3`, `MODEL_BUCKET`, and `REPORT_BUCKET`; injected fake-client tests prove the
-same read contract without network calls. Phase 08 now scopes dashboard reads and monitor writes to
-the private `monitoring/` prefix, including `monitoring/run-status.json`. The activation barrier
-remains off until Phase 10 digest-pinned runtime tests prove that deployed contract. The dashboard
-never makes report buckets public and never stores or logs a generated presigned URL.
+Local mode reads `MODEL_BUNDLE_PATH`, `LOCAL_REPORT_DIR`, and `MONITORING_CONFIG_PATH`. AWS mode uses
+the S3 report repository plus exact typed Region, S3/CloudWatch/Logs endpoint, metric, log-group, and
+dashboard identities. Injected-client tests prove healthy, missing, denied, wrong-Region, malformed,
+and partial-outage behavior without network calls. Source health is separate from the four persisted
+monitoring states and cannot silently display healthy data. Dashboard reads and monitor writes remain
+limited to the private `monitoring/` prefix, including `monitoring/run-status.json`; generated
+presigned URLs are never stored or logged.
 
 The complete evidence/claim boundary is documented in
 [docs/DASHBOARD_CONTRACT.md](docs/DASHBOARD_CONTRACT.md).
@@ -339,6 +342,27 @@ curl --fail-with-body \
   http://restricted-demo.example/v1/predict
 ```
 
+### AWS code-only runtime readiness
+
+The API hydrates an empty ECS runtime volume from the exact SSM pointer and seven S3 VersionIds,
+verifies all bundle bytes and identities before trusted deserialization, installs atomically, and
+remains not-ready after any interruption or corruption. The monitor image exposes a bounded one-shot
+`aws-run` command with deterministic JSON output and separate configuration/access/evidence/sink exit
+codes. The dashboard uses explicit regional evidence-source health without recalculating monitoring.
+
+`scripts/verify_release_runtime.sh` tests these interfaces inside the actual immutable images and
+emits a source/image-bound verification record. Activation rendering refuses to set
+`runtime_contract_verified=true` without a matching digest-mode record; the committed default stays
+false. See [docs/AWS_RUNTIME_CONTRACTS.md](docs/AWS_RUNTIME_CONTRACTS.md).
+
+AWS deployment governance supports a protected team contract and a disclosed solo portfolio
+contract. The latter is not separation of duties and cannot be selected while the repository is
+Private. Public conversion, GitHub settings, OIDC, AWS bootstrap, budget creation, CloudTrail apply,
+and deployment all remain separate external actions. See
+[docs/DEPLOYMENT_GOVERNANCE.md](docs/DEPLOYMENT_GOVERNANCE.md),
+[docs/AWS_ACCOUNT_PREREQUISITES.md](docs/AWS_ACCOUNT_PREREQUISITES.md), and
+[docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md).
+
 ## Local configuration
 
 Copy `.env.example` to `.env` only when local, non-secret overrides are needed. Defaults load without
@@ -364,6 +388,7 @@ checklists/           phase completion gates
 reports/              phase evidence reports
 artifacts/            ignored generated datasets, evidence, and immutable local bundles
 configs/              committed versioned training and monitoring behavior
+infrastructure/       guarded bootstrap, reusable modules, disposable demo, and retained audit design
 mlruns/               ignored local MLflow file store created by Phase 02
 ```
 

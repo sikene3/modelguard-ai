@@ -22,7 +22,8 @@
 - Health routes are token-exempt/minimal for ALB checks; `/metrics` is not publicly routed in AWS.
 - AWS token bytes come only from a pre-created SSM SecureString injected into ECS. Terraform receives
   the ARN only; rotation forces a controlled deployment and teardown verifies parameter cleanup.
-- Notification addresses enter only the interactive human/SSO enrollment command. They are absent
+- Drift/alarm notification addresses enter only the interactive browser-authenticated human
+  enrollment command. Budget notification entry occurs only in the AWS Console. They are absent
   from Terraform variables, state/plans, workflow inputs, and artifacts.
 
 ## Containers
@@ -55,7 +56,7 @@
 - S3 public access block enabled.
 - Encryption at rest enabled for S3/ECR/CloudWatch-supported resources.
 - IAM separates CI plan/deploy, ECS execution, API, dashboard, monitor, Firehose, and Scheduler.
-- Human/SSO bootstrap owns OIDC roles and a mandatory permission boundary; demo deploy cannot alter
+- Browser-authenticated human bootstrap owns OIDC roles and a mandatory permission boundary; demo deploy cannot alter
   it. Every customized OIDC subject binds repository IDs/names, main ref, protected environment,
   and workflow path; `iam:PassRole` is limited to exact bounded workload roles.
 - The encrypted alert topic uses the retained customer-managed bootstrap key. Budget/CloudWatch and

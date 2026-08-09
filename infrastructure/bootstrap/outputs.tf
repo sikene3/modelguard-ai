@@ -29,17 +29,18 @@ output "ci_plan_role_arn" {
 }
 
 output "ci_deploy_role_arn" {
-  description = "OIDC role restricted to exact customized deploy/publish/destroy subjects."
+  description = "OIDC role restricted to exact deploy, publish, rollback, and destroy subjects."
   value       = aws_iam_role.ci_deploy.arn
 }
 
 output "github_oidc_subjects" {
   description = "Non-secret exact OIDC subjects for human review."
   value = {
-    plan    = local.plan_subject
-    deploy  = local.deploy_subjects.deploy
-    publish = local.deploy_subjects.publish
-    destroy = local.deploy_subjects.destroy
+    plan     = local.plan_subject
+    deploy   = local.deploy_subjects.deploy
+    publish  = local.deploy_subjects.publish
+    rollback = local.deploy_subjects.rollback
+    destroy  = local.deploy_subjects.destroy
   }
 }
 
@@ -50,4 +51,9 @@ output "github_oidc_customization" {
     use_immutable_subject = var.github_oidc_use_immutable_subject
     include_claim_keys    = ["repo", "ref", "environment", "workflow_ref"]
   }
+}
+
+output "deployment_governance_mode" {
+  description = "Non-secret selected human-governance mode; this does not weaken OIDC subjects."
+  value       = var.deployment_governance_mode
 }

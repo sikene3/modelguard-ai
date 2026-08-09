@@ -80,6 +80,10 @@ typecheck:
 		scripts/security_gate_runner.py \
 		scripts/security_policy.py \
 		scripts/security_tools.py \
+		scripts/deployment_governance.py \
+		scripts/confidential_artifact.py \
+		scripts/human_aws_login.py \
+		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py
 
@@ -99,6 +103,10 @@ security:
 		scripts/security_gate_runner.py \
 		scripts/security_policy.py \
 		scripts/security_tools.py \
+		scripts/deployment_governance.py \
+		scripts/confidential_artifact.py \
+		scripts/human_aws_login.py \
+		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))

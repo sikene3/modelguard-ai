@@ -13,6 +13,7 @@ from modelguard.monitoring.report import MonitoringReport
 from modelguard.monitoring.state import ensure_utc
 
 EmfWriter = Callable[[str], None]
+MONITOR_COMPLETION_METRIC_NAME = "MonitorCompletions"
 
 
 def _stdout_writer(line: str) -> None:
@@ -42,7 +43,7 @@ def build_monitor_completion_emf(
         0.0,
     )
     metrics: dict[str, tuple[float, str]] = {
-        "MonitorCompletions": (1.0, "Count"),
+        MONITOR_COMPLETION_METRIC_NAME: (1.0, "Count"),
         "RawRecords": (float(counts.raw), "Count"),
         "RejectedRecords": (float(counts.rejected), "Count"),
         "OutsideWindowRecords": (float(counts.outside_window), "Count"),
