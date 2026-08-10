@@ -386,6 +386,7 @@ data "aws_iam_policy_document" "remote_state_plan" {
       test     = "StringLike"
       variable = "s3:prefix"
       values = [
+        "env:/",
         var.state_backend_key,
         "${var.state_backend_key}.tflock",
       ]

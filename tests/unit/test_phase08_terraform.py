@@ -1841,6 +1841,25 @@ def test_bootstrap_iam_uses_current_budget_actions_and_scoped_managed_policies(
         assert required_action in iam
 
 
+def test_plan_role_allows_only_terraform_backend_workspace_discovery_prefix(
+    repository_root: Path,
+) -> None:
+    iam = _read(repository_root, "infrastructure/bootstrap/iam.tf")
+    plan_state = iam.split('data "aws_iam_policy_document" "remote_state_plan" {', maxsplit=1)[
+        1
+    ].split('data "aws_iam_policy_document" "remote_state_deploy" {', maxsplit=1)[0]
+    list_statement = plan_state.split('sid       = "ListExactStateAndLock"', maxsplit=1)[1].split(
+        "statement {", maxsplit=1
+    )[0]
+
+    assert 'variable = "s3:prefix"' in list_statement
+    assert '"env:/"' in list_statement
+    assert "var.state_backend_key" in list_statement
+    assert '"${var.state_backend_key}.tflock"' in list_statement
+    assert '"env:*"' not in list_statement
+    assert '"*"' not in list_statement
+
+
 def test_bootstrap_and_demo_state_ownership_cannot_overlap(repository_root: Path) -> None:
     bootstrap_files = "\n".join(
         path.read_text(encoding="utf-8")
