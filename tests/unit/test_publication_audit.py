@@ -10,9 +10,18 @@ from scripts.publication_audit import (
     GitConfigMatch,
     PublicationAuditGitError,
     PublicationAuditRefusal,
+    classify_publication_email_match,
     query_partial_clone_promisor_config,
     require_no_partial_clone_or_promisor_config,
+    require_safe_publication_email_matches,
 )
+
+
+def _address(local: str, domain: str) -> bytes:
+    return f"{local}{chr(64)}{domain}".encode()
+
+
+VERIFIED_NOREPLY = _address("123456+verified-user", "users.noreply.github.com")
 
 
 def _runner(*, returncode: int, stdout: str = "", stderr: str = ""):
@@ -72,3 +81,96 @@ def test_git_config_exit_greater_than_one_forwards_stderr_and_fails(
     ):
         query_partial_clone_promisor_config(Path("repository"), runner=runner)
     assert capsys.readouterr().err == "fatal: simulated Git configuration failure\n"
+
+
+@pytest.mark.parametrize("domain", ["fixture.test", "fixture.invalid"])
+def test_reserved_test_domains_pass_only_for_test_scoped_blob(domain: str) -> None:
+    value = _address("synthetic", domain)
+
+    assert (
+        classify_publication_email_match(
+            value,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_fixture.py",),
+        )
+        == "synthetic_reserved_test_domain"
+    )
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ("docs/example.md",),
+        ("tests/unit/test_fixture.py", "docs/example.md"),
+        (),
+    ],
+)
+def test_reserved_test_domain_fails_outside_tests(paths: tuple[str, ...]) -> None:
+    value = _address("synthetic", "fixture.test")
+
+    with pytest.raises(
+        PublicationAuditRefusal, match="privacy_history_blob_email_present"
+    ) as caught:
+        classify_publication_email_match(
+            value,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=paths,
+        )
+    assert value.decode() not in str(caught.value)
+
+
+def test_reserved_test_domain_lookalike_fails() -> None:
+    value = _address("synthetic", "fixture.test.example.com")
+
+    with pytest.raises(PublicationAuditRefusal, match="privacy_history_blob_email_present"):
+        classify_publication_email_match(
+            value,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_fixture.py",),
+        )
+
+
+def test_only_exact_verified_noreply_identity_passes() -> None:
+    assert (
+        classify_publication_email_match(
+            VERIFIED_NOREPLY,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("docs/example.md",),
+        )
+        == "verified_github_noreply"
+    )
+
+    other = _address("654321+other-user", "users.noreply.github.com")
+    with pytest.raises(PublicationAuditRefusal, match="privacy_history_blob_email_present"):
+        classify_publication_email_match(
+            other,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_fixture.py",),
+        )
+
+
+def test_existing_exact_example_domain_allowance_is_preserved() -> None:
+    assert (
+        classify_publication_email_match(
+            _address("synthetic", "example.invalid"),
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("docs/example.md",),
+        )
+        == "synthetic_example_domain"
+    )
+
+
+def test_mixed_blob_fails_without_disclosing_the_rejected_match() -> None:
+    accepted = _address("synthetic", "fixture.test")
+    rejected = _address("private", "nonreserved.example.edu")
+    blob = b" ".join((accepted, rejected))
+
+    with pytest.raises(
+        PublicationAuditRefusal, match="privacy_history_blob_email_present"
+    ) as caught:
+        require_safe_publication_email_matches(
+            blob,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_fixture.py",),
+        )
+    assert rejected.decode() not in str(caught.value)
