@@ -838,6 +838,31 @@ def test_required_workflows_parse_and_external_actions_are_commit_pinned(
     assert "github/codeql-action/upload-sarif@" in ci
 
 
+def test_required_ci_ruleset_contexts_are_exact_emitted_job_names(
+    repository_root: Path,
+) -> None:
+    workflow = _workflow(repository_root, "ci.yml")
+    expected_contexts = {
+        "Format, lint, and typecheck",
+        "Pytest and branch coverage",
+        "Reproducible security release gates",
+        "Workflow YAML compatibility lint",
+    }
+
+    assert {str(job["name"]) for job in workflow["jobs"].values()} == expected_contexts
+    protections = (
+        _read(repository_root, "docs/CICD_SECURITY.md")
+        .split(
+            "## Required GitHub protections",
+            maxsplit=1,
+        )[1]
+        .split("In `team_protected`", maxsplit=1)[0]
+    )
+    for context in expected_contexts:
+        assert f"- `{context}`" in protections
+        assert f"- `CI / {context}`" not in protections
+
+
 def test_untrusted_workflows_have_no_oidc_or_aws_and_plan_never_applies(
     repository_root: Path,
 ) -> None:
