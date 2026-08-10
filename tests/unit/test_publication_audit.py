@@ -5,14 +5,18 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts.publication_audit import (
     PARTIAL_CLONE_PROMISOR_PATTERN,
     GitConfigMatch,
     PublicationAuditGitError,
     PublicationAuditRefusal,
     classify_publication_email_match,
+    contains_publication_private_key_material,
     query_partial_clone_promisor_config,
     require_no_partial_clone_or_promisor_config,
+    require_no_publication_private_key_material,
     require_safe_publication_email_matches,
 )
 
@@ -174,3 +178,116 @@ def test_mixed_blob_fails_without_disclosing_the_rejected_match() -> None:
             blob_paths=("tests/unit/test_fixture.py",),
         )
     assert rejected.decode() not in str(caught.value)
+
+
+def _private_key_boundary(
+    label: bytes = b"", *, suffix: bytes = b"", hyphen_count: int = 5
+) -> bytes:
+    prefix = b"-" * hyphen_count + b"BEGIN "
+    key_type = label + b" " if label else b""
+    key_suffix = b" " + suffix if suffix else b""
+    return prefix + key_type + b"PRIVATE " + b"KEY" + key_suffix + b"-" * hyphen_count
+
+
+def _private_key_footer(label: bytes = b"", *, hyphen_count: int = 5) -> bytes:
+    prefix = b"-" * hyphen_count + b"END "
+    key_type = label + b" " if label else b""
+    return prefix + key_type + b"PRIVATE " + b"KEY" + b"-" * hyphen_count
+
+
+def _private_key_detector_literal() -> bytes:
+    hyphens = b"-" * 5
+    return b"secret_pattern='" + hyphens + b"BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" + hyphens + b"'"
+
+
+def test_private_key_detector_literal_is_not_key_material() -> None:
+    hyphens = b"-" * 5
+    detector = _private_key_detector_literal()
+    wildcard_detector = hyphens + b"BEGIN [A-Z ]*PRIVATE KEY" + hyphens
+
+    assert contains_publication_private_key_material(detector) is False
+    assert contains_publication_private_key_material(wildcard_detector) is False
+    require_no_publication_private_key_material(detector + b"\n" + wildcard_detector)
+
+
+@pytest.mark.parametrize(
+    "label",
+    [b"", b"RSA", b"DSA", b"EC", b"OPENSSH", b"ENCRYPTED", b"SSH2 ENCRYPTED"],
+)
+def test_literal_private_key_boundaries_fail_closed(label: bytes) -> None:
+    material = _private_key_boundary(label) + b"\ninvalid-payload\n"
+
+    assert contains_publication_private_key_material(material) is True
+    with pytest.raises(
+        PublicationAuditRefusal,
+        match="privacy_history_blob_private_key_present",
+    ) as caught:
+        require_no_publication_private_key_material(material)
+    assert "invalid-payload" not in str(caught.value)
+
+
+def test_literal_private_key_boundary_suffix_fails_closed() -> None:
+    material = _private_key_boundary(b"PGP", suffix=b"BLOCK") + b"\ninvalid-payload\n"
+
+    with pytest.raises(
+        PublicationAuditRefusal,
+        match="privacy_history_blob_private_key_present",
+    ):
+        require_no_publication_private_key_material(material)
+
+
+def test_malformed_and_multiline_private_key_material_is_rejected() -> None:
+    malformed_missing_footer = (
+        b"    " + _private_key_boundary(b"RSA", hyphen_count=4).lower() + b"\r\n"
+        b"not-base64\r\n"
+        b"still-sensitive\r\n"
+    )
+    heredoc = (
+        b"secret_value=$(printf '%s' <<'KEY_DATA')\n"
+        + _private_key_boundary(b"EC")
+        + b"\nnot-base64\n"
+        + _private_key_footer(b"EC")
+        + b"\nKEY_DATA\n"
+    )
+
+    for material in (malformed_missing_footer, heredoc):
+        with pytest.raises(
+            PublicationAuditRefusal,
+            match="privacy_history_blob_private_key_present",
+        ):
+            require_no_publication_private_key_material(material)
+
+
+@pytest.mark.parametrize("private_format", ["pkcs8", "openssh", "encrypted"])
+def test_real_private_key_in_secret_scanner_script_is_rejected(private_format: str) -> None:
+    key = Ed25519PrivateKey.generate()
+    if private_format == "openssh":
+        material = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption(),
+        )
+    else:
+        encryption: serialization.KeySerializationEncryption
+        if private_format == "encrypted":
+            encryption = serialization.BestAvailableEncryption(b"x" * 32)
+        else:
+            encryption = serialization.NoEncryption()
+        material = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            encryption,
+        )
+    scanner_script = (
+        b"#!/usr/bin/env bash\nset -euo pipefail\n"
+        + _private_key_detector_literal()
+        + b"\n"
+        + material
+    )
+
+    with pytest.raises(
+        PublicationAuditRefusal,
+        match="privacy_history_blob_private_key_present",
+    ) as caught:
+        require_no_publication_private_key_material(scanner_script)
+    assert str(caught.value) == "privacy_history_blob_private_key_present"

@@ -24,6 +24,13 @@ PUBLICATION_EXAMPLE_DOMAINS = frozenset(
     {b"example.com", b"example.net", b"example.org", b"example.invalid"}
 )
 PUBLICATION_RESERVED_TEST_SUFFIXES = (b".invalid", b".test")
+PUBLICATION_PRIVATE_KEY_BEGIN_BOUNDARY = re.compile(
+    rb"(?i)(?<!-)-{4,}[ \t]*BEGIN[ \t]+"
+    rb"(?:[A-Z0-9][A-Z0-9_-]{0,31}[ \t]+){0,4}"
+    rb"PRIVATE[ \t]+KEY"
+    rb"(?:[ \t]+[A-Z0-9][A-Z0-9_-]{0,31}){0,2}"
+    rb"[ \t]*-{4,}(?!-)"
+)
 
 PublicationEmailClassification = Literal[
     "verified_github_noreply",
@@ -103,6 +110,24 @@ def require_safe_publication_email_matches(
         )
         for match in PUBLICATION_EMAIL_PATTERN.finditer(data)
     )
+
+
+def contains_publication_private_key_material(data: bytes) -> bool:
+    """Identify a literal private-key envelope without matching detector expressions.
+
+    A begin boundary is sufficient: incomplete envelopes and invalid payloads must remain
+    fail-closed. Regex metacharacters in a scanner's own detector label do not form a literal
+    cryptographic boundary and therefore do not match.
+    """
+
+    return PUBLICATION_PRIVATE_KEY_BEGIN_BOUNDARY.search(data) is not None
+
+
+def require_no_publication_private_key_material(data: bytes) -> None:
+    """Refuse literal PEM/OpenSSH private-key material without disclosing its bytes."""
+
+    if contains_publication_private_key_material(data):
+        raise PublicationAuditRefusal("privacy_history_blob_private_key_present")
 
 
 def _run_git_config(command: Sequence[str], repository: Path) -> subprocess.CompletedProcess[str]:
