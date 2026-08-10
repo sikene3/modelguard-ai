@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import re
-import subprocess
+
+# security-suppression:
+# finding=B404
+# justification=Only a caller-supplied Git argument array runs without a shell.
+# owner=modelguard-maintainers
+# expires=2026-10-31
+import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -100,7 +106,12 @@ def require_safe_publication_email_matches(
 
 
 def _run_git_config(command: Sequence[str], repository: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # security-suppression:
+    # finding=B603
+    # justification=The command is an argument sequence and shell execution is never enabled.
+    # owner=modelguard-maintainers
+    # expires=2026-10-31
+    return subprocess.run(  # nosec B603
         command,
         cwd=repository,
         check=False,

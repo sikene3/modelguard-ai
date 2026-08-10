@@ -286,6 +286,7 @@ def test_suppression_registry_is_exact_owned_and_time_bounded() -> None:
 
 def test_new_bandit_suppressions_are_adjacent_owned_and_expiring() -> None:
     for relative in (
+        "scripts/publication_audit.py",
         "scripts/security_gate_runner.py",
         "scripts/security_policy.py",
         "scripts/security_tools.py",
