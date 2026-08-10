@@ -190,6 +190,7 @@ scripts/local_compose_lib.sh
 scripts/model_bundle_publisher.py
 scripts/notification_enrollment.py
 scripts/plan_evidence.py
+scripts/publication_audit.py
 scripts/release_manifest.py
 scripts/render_ci_terraform.py
 scripts/run_phase.sh
@@ -314,6 +315,7 @@ tests/unit/test_phase10_model_publisher.py
 tests/unit/test_phase10_prerequisites.py
 tests/unit/test_phase10_runtime_readiness.py
 tests/unit/test_prediction_events_phase04.py
+tests/unit/test_publication_audit.py
 tests/unit/test_settings.py
 tests/unit/test_split_pipeline_phase02.py
 tests/unit/test_telemetry_logging_phase03.py
