@@ -43,6 +43,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
       CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
       REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
@@ -95,6 +96,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact manual-rollback OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Retrieve and verify the exact encrypted rollback record
         id: record
         run: |

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
+
+approved_profile="modelguard-bootstrap"
+approved_region="us-east-1"
+approved_role_name="modelguard-ai-ci-deploy"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 required_names=(EXPECTED_AWS_ACCOUNT_ID AWS_REGION INVENTORY_OUTPUT)
 for required_name in "${required_names[@]}"; do
@@ -12,20 +18,127 @@ if [[ ! "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
   echo "Refusing inventory: EXPECTED_AWS_ACCOUNT_ID must contain 12 digits."
   exit 1
 fi
+if [[ "$AWS_REGION" != "$approved_region" ]]; then
+  echo "Refusing inventory: AWS_REGION must be the canonical Region."
+  exit 1
+fi
 
-actual_account="$(aws sts get-caller-identity --query Account --output text)"
+aws_identity_arguments=()
+expected_caller_arn=""
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  if [[ -n "${AWS_PROFILE:-}" || -n "${AWS_DEFAULT_PROFILE:-}" ]]; then
+    echo "Refusing inventory: GitHub OIDC mode forbids AWS profile selection."
+    exit 1
+  fi
+  if [[ -z "${EXPECTED_AWS_ROLE_ARN:-}" ]]; then
+    echo "Refusing inventory: EXPECTED_AWS_ROLE_ARN is required in GitHub OIDC mode."
+    exit 1
+  fi
+  approved_role_arn="arn:aws:iam::${EXPECTED_AWS_ACCOUNT_ID}:role/modelguard-ai/bootstrap/${approved_role_name}"
+  if [[ "$EXPECTED_AWS_ROLE_ARN" != "$approved_role_arn" ]]; then
+    echo "Refusing inventory: EXPECTED_AWS_ROLE_ARN is not the approved teardown role."
+    exit 1
+  fi
+  expected_caller_arn="arn:aws:sts::${EXPECTED_AWS_ACCOUNT_ID}:assumed-role/${approved_role_name}/"
+else
+  if [[ -z "${AWS_PROFILE:-}" ]]; then
+    echo "Refusing inventory: the exact browser-login AWS_PROFILE is required outside GitHub Actions."
+    exit 1
+  fi
+  if [[ "$AWS_PROFILE" != "$approved_profile" ]]; then
+    echo "Refusing inventory: AWS_PROFILE must be modelguard-bootstrap."
+    exit 1
+  fi
+  if [[ -n "${EXPECTED_AWS_ROLE_ARN:-}" ]]; then
+    echo "Refusing inventory: browser-profile mode forbids EXPECTED_AWS_ROLE_ARN."
+    exit 1
+  fi
+  aws_identity_arguments=(--profile "$AWS_PROFILE")
+  expected_caller_arn="arn:aws:iam::${EXPECTED_AWS_ACCOUNT_ID}:user/modelguard-bootstrap-admin"
+  if ! uv run --frozen --no-sync python -m scripts.human_aws_login verify \
+    --profile "$AWS_PROFILE" \
+    --region "$AWS_REGION" \
+    --expected-account-id "$EXPECTED_AWS_ACCOUNT_ID" >/dev/null 2>&1; then
+    echo "Refusing inventory: temporary browser-login credential verification failed."
+    exit 1
+  fi
+fi
+
+inventory_dir="$(mktemp -d)"
+inventory_temporary=""
+aws_error_file="$inventory_dir/aws-error.log"
+aws_output_file="$inventory_dir/aws-output.log"
+: > "$aws_error_file"
+: > "$aws_output_file"
+chmod 0600 -- "$aws_error_file"
+chmod 0600 -- "$aws_output_file"
+cleanup_inventory() {
+  if [[ -n "$inventory_temporary" ]]; then
+    rm -f -- "$inventory_temporary"
+  fi
+  rm -rf -- "$inventory_dir"
+}
+trap cleanup_inventory EXIT
+
+aws() {
+  local aws_status
+  if command aws --region "$AWS_REGION" "${aws_identity_arguments[@]}" "$@" \
+    > "$aws_output_file" 2> "$aws_error_file"; then
+    cat -- "$aws_output_file"
+    return 0
+  else
+    aws_status=$?
+  fi
+  echo "Refusing inventory: an AWS inventory query failed." >&2
+  return "$aws_status"
+}
+
+if ! caller_identity="$(aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json)"; then
+  exit 1
+fi
+if ! actual_account="$(jq -er '.Account | select(type == "string")' <<<"$caller_identity")" ||
+  ! actual_caller_arn="$(jq -er '.Arn | select(type == "string")' <<<"$caller_identity")"; then
+  echo "Refusing inventory: caller identity response is invalid."
+  exit 1
+fi
 if [[ "$actual_account" != "$EXPECTED_AWS_ACCOUNT_ID" ]]; then
   echo "Refusing inventory: caller account does not match EXPECTED_AWS_ACCOUNT_ID."
   exit 1
 fi
-configured_region="$(aws configure get region)"
-if [[ "$configured_region" != "$AWS_REGION" ]]; then
-  echo "Refusing inventory: configured AWS Region does not match AWS_REGION."
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  session_name="${actual_caller_arn#"$expected_caller_arn"}"
+  if [[ "$actual_caller_arn" != "$expected_caller_arn"* ||
+    ! "$session_name" =~ ^[A-Za-z0-9+=,.@_-]{2,64}$ ]]; then
+    echo "Refusing inventory: caller is not the exact approved GitHub OIDC role."
+    exit 1
+  fi
+elif [[ "$actual_caller_arn" != "$expected_caller_arn" ]]; then
+  echo "Refusing inventory: caller is not the exact approved non-root browser identity."
   exit 1
 fi
 
-inventory_dir="$(mktemp -d)"
-trap 'rm -rf -- "$inventory_dir"' EXIT
+inventory_parent="$(dirname -- "$INVENTORY_OUTPUT")"
+if [[ ! -e "$inventory_parent" && ! -L "$inventory_parent" ]]; then
+  inventory_grandparent="$(dirname -- "$inventory_parent")"
+  if [[ ! -d "$inventory_grandparent" || -L "$inventory_grandparent" ||
+    ! -O "$inventory_grandparent" ]] || ! mkdir -m 0700 -- "$inventory_parent"; then
+    echo "Refusing inventory: output parent could not be created safely."
+    exit 1
+  fi
+fi
+if [[ ! -d "$inventory_parent" || -L "$inventory_parent" || ! -O "$inventory_parent" ]]; then
+  echo "Refusing inventory: output parent must be an owner-controlled regular directory."
+  exit 1
+fi
+if [[ "$(stat -c '%a' -- "$inventory_parent" 2>/dev/null || true)" != "700" ]]; then
+  echo "Refusing inventory: output parent must already be owner-only."
+  exit 1
+fi
+if [[ -e "$INVENTORY_OUTPUT" || -L "$INVENTORY_OUTPUT" ]]; then
+  echo "Refusing inventory: output must be a new path."
+  exit 1
+fi
+
 prefix="modelguard-ai-demo"
 unique_prefix="$prefix-$EXPECTED_AWS_ACCOUNT_ID-$AWS_REGION"
 
@@ -194,7 +307,8 @@ aws logs describe-log-groups \
   --query 'logGroups[].arn' --output json > "$inventory_dir/log-groups.json"
 aws cloudwatch describe-alarms \
   --alarm-name-prefix "$prefix" \
-  --query 'MetricAlarms[].AlarmArn' --output json > "$inventory_dir/alarms.json"
+  --query '[MetricAlarms[].AlarmArn, CompositeAlarms[].AlarmArn][]' \
+  --output json > "$inventory_dir/alarms.json"
 aws sns list-topics \
   --query "Topics[?ends_with(TopicArn, ':$prefix-alerts')].TopicArn" \
   --output json > "$inventory_dir/sns-topics.json"
@@ -221,7 +335,11 @@ aws budgets describe-budgets \
   --query "Budgets[?BudgetName == '$prefix-monthly'].BudgetName" \
   --output json > "$inventory_dir/budgets.json"
 
+inventory_temporary="$(mktemp --tmpdir="$inventory_parent" '.post-destroy-inventory.XXXXXX')"
+chmod 0600 -- "$inventory_temporary"
 jq -n \
+  --arg account_id "$EXPECTED_AWS_ACCOUNT_ID" \
+  --arg region "$AWS_REGION" \
   --argjson tagged "$(jq '.ResourceTagMappingList' "$inventory_dir/tagged.json")" \
   --argjson ecs_clusters "$(cat "$inventory_dir/ecs-clusters.json")" \
   --argjson ecs_task_definitions_active "$(cat "$inventory_dir/ecs-task-definitions-active.json")" \
@@ -256,12 +374,17 @@ jq -n \
   --argjson workload_roles "$(cat "$inventory_dir/workload-roles.json")" \
   --argjson budgets "$(cat "$inventory_dir/budgets.json")" \
   '{
-    schema_version: "modelguard.post-destroy-inventory.v1",
+    schema_version: "modelguard.post-destroy-inventory.v2",
+    identity: {
+      account_id: $account_id,
+      region: $region,
+      project: "modelguard-ai",
+      environment: "demo"
+    },
     ResourceTagMappingList: $tagged,
     service_residuals: {
       ecs_clusters: $ecs_clusters,
       ecs_task_definitions_active: $ecs_task_definitions_active,
-      ecs_task_definitions_inactive: $ecs_task_definitions_inactive,
       ecs_services: $ecs_services,
       ecs_tasks: $ecs_tasks,
       load_balancers: $load_balancers,
@@ -289,11 +412,30 @@ jq -n \
       sns_topics: $sns_topics,
       sns_subscriptions: $sns_subscriptions,
       ssm_pointers: $ssm_pointers,
-      workload_roles: $workload_roles,
+      workload_roles: $workload_roles
+    },
+    retained_resources: {
       budgets: $budgets
+    },
+    nonbillable_metadata: {
+      ecs_task_definitions_inactive: $ecs_task_definitions_inactive
     }
-  }' > "$INVENTORY_OUTPUT"
+  }' > "$inventory_temporary"
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! ln -- "$inventory_temporary" "$INVENTORY_OUTPUT"; then
+  echo "Refusing inventory: owner-only evidence publication failed."
+  exit 1
+fi
+rm -f -- "$inventory_temporary"
+inventory_temporary=""
+if [[ ! -f "$INVENTORY_OUTPUT" || -L "$INVENTORY_OUTPUT" || ! -O "$INVENTORY_OUTPUT" ||
+  "$(stat -c '%a' -- "$INVENTORY_OUTPUT" 2>/dev/null || true)" != "600" ]]; then
+  echo "Refusing inventory: published evidence is not an owner-only regular file."
+  exit 1
+fi
+
 uv run --frozen --no-sync python "$repo_root/scripts/terraform_demo_guard.py" \
-  verify-inventory --input "$INVENTORY_OUTPUT"
+  verify-inventory \
+  --input "$INVENTORY_OUTPUT" \
+  --account-id "$EXPECTED_AWS_ACCOUNT_ID" \
+  --region "$AWS_REGION"

@@ -461,6 +461,29 @@ data "aws_iam_policy_document" "remote_state_deploy" {
     ]
     resources = ["${aws_s3_bucket.state.arn}/reviewed-plans/*"]
   }
+
+  statement {
+    sid       = "ListExactPhase10Evidence"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["phase-10-evidence/teardown/*"]
+    }
+  }
+
+  statement {
+    sid    = "WriteAndVerifyExactPhase10Evidence"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["${aws_s3_bucket.state.arn}/phase-10-evidence/teardown/*"]
+  }
 }
 
 data "aws_iam_policy_document" "ci_plan_read" {

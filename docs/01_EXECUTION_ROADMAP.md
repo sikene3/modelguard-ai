@@ -170,7 +170,7 @@ Afterward, run:
 
 ```bash
 terraform fmt -recursive infrastructure
-terraform -chdir=infrastructure/environments/demo init -backend=false
+terraform -chdir=infrastructure/environments/demo init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infrastructure/environments/demo validate
 make security-tools-bootstrap
 make security-scan

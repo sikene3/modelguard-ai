@@ -23,7 +23,10 @@ class RenderInputError(RuntimeError):
 def _load_pointer(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = parse_strict_json_bytes(path.read_bytes())
+    except (OSError, ValueError) as error:
+        raise RenderInputError("active_pointer_json_invalid") from error
     if not isinstance(value, dict):
         raise RenderInputError("active_pointer_root_not_object")
     return value
@@ -85,7 +88,7 @@ def _sha256(path: Path) -> str:
 def render_inputs(
     *,
     output_dir: Path,
-    stage: Literal["prerequisites", "activation"],
+    stage: Literal["prerequisites", "activation", "destroy"],
     account_id: str,
     region: str,
     owner_tag: str,
@@ -104,6 +107,7 @@ def render_inputs(
     budget_prerequisite_verified: bool = False,
     runtime_verification: dict[str, Any] | None = None,
     source_commit: str | None = None,
+    teardown_authorized: bool = False,
 ) -> dict[str, Path]:
     """Render ephemeral files and validate the complete non-secret deployment identity."""
 
@@ -111,6 +115,9 @@ def render_inputs(
         raise RenderInputError("owner_tag_invalid")
     refs = image_refs or {"api": None, "dashboard": None, "monitor": None}
     activate = stage == "activation"
+    destroy = stage == "destroy"
+    if teardown_authorized is not destroy:
+        raise RenderInputError("teardown_authorization_stage_mismatch")
     runtime_verified = _verify_runtime_evidence(
         runtime_verification,
         image_refs=refs,
@@ -119,7 +126,13 @@ def render_inputs(
     if activate and not runtime_verified:
         raise RenderInputError("activation_runtime_verification_missing")
     if not activate and runtime_verification is not None:
-        raise RenderInputError("prerequisite_runtime_verification_forbidden")
+        raise RenderInputError("dormant_runtime_verification_required")
+    if destroy and (
+        any(reference is not None for reference in refs.values())
+        or active_pointer is not None
+        or budget_prerequisite_verified
+    ):
+        raise RenderInputError("destroy_runtime_inputs_not_dormant")
     model_bucket = f"modelguard-ai-demo-{account_id}-{region}-models"
     preflight_payload = {
         "account_id": account_id,
@@ -134,6 +147,7 @@ def render_inputs(
         "alert_kms_key_arn": alert_kms_key_arn,
         "stage": stage,
         "activate_services": activate,
+        "teardown_authorized": teardown_authorized,
         "runtime_contract_verified": runtime_verified,
         "budget_prerequisite_verified": budget_prerequisite_verified,
         "alb_allowed_cidr": alb_allowed_cidr,
@@ -158,8 +172,9 @@ def render_inputs(
         "alert_kms_key_arn": alert_kms_key_arn,
         "alb_allowed_cidr": alb_allowed_cidr,
         "api_access_mode": access_mode,
-        "deployment_stage": stage,
+        "deployment_stage": "activation" if activate else "prerequisites",
         "activate_services": activate,
+        "teardown_authorized": teardown_authorized,
         "runtime_contract_verified": runtime_verified,
         "budget_prerequisite_verified": budget_prerequisite_verified,
         "availability_zones": [f"{region}a", f"{region}b"],
@@ -207,10 +222,18 @@ def _optional(value: str) -> str | None:
     return value or None
 
 
+def _safe_failure_reason(error: Exception) -> str:
+    if isinstance(error, OSError):
+        return "local_io_failed"
+    return str(error).splitlines()[0][:160]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="render-ci-terraform")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--stage", choices=("prerequisites", "activation"), required=True)
+    parser.add_argument(
+        "--stage", choices=("prerequisites", "activation", "destroy"), required=True
+    )
     parser.add_argument("--account-id", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--owner-tag", required=True)
@@ -235,13 +258,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--budget-prerequisite-verified", action="store_true")
     parser.add_argument("--runtime-verification-file", type=Path)
     parser.add_argument("--source-commit", default="")
+    parser.add_argument("--teardown-authorized", action="store_true")
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
     try:
-        stage = cast(Literal["prerequisites", "activation"], args.stage)
+        stage = cast(Literal["prerequisites", "activation", "destroy"], args.stage)
         access_mode = cast(Literal["https_token", "http_cidr_only"], args.access_mode)
         governance_mode = cast(Literal["team_protected", "solo_portfolio"], args.governance_mode)
         render_inputs(
@@ -269,11 +293,12 @@ def main() -> int:
             budget_prerequisite_verified=args.budget_prerequisite_verified,
             runtime_verification=_load_runtime_verification(args.runtime_verification_file),
             source_commit=_optional(args.source_commit),
+            teardown_authorized=args.teardown_authorized,
         )
         print(json.dumps({"status": "passed", "stage": stage}))
         return 0
     except (OSError, json.JSONDecodeError, ValidationError, RenderInputError) as error:
-        reason = str(error).splitlines()[0][:160]
+        reason = _safe_failure_reason(error)
         print(json.dumps({"status": "refused", "reason": reason}), file=sys.stderr)
         return 2
 

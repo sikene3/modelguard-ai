@@ -72,9 +72,11 @@ production approval model. Before it can be selected:
    repository variable changes. Keep the bounded `AutoDestroyDate`; it is a guardrail, not an
    unattended delete.
 
-The current repository is intentionally Private, empty remotely, Actions-disabled, has no remote,
-and has not configured these external controls. Therefore the local mode contract is implemented and
-tested, but solo deployment is not authorized or active by this code-only readiness work.
+The sanitized baseline passed the sealed Publication Audit, was pushed once to the authorized Public
+repository, and is protected by the exact active solo `main` ruleset and the three contract
+environments. Actions remain disabled. Repository variables, the customized OIDC template, matching
+AWS trust, and live deployment are still intentionally absent; those controls remain later Phase 10
+boundaries and must not be inferred from publication readiness.
 
 ## Upgrade path
 

@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 from datetime import UTC, date, datetime, timedelta
+from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
@@ -20,7 +21,14 @@ from scripts.notification_enrollment import (
     enroll_notifications,
     verify_notification_enrollment,
 )
-from scripts.plan_evidence import render_markdown, summarize_plan
+from scripts.plan_evidence import (
+    PlanEvidenceError,
+    load_terraform_show_json,
+    render_markdown,
+    summarize_plan,
+    verify_opaque_plan,
+    write_evidence_file,
+)
 from scripts.release_manifest import (
     ImageRelease,
     ImageReleaseManifest,
@@ -29,7 +37,14 @@ from scripts.release_manifest import (
     verify_manifest,
     verify_release_source,
 )
-from scripts.render_ci_terraform import RenderInputError, render_inputs
+from scripts.render_ci_terraform import (
+    RenderInputError,
+    _load_pointer,
+    render_inputs,
+)
+from scripts.render_ci_terraform import (
+    _safe_failure_reason as _render_failure_reason,
+)
 from scripts.secret_scan_policy import (
     SecretScanAllowlist,
     SecretScanPolicyError,
@@ -40,9 +55,22 @@ from scripts.terraform_demo_guard import (
     ActivePointer,
     GuardError,
     PlanManifest,
+    _backend_values,
+    classify_destroy_plan_source_state,
+    load_plan_manifest,
+    seal_plan,
     verify_active_pointer_binding,
+    verify_empty_managed_state,
+    verify_plan,
+    write_plan_manifest,
 )
-from scripts.verify_deployment_inputs import DeploymentInputError, verify_inputs
+from scripts.terraform_demo_guard import (
+    _load_json as _load_guard_json,
+)
+from scripts.terraform_demo_guard import (
+    _safe_failure_reason as _guard_failure_reason,
+)
+from scripts.verify_deployment_inputs import DeploymentInputError, _load_object, verify_inputs
 
 
 def _read(root: Path, relative: str) -> str:
@@ -367,11 +395,16 @@ def _pointer() -> dict[str, Any]:
     }
 
 
-def _plan_manifest() -> PlanManifest:
+def _plan_manifest(
+    *,
+    stage: Literal["prerequisites", "activation", "destroy"] = "prerequisites",
+    plan_sha256: str = "1" * 64,
+) -> PlanManifest:
+    activate_services = stage == "activation"
     return PlanManifest(
-        stage="prerequisites",
-        plan_filename="prerequisites.tfplan",
-        plan_sha256="1" * 64,
+        stage=stage,
+        plan_filename=f"{stage}.tfplan",
+        plan_sha256=plan_sha256,
         variable_file_sha256="2" * 64,
         backend_config_sha256="3" * 64,
         account_id="123456789012",
@@ -382,10 +415,391 @@ def _plan_manifest() -> PlanManifest:
         backend_key="modelguard-ai/demo/terraform.tfstate",
         workspace="default",
         git_commit="4" * 40,
-        activate_services=False,
+        owner_tag="modelguard-maintainers",
+        deployment_governance_mode="solo_portfolio",
+        activate_services=activate_services,
+        teardown_authorized=stage == "destroy",
+        source_activation_state="active" if stage == "destroy" else None,
         auto_destroy_date=date.today() + timedelta(days=7),
         sealed_at=datetime.now(tz=UTC),
     )
+
+
+def _rendered_tfvars(
+    *, stage: Literal["prerequisites", "activation", "destroy"], auto_destroy_date: date
+) -> dict[str, Any]:
+    activate = stage == "activation"
+    teardown = stage == "destroy"
+    values: dict[str, Any] = {
+        "activate_services": activate,
+        "alert_kms_key_arn": (
+            "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+        ),
+        "alb_allowed_cidr": "203.0.113.10/32",
+        "api_access_mode": "http_cidr_only",
+        "auto_destroy_date": auto_destroy_date.isoformat(),
+        "availability_zones": ["us-east-1a", "us-east-1b"],
+        "aws_account_id": "123456789012",
+        "aws_region": "us-east-1",
+        "backend_bucket_name": "modelguard-ai-terraform-state-123456789012-us-east-1",
+        "budget_prerequisite_verified": activate,
+        "deployment_governance_mode": "solo_portfolio",
+        "deployment_stage": "activation" if activate else "prerequisites",
+        "owner_tag": "modelguard-maintainers",
+        "permission_boundary_arn": (
+            "arn:aws:iam::123456789012:policy/modelguard-ai/bootstrap/"
+            "modelguard-ai-workload-boundary"
+        ),
+        "runtime_contract_verified": activate,
+        "teardown_authorized": teardown,
+    }
+    if activate:
+        registry = "123456789012.dkr.ecr.us-east-1.amazonaws.com/modelguard-ai/demo"
+        values.update(
+            {
+                "api_image_ref": f"{registry}/api@sha256:{'1' * 64}",
+                "dashboard_image_ref": f"{registry}/dashboard@sha256:{'2' * 64}",
+                "expected_model_manifest_sha256": "a" * 64,
+                "expected_model_object_version_ids": {
+                    filename: f"version-{index}"
+                    for index, filename in enumerate(
+                        (
+                            "baseline_profile.json",
+                            "checksums.sha256",
+                            "input_schema.json",
+                            "manifest.json",
+                            "metrics.json",
+                            "model.joblib",
+                            "threshold.json",
+                        ),
+                        start=1,
+                    )
+                },
+                "expected_model_version": "1.0.0",
+                "monitor_image_ref": f"{registry}/monitor@sha256:{'3' * 64}",
+            }
+        )
+    return values
+
+
+def _write_private_bytes(path: Path, payload: bytes) -> None:
+    path.write_bytes(payload)
+    path.chmod(0o600)
+
+
+def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
+    _write_private_bytes(
+        path,
+        (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
+
+
+def _write_private_backend(path: Path) -> None:
+    _write_private_bytes(
+        path,
+        (
+            b'bucket = "modelguard-ai-terraform-state-123456789012-us-east-1"\n'
+            b'key = "modelguard-ai/demo/terraform.tfstate"\n'
+            b'region = "us-east-1"\n'
+            b"encrypt = true\n"
+            b'kms_key_id = "arn:aws:kms:us-east-1:123456789012:'
+            b'key/00000000-0000-0000-0000-000000000000"\n'
+            b"use_lockfile = true\n"
+        ),
+    )
+
+
+def _clean_plan_repository(tmp_path: Path) -> tuple[Path, Path]:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    tracked = repository / "tracked.txt"
+    tracked.write_text("canonical\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-b", "main"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=ModelGuard Tests",
+            "-c",
+            "user.email=41898282+modelguard-tests@users.noreply.github.com",
+            "commit",
+            "-m",
+            "test: initialize source",
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    return repository, tracked
+
+
+def _guard_input_paths(
+    tmp_path: Path,
+    *,
+    plan_stage: Literal["prerequisites", "activation", "destroy"],
+    renderer_stage: Literal["prerequisites", "activation", "destroy"],
+    auto_destroy_date: date,
+) -> tuple[Path, Path, Path]:
+    plan = tmp_path / f"{plan_stage}.tfplan"
+    variables = tmp_path / f"{plan_stage}.tfvars.json"
+    backend = tmp_path / f"{plan_stage}.backend.hcl"
+    _write_private_bytes(plan, b"opaque-saved-plan")
+    _write_private_json(
+        variables,
+        _rendered_tfvars(stage=renderer_stage, auto_destroy_date=auto_destroy_date),
+    )
+    _write_private_backend(backend)
+    return plan, variables, backend
+
+
+def _write_fake_transfer_aws(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+capture = Path(os.environ["FAKE_AWS_CAPTURE"])
+with capture.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(arguments, separators=(",", ":")) + "\\n")
+if arguments[:2] != ["s3api", "get-object"]:
+    raise SystemExit(90)
+destination = Path(arguments[-1])
+destination.write_bytes(b"opaque-confidential-transfer")
+sys.stdout.write("{}")
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o700)
+
+
+def _confidential_transfer_environment(
+    *,
+    repository_root: Path,
+    tmp_path: Path,
+    transfer_directory: Path,
+) -> tuple[dict[str, str], Path]:
+    fake_aws = tmp_path / "bin" / "aws"
+    _write_fake_transfer_aws(fake_aws)
+    capture = tmp_path / "aws-transfer-calls.jsonl"
+    environment = os.environ.copy()
+    for name in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE"):
+        environment.pop(name, None)
+    environment.update(
+        {
+            "AWS_ACCOUNT_ID": "123456789012",
+            "AWS_REGION": "us-east-1",
+            "BACKEND_BUCKET": "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "BACKEND_KMS_KEY_ARN": (
+                "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+            ),
+            "FAKE_AWS_CAPTURE": str(capture),
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_RUN_ATTEMPT": "2",
+            "GITHUB_RUN_ID": "12345",
+            "PATH": f"{fake_aws.parent}:{environment['PATH']}",
+            "PLAN_STAGE": "prerequisites",
+            "TRANSFER_DIRECTORY": str(transfer_directory),
+            "UV_CACHE_DIR": str(repository_root / ".cache" / "uv"),
+        }
+    )
+    return environment, capture
+
+
+def _run_confidential_transfer(
+    *,
+    repository_root: Path,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(repository_root / "scripts/confidential_plan_transfer.sh"), "download"],
+        cwd=repository_root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _captured_transfer_calls(path: Path) -> list[list[str]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.parametrize("profile_name", ("AWS_PROFILE", "AWS_DEFAULT_PROFILE"))
+def test_confidential_download_refuses_any_profile_selection_before_aws(
+    repository_root: Path,
+    tmp_path: Path,
+    profile_name: str,
+) -> None:
+    parent = tmp_path / "private-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    transfer_directory = parent / "attempt-2"
+    environment, capture = _confidential_transfer_environment(
+        repository_root=repository_root,
+        tmp_path=tmp_path,
+        transfer_directory=transfer_directory,
+    )
+    environment[profile_name] = "modelguard-bootstrap"
+
+    completed = _run_confidential_transfer(
+        repository_root=repository_root,
+        environment=environment,
+    )
+
+    assert completed.returncode == 2
+    assert "AWS profile selection" in completed.stdout
+    assert completed.stderr == ""
+    assert not capture.exists()
+    assert not transfer_directory.exists()
+
+
+def test_confidential_download_creates_only_private_directory_and_files(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "private-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    transfer_directory = parent / "attempt-2"
+    environment, capture = _confidential_transfer_environment(
+        repository_root=repository_root,
+        tmp_path=tmp_path,
+        transfer_directory=transfer_directory,
+    )
+
+    completed = _run_confidential_transfer(
+        repository_root=repository_root,
+        environment=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "operation": "download",
+        "stage": "prerequisites",
+        "status": "passed",
+    }
+    assert completed.stderr == ""
+    assert not transfer_directory.is_symlink()
+    assert transfer_directory.is_dir()
+    assert transfer_directory.stat().st_uid == os.geteuid()
+    assert transfer_directory.stat().st_mode & 0o777 == 0o700
+    assert parent.stat().st_mode & 0o777 == 0o700
+    names = (
+        "prerequisites.tfplan",
+        "prerequisites.tfplan.identity.json",
+        "demo-ci.tfvars.json",
+        "backend.hcl",
+    )
+    for name in names:
+        path = transfer_directory / name
+        assert path.is_file()
+        assert not path.is_symlink()
+        assert path.stat().st_uid == os.geteuid()
+        assert path.stat().st_mode & 0o777 == 0o600
+    calls = _captured_transfer_calls(capture)
+    assert len(calls) == len(names)
+    for call, name in zip(calls, names, strict=True):
+        assert call == [
+            "s3api",
+            "get-object",
+            "--bucket",
+            "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "--key",
+            f"reviewed-plans/12345/2/prerequisites/{name}",
+            "--checksum-mode",
+            "ENABLED",
+            "--expected-bucket-owner",
+            "123456789012",
+            str(transfer_directory / name),
+        ]
+
+
+@pytest.mark.parametrize("existing_kind", ("directory_0755", "symlink"))
+def test_confidential_download_refuses_existing_target_without_mutating_it(
+    repository_root: Path,
+    tmp_path: Path,
+    existing_kind: str,
+) -> None:
+    parent = tmp_path / "private-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    transfer_directory = parent / "attempt-2"
+    symlink_target = tmp_path / "symlink-target"
+    if existing_kind == "directory_0755":
+        transfer_directory.mkdir(mode=0o755)
+        transfer_directory.chmod(0o755)
+    else:
+        symlink_target.mkdir(mode=0o700)
+        transfer_directory.symlink_to(symlink_target, target_is_directory=True)
+    environment, capture = _confidential_transfer_environment(
+        repository_root=repository_root,
+        tmp_path=tmp_path,
+        transfer_directory=transfer_directory,
+    )
+
+    completed = _run_confidential_transfer(
+        repository_root=repository_root,
+        environment=environment,
+    )
+
+    assert completed.returncode == 2
+    assert "transfer directory must be a new path" in completed.stdout
+    assert completed.stderr == ""
+    assert not capture.exists()
+    if existing_kind == "directory_0755":
+        assert transfer_directory.is_dir()
+        assert transfer_directory.stat().st_mode & 0o777 == 0o755
+    else:
+        assert transfer_directory.is_symlink()
+        assert symlink_target.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("parent_kind", ("directory_0755", "symlink", "missing"))
+def test_confidential_download_requires_existing_private_real_parent(
+    repository_root: Path,
+    tmp_path: Path,
+    parent_kind: str,
+) -> None:
+    parent = tmp_path / "transfer-parent"
+    real_parent = tmp_path / "real-parent"
+    if parent_kind == "directory_0755":
+        parent.mkdir(mode=0o755)
+        parent.chmod(0o755)
+    elif parent_kind == "symlink":
+        real_parent.mkdir(mode=0o700)
+        real_parent.chmod(0o700)
+        parent.symlink_to(real_parent, target_is_directory=True)
+    transfer_directory = parent / "attempt-2"
+    environment, capture = _confidential_transfer_environment(
+        repository_root=repository_root,
+        tmp_path=tmp_path,
+        transfer_directory=transfer_directory,
+    )
+
+    completed = _run_confidential_transfer(
+        repository_root=repository_root,
+        environment=environment,
+    )
+
+    assert completed.returncode == 2
+    assert "parent directory is not owner-only" in completed.stdout
+    assert completed.stderr == ""
+    assert not capture.exists()
+    assert not transfer_directory.exists()
+    if parent_kind == "directory_0755":
+        assert parent.stat().st_mode & 0o777 == 0o755
+    elif parent_kind == "symlink":
+        assert parent.is_symlink()
+        assert real_parent.stat().st_mode & 0o777 == 0o700
+    else:
+        assert not parent.exists()
 
 
 def test_required_workflows_parse_and_external_actions_are_commit_pinned(
@@ -735,48 +1149,1301 @@ def test_history_secret_policy_requires_exact_owned_unexpired_scope(tmp_path: Pa
         )
 
 
-def test_plan_summary_never_copies_before_after_or_sensitive_values() -> None:
-    secret = "sensitive-value-that-must-not-appear"
-    raw_plan = {
+def _required_plan_tags(manifest: PlanManifest) -> dict[str, str]:
+    return {
+        "AutoDestroyDate": manifest.auto_destroy_date.isoformat(),
+        "Environment": "demo",
+        "ManagedBy": "Terraform",
+        "Owner": manifest.owner_tag,
+        "Ownership": "demo",
+        "Project": "modelguard-ai",
+    }
+
+
+def _plan_change(
+    manifest: PlanManifest,
+    *,
+    address: str = "aws_ecs_cluster.this",
+    resource_type: str = "aws_ecs_cluster",
+    actions: list[str] | None = None,
+) -> dict[str, Any]:
+    action_list = actions or ["create"]
+    values_key = "before" if manifest.stage == "destroy" else "after"
+    return {
+        "address": address,
+        "mode": "managed",
+        "provider_name": "registry.terraform.io/hashicorp/aws",
+        "type": resource_type,
+        "change": {
+            "actions": action_list,
+            values_key: {"tags_all": _required_plan_tags(manifest)},
+        },
+    }
+
+
+_STAGE_ALARM_ADDRESSES = (
+    "aws_cloudwatch_metric_alarm.alb_api_5xx",
+    "aws_cloudwatch_metric_alarm.alb_api_latency",
+    'aws_cloudwatch_metric_alarm.alb_healthy_hosts["api"]',
+    'aws_cloudwatch_metric_alarm.alb_healthy_hosts["dashboard"]',
+    "aws_cloudwatch_metric_alarm.api_event_write_failures",
+    "aws_cloudwatch_metric_alarm.firehose_delivery",
+    "aws_cloudwatch_metric_alarm.monitor_completion",
+    "aws_cloudwatch_metric_alarm.monitor_input",
+    "aws_cloudwatch_metric_alarm.monitor_predictions",
+    "aws_cloudwatch_metric_alarm.monitor_rejected",
+    "aws_cloudwatch_metric_alarm.monitor_report_freshness",
+    "aws_cloudwatch_metric_alarm.scheduler_submission_failures",
+)
+
+
+def _stage_contract_changes(manifest: PlanManifest) -> list[dict[str, Any]]:
+    if manifest.stage == "destroy":
+        changes: list[dict[str, Any]] = []
+        if manifest.source_activation_state in {"active", "dormant"}:
+            desired_count = 1 if manifest.source_activation_state == "active" else 0
+            for component in ("api", "dashboard"):
+                service = _plan_change(
+                    manifest,
+                    address=f"module.{component}_service.aws_ecs_service.this",
+                    resource_type="aws_ecs_service",
+                    actions=["delete"],
+                )
+                service["change"]["before"]["desired_count"] = desired_count
+                changes.append(service)
+            schedule = _plan_change(
+                manifest,
+                address="aws_scheduler_schedule.monitor",
+                resource_type="aws_scheduler_schedule",
+                actions=["delete"],
+            )
+            schedule["change"]["before"]["state"] = (
+                "ENABLED" if manifest.source_activation_state == "active" else "DISABLED"
+            )
+            changes.append(schedule)
+        guard = _plan_change(
+            manifest,
+            address="terraform_data.deployment_guard",
+            resource_type="terraform_data",
+            actions=["delete"],
+        )
+        guard["provider_name"] = "terraform.io/builtin/terraform"
+        guard["change"]["before"]["input"] = {
+            "deployment_governance_mode": manifest.deployment_governance_mode,
+            "deployment_stage": "activation",
+            "environment": manifest.environment,
+            "project": manifest.project,
+        }
+        changes.append(guard)
+        return changes
+    action = ["update"] if manifest.stage == "activation" else ["create"]
+    desired_count = 1 if manifest.stage == "activation" else 0
+    changes: list[dict[str, Any]] = []
+    for component in ("api", "dashboard"):
+        change = _plan_change(
+            manifest,
+            address=f"module.{component}_service.aws_ecs_service.this",
+            resource_type="aws_ecs_service",
+            actions=action,
+        )
+        change["change"]["after"]["desired_count"] = desired_count
+        changes.append(change)
+    schedule = _plan_change(
+        manifest,
+        address="aws_scheduler_schedule.monitor",
+        resource_type="aws_scheduler_schedule",
+        actions=action,
+    )
+    schedule["change"]["after"]["state"] = (
+        "ENABLED" if manifest.stage == "activation" else "DISABLED"
+    )
+    changes.append(schedule)
+    topic = f"arn:aws:sns:{manifest.region}:{manifest.account_id}:modelguard-ai-demo-alerts"
+    expected_actions = [topic] if manifest.stage == "activation" else []
+    for address in _STAGE_ALARM_ADDRESSES:
+        alarm = _plan_change(
+            manifest,
+            address=address,
+            resource_type="aws_cloudwatch_metric_alarm",
+            actions=action,
+        )
+        alarm["change"]["after"].update(
+            {
+                "actions_enabled": manifest.stage == "activation",
+                "alarm_actions": list(expected_actions),
+                "insufficient_data_actions": [],
+                "ok_actions": list(expected_actions),
+            }
+        )
+        changes.append(alarm)
+    if manifest.stage == "activation":
+        task_addresses = {
+            "api": "module.api_service.aws_ecs_task_definition.this",
+            "dashboard": "module.dashboard_service.aws_ecs_task_definition.this",
+            "monitor": "aws_ecs_task_definition.monitor",
+        }
+        for component, address in task_addresses.items():
+            task = _plan_change(
+                manifest,
+                address=address,
+                resource_type="aws_ecs_task_definition",
+                actions=["delete", "create"],
+            )
+            task["change"]["after"]["container_definitions"] = json.dumps(
+                [
+                    {
+                        "image": (
+                            f"{manifest.account_id}.dkr.ecr.{manifest.region}.amazonaws.com/"
+                            f"modelguard-ai/demo/{component}@sha256:{'1' * 64}"
+                        ),
+                        "name": component,
+                    }
+                ]
+            )
+            changes.append(task)
+    return changes
+
+
+def _show_plan(
+    manifest: PlanManifest,
+    *changes: dict[str, Any],
+    output_changes: dict[str, Any] | None = None,
+    include_stage_contract: bool = True,
+) -> dict[str, Any]:
+    combined: dict[str, dict[str, Any]] = {}
+    if include_stage_contract:
+        combined.update({item["address"]: item for item in _stage_contract_changes(manifest)})
+    combined.update({item["address"]: item for item in changes})
+    return {
+        "applyable": True,
+        "complete": True,
+        "errored": False,
         "format_version": "1.2",
         "terraform_version": "1.10.5",
-        "resource_changes": [
-            {
-                "address": "aws_budgets_budget.demo",
-                "provider_name": "registry.terraform.io/hashicorp/aws",
-                "type": "aws_budgets_budget",
-                "change": {
-                    "actions": ["update"],
-                    "before": {"email": secret},
-                    "after": {"email": secret},
-                    "after_sensitive": {"email": True},
-                },
-            }
-        ],
-        "output_changes": {
-            "example": {"actions": ["update"], "after": secret, "after_sensitive": True}
-        },
-        "configuration": {"root_module": {"secret": secret}},
+        "resource_changes": list(combined.values()),
+        "resource_drift": [],
+        "output_changes": output_changes or {},
     }
-    summary = summarize_plan(
-        raw_plan,
-        _plan_manifest(),
+
+
+def _summarize(plan: dict[str, Any], manifest: PlanManifest) -> dict[str, Any]:
+    return summarize_plan(
+        plan,
+        manifest,
         repository="owner/repository",
         run_id="123",
         run_attempt="1",
         workflow_ref="owner/repository/.github/workflows/deploy-demo.yml@refs/heads/main",
     )
+
+
+def test_plan_summary_never_copies_before_after_tags_or_sensitive_values() -> None:
+    secret = "sensitive-value-that-must-not-appear"
+    manifest = _plan_manifest()
+    change = _plan_change(manifest)
+    change["change"]["before"] = {"private": secret}
+    change["change"]["after"]["private"] = secret
+    change["change"]["after_sensitive"] = {"private": True}
+    raw_plan = _show_plan(
+        manifest,
+        change,
+        output_changes={
+            "activation_state": {
+                "actions": ["create"],
+                "after": secret,
+                "after_sensitive": True,
+            }
+        },
+    )
+    raw_plan["configuration"] = {"root_module": {"private": secret}}
+    summary = _summarize(raw_plan, manifest)
     rendered = json.dumps(summary) + render_markdown(summary)
     assert secret not in rendered
     assert "before" not in summary["resource_changes"][0]
-    assert summary["action_counts"] == {"update": 1}
+    assert "tags" not in summary["resource_changes"][0]
+    assert summary["action_counts"]["create"] >= 1
+    assert summary["contract_attestations"] == {
+        "alarm_action_boundary_verified": True,
+        "required_stage_addresses_verified": True,
+        "runtime_desired_counts_verified": True,
+        "scheduler_state_verified": True,
+    }
+    assert all(isinstance(value, bool) for value in summary["contract_attestations"].values())
     assert summary["identity"]["activate_services"] is False
     assert summary["identity"]["account_id_masked"] == "********9012"
     assert "123456789012" not in rendered
     assert "modelguard-ai-terraform-state-123456789012-us-east-1" not in rendered
     assert "backend_bucket" not in summary["identity"]
     assert "backend_key" not in summary["identity"]
-    assert "AutoDestroyDate" in render_markdown(summary)
+    markdown = render_markdown(summary)
+    assert "AutoDestroyDate" in markdown
+    assert "## Contract attestations" in markdown
+    assert "`runtime_desired_counts_verified`: `true`" in markdown
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (
+            {
+                "address": "aws_budgets_budget.demo",
+                "mode": "managed",
+                "provider_name": "registry.terraform.io/hashicorp/aws",
+                "type": "aws_budgets_budget",
+                "change": {"actions": ["create"], "after": {}},
+            },
+            "budget_resource_forbidden",
+        ),
+        (
+            {
+                "address": "aws_s3_bucket.unrelated",
+                "mode": "managed",
+                "provider_name": "registry.terraform.io/hashicorp/aws",
+                "type": "aws_s3_bucket",
+                "change": {"actions": ["create"], "after": {}},
+            },
+            "resource_not_allowlisted",
+        ),
+    ],
+)
+def test_plan_summary_forbids_budget_and_unrelated_resources(
+    change: dict[str, Any], reason: str
+) -> None:
+    manifest = _plan_manifest()
+    with pytest.raises(PlanEvidenceError, match=reason):
+        _summarize(_show_plan(manifest, change), manifest)
+
+
+def test_plan_summary_requires_exact_demo_tags_and_rejects_non_destroy_delete() -> None:
+    manifest = _plan_manifest()
+    missing_tags = _plan_change(manifest)
+    missing_tags["change"]["after"] = {}
+    with pytest.raises(PlanEvidenceError, match="required_tags_missing"):
+        _summarize(_show_plan(manifest, missing_tags), manifest)
+
+    wrong_tags = _plan_change(manifest)
+    wrong_tags["change"]["after"]["tags_all"]["Project"] = "other"
+    with pytest.raises(PlanEvidenceError, match="required_tags_mismatch"):
+        _summarize(_show_plan(manifest, wrong_tags), manifest)
+
+    missing_owner = _plan_change(manifest)
+    del missing_owner["change"]["after"]["tags_all"]["Owner"]
+    with pytest.raises(PlanEvidenceError, match="required_tags_mismatch"):
+        _summarize(_show_plan(manifest, missing_owner), manifest)
+
+    wrong_owner = _plan_change(manifest)
+    wrong_owner["change"]["after"]["tags_all"]["Owner"] = "another-owner"
+    with pytest.raises(PlanEvidenceError, match="required_tags_mismatch"):
+        _summarize(_show_plan(manifest, wrong_owner), manifest)
+
+    deletion = _plan_change(manifest, actions=["delete"])
+    with pytest.raises(PlanEvidenceError, match="non_destroy_delete_forbidden"):
+        _summarize(_show_plan(manifest, deletion), manifest)
+
+
+def test_plan_summary_allows_only_task_definition_replacement_and_destroy_deletion() -> None:
+    activation = _plan_manifest(stage="activation")
+    summary = _summarize(_show_plan(activation), activation)
+    assert summary["action_counts"]["delete/create"] == 3
+
+    forbidden_replacement = _plan_change(
+        activation,
+        address="aws_ecs_cluster.this",
+        actions=["delete", "create"],
+    )
+    with pytest.raises(PlanEvidenceError, match="non_destroy_delete_forbidden"):
+        _summarize(_show_plan(activation, forbidden_replacement), activation)
+
+    destroy = _plan_manifest(stage="destroy")
+    deletion = _plan_change(destroy, actions=["delete"])
+    assert _summarize(_show_plan(destroy, deletion), destroy)["action_counts"] == {"delete": 5}
+    with pytest.raises(PlanEvidenceError, match="destroy_action_forbidden"):
+        _summarize(_show_plan(destroy, _plan_change(destroy, actions=["create"])), destroy)
+
+
+def test_destroy_plan_requires_nonempty_managed_delete_only_actions() -> None:
+    manifest = _plan_manifest(stage="destroy")
+    managed_noop = _plan_change(manifest, actions=["no-op"])
+    with pytest.raises(PlanEvidenceError, match="destroy_action_forbidden"):
+        _summarize(_show_plan(manifest, managed_noop), manifest)
+
+    deletion = _plan_change(manifest, actions=["delete"])
+    mixed_noop = _plan_change(
+        manifest,
+        address="aws_sns_topic.alerts",
+        resource_type="aws_sns_topic",
+        actions=["no-op"],
+    )
+    with pytest.raises(PlanEvidenceError, match="destroy_action_forbidden"):
+        _summarize(_show_plan(manifest, deletion, mixed_noop), manifest)
+
+    data_read = {
+        "address": "data.aws_caller_identity.current",
+        "mode": "data",
+        "provider_name": "registry.terraform.io/hashicorp/aws",
+        "type": "aws_caller_identity",
+        "change": {"actions": ["read"], "after": {}},
+    }
+    with pytest.raises(PlanEvidenceError, match="destroy_managed_delete_missing"):
+        _summarize(_show_plan(manifest, data_read, include_stage_contract=False), manifest)
+    summary = _summarize(_show_plan(manifest, deletion, data_read), manifest)
+    assert summary["action_counts"] == {"delete": 5, "read": 1}
+
+    unauthorized = manifest.model_copy(update={"teardown_authorized": False})
+    with pytest.raises(PlanEvidenceError, match="destroy_authorization_invalid"):
+        _summarize(
+            _show_plan(unauthorized, _plan_change(unauthorized, actions=["delete"])), unauthorized
+        )
+
+
+def test_destroy_plan_accepts_bounded_deposed_instances_without_emitting_keys() -> None:
+    manifest = _plan_manifest(stage="destroy")
+    current = _plan_change(manifest, actions=["delete"])
+    deposed = _plan_change(manifest, actions=["delete"])
+    deposed["deposed"] = "deadbeef"
+    plan = _show_plan(manifest, current)
+    plan["resource_changes"].append(deposed)
+    summary = _summarize(plan, manifest)
+    rendered = json.dumps(summary) + render_markdown(summary)
+    assert summary["action_counts"] == {"delete": 6}
+    assert summary["deposed_delete_count"] == 1
+    assert summary["contract_attestations"]["deposed_managed_deletes_verified"] is True
+    assert "deadbeef" not in rendered
+    assert all("deposed" not in change for change in summary["resource_changes"])
+
+    duplicate = _show_plan(manifest, current)
+    duplicate["resource_changes"].extend((deposed, deposed))
+    with pytest.raises(PlanEvidenceError, match="resource_address_duplicate"):
+        _summarize(duplicate, manifest)
+
+
+def test_destroy_source_state_is_derived_from_plan_before_values_and_exactly_bound() -> None:
+    active = _plan_manifest(stage="destroy")
+    active_plan = _show_plan(active)
+    assert classify_destroy_plan_source_state(active_plan) == "active"
+
+    dormant = active.model_copy(update={"source_activation_state": "dormant"})
+    dormant_plan = _show_plan(dormant)
+    assert classify_destroy_plan_source_state(dormant_plan) == "dormant"
+
+    partial = active.model_copy(update={"source_activation_state": "mixed_or_partial"})
+    partial_plan = _show_plan(partial, _plan_change(partial, actions=["delete"]))
+    assert classify_destroy_plan_source_state(partial_plan) == "mixed_or_partial"
+    assert (
+        _summarize(partial_plan, partial)["contract_attestations"][
+            "destroy_source_activation_boundary_verified"
+        ]
+        is True
+    )
+
+    with pytest.raises(PlanEvidenceError, match="destroy_source_state_mismatch"):
+        _summarize(active_plan, partial)
+    with pytest.raises(PlanEvidenceError, match="destroy_source_state_mismatch"):
+        _summarize(dormant_plan, partial)
+
+    missing = _show_plan(active)
+    missing["resource_changes"] = [
+        item
+        for item in missing["resource_changes"]
+        if item["address"] != "module.api_service.aws_ecs_service.this"
+    ]
+    assert classify_destroy_plan_source_state(missing) == "mixed_or_partial"
+
+    deposed_only = _show_plan(active)
+    for item in deposed_only["resource_changes"]:
+        if item["address"] == "module.api_service.aws_ecs_service.this":
+            item["deposed"] = "opaque"
+    assert classify_destroy_plan_source_state(deposed_only) == "mixed_or_partial"
+
+    duplicate = _show_plan(active)
+    duplicate["resource_changes"].append(
+        next(
+            item.copy()
+            for item in duplicate["resource_changes"]
+            if item["address"] == "module.api_service.aws_ecs_service.this"
+        )
+    )
+    with pytest.raises(GuardError, match="source_address_duplicate"):
+        classify_destroy_plan_source_state(duplicate)
+
+
+def test_destroy_source_state_accepts_bounded_mixed_state_but_rejects_invalid_values() -> None:
+    active = _plan_manifest(stage="destroy")
+    mixed = active.model_copy(update={"source_activation_state": "mixed_or_partial"})
+    plan = _show_plan(active)
+    dashboard = next(
+        item
+        for item in plan["resource_changes"]
+        if item["address"] == "module.dashboard_service.aws_ecs_service.this"
+    )
+    dashboard["change"]["before"]["desired_count"] = 0
+    assert classify_destroy_plan_source_state(plan) == "mixed_or_partial"
+    assert _summarize(plan, mixed)["identity"]["source_activation_state"] == ("mixed_or_partial")
+
+    dashboard["change"]["before"]["desired_count"] = 2
+    assert _summarize(plan, mixed)["identity"]["source_activation_state"] == ("mixed_or_partial")
+    dashboard["change"]["before"]["desired_count"] = -1
+    with pytest.raises(PlanEvidenceError, match="destroy_partial_state_invalid"):
+        _summarize(plan, mixed)
+
+    with pytest.raises(GuardError, match="root_not_object"):
+        classify_destroy_plan_source_state([])
+    with pytest.raises(GuardError, match="resource_changes_invalid"):
+        classify_destroy_plan_source_state({"resource_changes": {}})
+    with pytest.raises(GuardError, match="resource_change_invalid"):
+        classify_destroy_plan_source_state({"resource_changes": ["private-value"]})
+
+
+def test_destroy_allows_only_exact_owned_tagged_drift_and_never_emits_values() -> None:
+    manifest = _plan_manifest(stage="destroy")
+    drift = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["update"],
+    )
+    drift["change"]["before"]["private"] = "must-not-leak"
+    plan = _show_plan(manifest)
+    plan["resource_drift"] = [drift]
+    summary = _summarize(plan, manifest)
+    rendered = json.dumps(summary) + render_markdown(summary)
+    assert summary["drift_change_count"] == 1
+    assert summary["drift_changes"] == [
+        {
+            "address": "aws_ecs_cluster.this",
+            "actions": ["update"],
+            "provider": "registry.terraform.io/hashicorp/aws",
+            "resource_type": "aws_ecs_cluster",
+        }
+    ]
+    assert summary["contract_attestations"]["destroy_owned_drift_boundary_verified"] is True
+    assert "must-not-leak" not in rendered
+
+    untagged = _show_plan(manifest)
+    untagged_drift = _plan_change(manifest, actions=["update"])
+    untagged_drift["change"]["before"] = {}
+    untagged["resource_drift"] = [untagged_drift]
+    with pytest.raises(PlanEvidenceError, match="required_tags_missing"):
+        _summarize(untagged, manifest)
+
+    unrelated = _show_plan(manifest)
+    unrelated["resource_drift"] = [
+        {
+            "address": "aws_s3_bucket.unrelated",
+            "mode": "managed",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "type": "aws_s3_bucket",
+            "change": {"actions": ["update"], "before": {}},
+        }
+    ]
+    with pytest.raises(PlanEvidenceError, match="drift_resource_not_allowlisted"):
+        _summarize(unrelated, manifest)
+
+    prerequisite = _plan_manifest()
+    forbidden = _show_plan(prerequisite)
+    forbidden["resource_drift"] = [_plan_change(prerequisite, actions=["update"])]
+    with pytest.raises(PlanEvidenceError, match="resource_drift_present"):
+        _summarize(forbidden, prerequisite)
+
+
+def test_destroy_governance_is_bound_when_guard_state_exists_and_absence_is_recoverable() -> None:
+    manifest = _plan_manifest(stage="destroy")
+    plan = _show_plan(manifest)
+    summary = _summarize(plan, manifest)
+    assert summary["identity"]["deployment_governance_mode"] == "solo_portfolio"
+    assert "Deployment governance mode: `solo_portfolio`" in render_markdown(summary)
+
+    guard = next(
+        item
+        for item in plan["resource_changes"]
+        if item["address"] == "terraform_data.deployment_guard"
+    )
+    guard["change"]["before"]["input"]["deployment_governance_mode"] = "team_protected"
+    with pytest.raises(PlanEvidenceError, match="destroy_governance_state_mismatch"):
+        _summarize(plan, manifest)
+
+    partial_plan = _show_plan(manifest)
+    partial_plan["resource_changes"] = [
+        item
+        for item in partial_plan["resource_changes"]
+        if item["address"] != "terraform_data.deployment_guard"
+    ]
+    assert (
+        _summarize(partial_plan, manifest)["contract_attestations"][
+            "destroy_source_governance_boundary_verified"
+        ]
+        is True
+    )
+
+
+def test_empty_managed_state_guard_rejects_managed_or_malformed_state() -> None:
+    state: dict[str, Any] = {
+        "version": 4,
+        "terraform_version": "1.10.5",
+        "serial": 7,
+        "lineage": "00000000-0000-0000-0000-000000000000",
+        "resources": [{"mode": "data"}],
+    }
+    verify_empty_managed_state(state)
+    verify_empty_managed_state({**state, "resources": []})
+
+    with pytest.raises(GuardError, match="managed_resources_remain"):
+        verify_empty_managed_state({**state, "resources": [{"mode": "managed"}]})
+    with pytest.raises(GuardError, match="resource_invalid"):
+        verify_empty_managed_state({**state, "resources": [{"mode": "unknown"}]})
+    with pytest.raises(GuardError, match="identity_invalid"):
+        verify_empty_managed_state({"resources": []})
+
+
+@pytest.mark.parametrize("deposed", ("", "contains space", "x" * 65, None, 7))
+def test_plan_summary_rejects_malformed_or_non_destroy_deposed_keys(deposed: Any) -> None:
+    destroy = _plan_manifest(stage="destroy")
+    malformed = _plan_change(destroy, actions=["delete"])
+    malformed["deposed"] = deposed
+    with pytest.raises(PlanEvidenceError, match="deposed_key_invalid"):
+        _summarize(_show_plan(destroy, malformed), destroy)
+
+    prerequisite = _plan_manifest()
+    forbidden = _plan_change(prerequisite)
+    forbidden["deposed"] = "deadbeef"
+    with pytest.raises(PlanEvidenceError, match="deposed_forbidden"):
+        _summarize(_show_plan(prerequisite, forbidden), prerequisite)
+
+
+def test_plan_summary_enforces_exact_prerequisite_and_activation_action_domains() -> None:
+    prerequisite = _plan_manifest()
+    prerequisite_update = _plan_change(
+        prerequisite,
+        address="module.api_service.aws_ecs_service.this",
+        resource_type="aws_ecs_service",
+        actions=["update"],
+    )
+    prerequisite_update["change"]["after"]["desired_count"] = 0
+    with pytest.raises(PlanEvidenceError, match="prerequisite_action_forbidden"):
+        _summarize(_show_plan(prerequisite, prerequisite_update), prerequisite)
+
+    activation = _plan_manifest(stage="activation")
+    forbidden_create = _plan_change(activation, actions=["create"])
+    with pytest.raises(PlanEvidenceError, match="activation_action_forbidden"):
+        _summarize(_show_plan(activation, forbidden_create), activation)
+    forbidden_update = _plan_change(activation, actions=["update"])
+    with pytest.raises(PlanEvidenceError, match="activation_action_forbidden"):
+        _summarize(_show_plan(activation, forbidden_update), activation)
+
+    scheduler_policy = _plan_change(
+        activation,
+        address="aws_iam_role_policy.scheduler",
+        resource_type="aws_iam_role_policy",
+        actions=["update"],
+    )
+    summary = _summarize(_show_plan(activation, scheduler_policy), activation)
+    assert summary["action_counts"]["update"] >= 1
+
+    deployment_guard = _plan_change(
+        activation,
+        address="terraform_data.deployment_guard",
+        resource_type="terraform_data",
+        actions=["update"],
+    )
+    deployment_guard["provider_name"] = "terraform.io/builtin/terraform"
+    assert (
+        _summarize(_show_plan(activation, deployment_guard), activation)["action_counts"]["update"]
+        >= 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("stage", "output_actions"),
+    [
+        ("prerequisites", ["update"]),
+        ("activation", ["create"]),
+        ("destroy", ["update"]),
+    ],
+)
+def test_plan_summary_enforces_stage_specific_output_actions(
+    stage: Literal["prerequisites", "activation", "destroy"],
+    output_actions: list[str],
+) -> None:
+    manifest = _plan_manifest(stage=stage)
+    with pytest.raises(PlanEvidenceError, match="output_action_forbidden"):
+        _summarize(
+            _show_plan(
+                manifest,
+                output_changes={
+                    "activation_state": {
+                        "actions": output_actions,
+                        "after_sensitive": False,
+                    }
+                },
+            ),
+            manifest,
+        )
+
+
+def test_plan_summary_proves_stage_runtime_alarm_and_image_contracts() -> None:
+    prerequisite = _plan_manifest()
+    nonempty_actions = _show_plan(prerequisite)
+    alarm = next(
+        item
+        for item in nonempty_actions["resource_changes"]
+        if item["address"] == "aws_cloudwatch_metric_alarm.alb_api_5xx"
+    )
+    alarm["change"]["after"]["alarm_actions"] = ["arn:aws:sns:us-east-1:000000000000:x"]
+    with pytest.raises(PlanEvidenceError, match="alarm_action_boundary_mismatch"):
+        _summarize(nonempty_actions, prerequisite)
+
+    missing_schedule = _show_plan(prerequisite)
+    missing_schedule["resource_changes"] = [
+        item
+        for item in missing_schedule["resource_changes"]
+        if item["address"] != "aws_scheduler_schedule.monitor"
+    ]
+    with pytest.raises(PlanEvidenceError, match="required_address_missing"):
+        _summarize(missing_schedule, prerequisite)
+
+    wrong_count = _show_plan(prerequisite)
+    service = next(
+        item
+        for item in wrong_count["resource_changes"]
+        if item["address"] == "module.api_service.aws_ecs_service.this"
+    )
+    service["change"]["after"]["desired_count"] = 1
+    with pytest.raises(PlanEvidenceError, match="ecs_desired_count_mismatch"):
+        _summarize(wrong_count, prerequisite)
+
+    activation = _plan_manifest(stage="activation")
+    wrong_image = _show_plan(activation)
+    task = next(
+        item
+        for item in wrong_image["resource_changes"]
+        if item["address"] == "module.api_service.aws_ecs_task_definition.this"
+    )
+    task["change"]["after"]["container_definitions"] = json.dumps(
+        [{"name": "api", "image": "untrusted:latest"}]
+    )
+    with pytest.raises(PlanEvidenceError, match="task_image_identity_mismatch"):
+        _summarize(wrong_image, activation)
+
+    summary = _summarize(_show_plan(activation), activation)
+    assert summary["contract_attestations"]["immutable_task_image_digests_verified"] is True
+    assert all(isinstance(value, bool) for value in summary["contract_attestations"].values())
+
+
+@pytest.mark.parametrize(
+    ("address", "resource_type"),
+    [
+        ("aws_lb_listener.http_demo[1]", "aws_lb_listener"),
+        ('module.data_plane.aws_s3_bucket.this["extra"]', "aws_s3_bucket"),
+        ('module.data_plane.aws_ecr_repository.this["extra"]', "aws_ecr_repository"),
+        ('module.network.aws_subnet.public["us-east-1c"]', "aws_subnet"),
+        (
+            'module.network.aws_vpc_security_group_egress_rule.task_https["extra"]',
+            "aws_vpc_security_group_egress_rule",
+        ),
+        ("data.aws_ssm_parameter.active_current[1]", "aws_ssm_parameter"),
+    ],
+)
+def test_plan_summary_rejects_every_out_of_domain_instance_key(
+    address: str, resource_type: str
+) -> None:
+    manifest = _plan_manifest()
+    invalid = _plan_change(manifest, address=address, resource_type=resource_type)
+    if address.startswith("data."):
+        invalid["mode"] = "data"
+        invalid["change"]["actions"] = ["read"]
+    with pytest.raises(PlanEvidenceError, match="resource_not_allowlisted"):
+        _summarize(_show_plan(manifest, invalid), manifest)
+
+
+def test_plan_summary_rejects_duplicate_resource_and_output_addresses() -> None:
+    manifest = _plan_manifest()
+    duplicate = _show_plan(manifest)
+    duplicate["resource_changes"].append(duplicate["resource_changes"][0])
+    with pytest.raises(PlanEvidenceError, match="resource_address_duplicate"):
+        _summarize(duplicate, manifest)
+
+    duplicate_output_json = StringIO(
+        '{"output_changes":{"activation_state":{},"activation_state":{}}}'
+    )
+    with pytest.raises(PlanEvidenceError, match="plan_json_duplicate_key"):
+        load_terraform_show_json(duplicate_output_json)
+
+
+def test_plan_evidence_binds_the_opaque_saved_plan_digest(tmp_path: Path) -> None:
+    plan = tmp_path / "prerequisites.tfplan"
+    plan.write_bytes(b"opaque-saved-plan")
+    plan.chmod(0o600)
+    manifest = _plan_manifest(plan_sha256=hashlib.sha256(plan.read_bytes()).hexdigest())
+    verify_opaque_plan(plan, manifest)
+    plan.write_bytes(b"tampered")
+    with pytest.raises(PlanEvidenceError, match="opaque_plan_sha256_mismatch"):
+        verify_opaque_plan(plan, manifest)
+
+    plan.chmod(0o644)
+    with pytest.raises(PlanEvidenceError, match="opaque_plan_mode_invalid"):
+        verify_opaque_plan(plan, manifest)
+
+    plan.chmod(0o600)
+    target = tmp_path / "target.tfplan"
+    plan.rename(target)
+    plan.symlink_to(target)
+    with pytest.raises(PlanEvidenceError, match="opaque_plan_not_regular"):
+        verify_opaque_plan(plan, manifest)
+
+
+def test_workflow_plan_evidence_calls_bind_the_exact_opaque_saved_plan(
+    repository_root: Path,
+) -> None:
+    expected = {
+        ".github/workflows/deploy-demo.yml": (
+            "artifacts/deploy/prerequisite/prerequisites.tfplan",
+            "artifacts/deploy/activation/activation.tfplan",
+        ),
+        ".github/workflows/destroy-demo.yml": ("artifacts/destroy/destroy.tfplan",),
+        ".github/workflows/terraform-plan.yml": ("artifacts/terraform-plan/prerequisites.tfplan",),
+    }
+    for workflow, plan_paths in expected.items():
+        source = _read(repository_root, workflow)
+        assert source.count("python -m scripts.plan_evidence") == len(plan_paths)
+        assert source.count("umask 077") >= len(plan_paths)
+        for plan_path in plan_paths:
+            assert f'"$GITHUB_WORKSPACE/{plan_path}" 2>/dev/null | \\' in source
+            assert (
+                "python -m scripts.plan_evidence \\\n"
+                f"              --plan {plan_path} \\\n"
+                f"              --manifest {plan_path}.identity.json \\\n"
+            ) in source
+
+
+def test_saved_plan_apply_steps_bind_the_exact_aws_role(repository_root: Path) -> None:
+    for workflow_name, expected_count in (("deploy-demo.yml", 2), ("destroy-demo.yml", 1)):
+        workflow = _workflow(repository_root, workflow_name)
+        jobs = workflow["jobs"]
+        apply_steps = [
+            step
+            for job in jobs.values()
+            for step in job.get("steps", [])
+            if step.get("run") == "./scripts/ci_apply_saved_plan.sh"
+        ]
+        assert len(apply_steps) == expected_count
+        assert all(
+            step.get("env", {}).get("EXPECTED_AWS_ROLE_ARN") == "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
+            for step in apply_steps
+        )
+
+    workflow_paths = sorted((repository_root / ".github/workflows").glob("*.yml"))
+    configured_jobs = 0
+    for workflow_path in workflow_paths:
+        workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        for job in workflow.get("jobs", {}).values():
+            steps = job.get("steps", [])
+            for index, step in enumerate(steps):
+                if "configure-aws-credentials@" not in step.get("uses", ""):
+                    continue
+                configured_jobs += 1
+                assert index + 1 < len(steps)
+                identity_step = steps[index + 1]
+                identity_source = identity_step.get("run", "")
+                assert "human_aws_login verify-workflow" in identity_source
+                assert "--expected-account-id" in identity_source
+                assert "--expected-role-arn" in identity_source
+                assert "--role-kind" in identity_source
+                expected_kind = "plan" if workflow_path.name == "terraform-plan.yml" else "deploy"
+                assert f"--role-kind {expected_kind}" in identity_source
+    assert configured_jobs == 13
+
+
+def test_workflow_downloads_use_fresh_private_transfer_parents(repository_root: Path) -> None:
+    deploy = _read(repository_root, ".github/workflows/deploy-demo.yml")
+    destroy = _read(repository_root, ".github/workflows/destroy-demo.yml")
+
+    assert deploy.count("mkdir -m 0700 artifacts/deploy") == 2
+    assert deploy.count("test ! -e artifacts/deploy") == 2
+    assert "TRANSFER_DIRECTORY: artifacts/deploy/prerequisite-transfer" in deploy
+    assert "TRANSFER_DIRECTORY: artifacts/deploy/activation-transfer" in deploy
+    assert "mkdir -m 0700 artifacts/destroy" in destroy
+    assert "test ! -e artifacts/destroy" in destroy
+    assert "TRANSFER_DIRECTORY: artifacts/destroy/destroy-transfer" in destroy
+    assert "artifacts/destroy-transfer" not in destroy
+
+
+def test_destroy_workflow_retains_two_distinct_private_inventory_receipts(
+    repository_root: Path,
+) -> None:
+    destroy = _read(repository_root, ".github/workflows/destroy-demo.yml")
+
+    assert "post-destroy-inventory-initial.json" in destroy
+    assert "post-destroy-inventory-confirmation.json" in destroy
+    assert destroy.count("./scripts/verify_aws_teardown.sh") == 2
+    assert "sleep 30" in destroy
+    assert "phase-10-evidence/teardown/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}" in destroy
+    assert "--server-side-encryption aws:kms" in destroy
+    assert '--ssekms-key-id "$BACKEND_KMS_KEY_ARN"' in destroy
+    assert "--checksum-algorithm SHA256" in destroy
+    assert "head-object" in destroy and "--checksum-mode ENABLED" in destroy
+    assert "--if-none-match '*'" in destroy
+    assert (
+        "actions/upload-artifact"
+        not in destroy.split(
+            "Verify twice and privately retain the exact teardown inventories", maxsplit=1
+        )[1]
+    )
+
+    bootstrap = _read(repository_root, "infrastructure/bootstrap/main.tf")
+    iam = _read(repository_root, "infrastructure/bootstrap/iam.tf")
+    assert 'id     = "expire-phase-10-evidence"' in bootstrap
+    assert 'prefix = "phase-10-evidence/"' in bootstrap
+    assert "days = 30" in bootstrap
+    assert "phase-10-evidence/teardown/*" in iam
+
+
+def test_destroy_workflow_binds_authorization_source_state_and_cleanup_order(
+    repository_root: Path,
+) -> None:
+    destroy = _read(repository_root, ".github/workflows/destroy-demo.yml")
+    assert "teardown_authorized:" in destroy
+    assert "default: false" in destroy
+    assert "--stage destroy" in destroy
+    assert "--teardown-authorized" in destroy
+    assert '--source-activation-state "$source_activation_state"' in destroy
+    assert "classify-destroy-plan-source-state" in destroy
+    assert "output -json activation_state" not in destroy
+    assert "output -raw deployment_governance_mode" not in destroy
+    assert "--activate-services false" in destroy
+    assert '--auto-destroy-date "${{ inputs.auto_destroy_date }}"' in destroy
+    apply_index = destroy.index("Reverify and apply the exact destroy plan")
+    inventory_index = destroy.index(
+        "Verify twice and privately retain the exact teardown inventories"
+    )
+    cleanup_index = destroy.index(
+        "Delete the exact confidential destroy transfer after evidence retention"
+    )
+    assert apply_index < inventory_index < cleanup_index
+    cleanup_source = destroy[cleanup_index:]
+    assert "human_aws_login verify-workflow" in cleanup_source
+    assert '--expected-role-arn "$EXPECTED_AWS_ROLE_ARN"' in cleanup_source
+    assert cleanup_source.index("human_aws_login verify-workflow") < cleanup_source.index(
+        "confidential_plan_transfer.sh delete"
+    )
+
+    safe_destroy = _read(repository_root, "scripts/safe_destroy.sh")
+    assert "TEARDOWN_AUTHORIZED" in safe_destroy
+    assert ".teardown_authorized == true" in safe_destroy
+    assert '--source-activation-state "$source_activation_state"' in safe_destroy
+    assert "classify-destroy-plan-source-state" in safe_destroy
+    assert "output -json activation_state" not in safe_destroy
+    assert "output -raw deployment_governance_mode" not in safe_destroy
+    assert "--activate-services false" in safe_destroy
+
+    apply_guard = _read(repository_root, "scripts/ci_apply_saved_plan.sh")
+    assert 'if [[ "$PLAN_STAGE" == "activation" ]]' in apply_guard
+    assert 'if [[ "$PLAN_STAGE" != "prerequisites" ]]' not in apply_guard
+
+
+def test_complete_human_destroy_command_lists_every_required_guard_input(
+    repository_root: Path,
+) -> None:
+    docs = _read(repository_root, "docs/TERRAFORM_AWS.md")
+    command = docs.split("CONFIRM_DESTROY=YES", maxsplit=1)[1].split(
+        "scripts/safe_destroy.sh", maxsplit=1
+    )[0]
+    for name in (
+        "TEARDOWN_AUTHORIZED",
+        "EXPECTED_AWS_ACCOUNT_ID",
+        "AWS_REGION",
+        "AWS_PROFILE",
+        "BACKEND_BUCKET_NAME",
+        "BACKEND_CONFIG",
+        "TFVARS_FILE",
+        "AUTO_DESTROY_DATE",
+        "DEPLOYMENT_GOVERNANCE_MODE",
+        "POST_DESTROY_INVENTORY",
+    ):
+        assert f"{name}=" in command
+
+
+def test_plan_manifest_is_atomic_create_only_regular_and_mode_0600(tmp_path: Path) -> None:
+    manifest = _plan_manifest()
+    output = tmp_path / "prerequisites.tfplan.identity.json"
+    write_plan_manifest(output, manifest)
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert not output.is_symlink()
+    assert load_plan_manifest(output) == manifest
+    original = output.read_bytes()
+    with pytest.raises(GuardError, match="output_exists"):
+        write_plan_manifest(output, manifest)
+    assert output.read_bytes() == original
+
+    victim = tmp_path / "victim.json"
+    victim.write_text("unchanged", encoding="utf-8")
+    symlink = tmp_path / "symlink.identity.json"
+    symlink.symlink_to(victim)
+    with pytest.raises(GuardError, match="output_exists"):
+        write_plan_manifest(symlink, manifest)
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_saved_plan_manifest_v2_explicitly_rejects_v1(tmp_path: Path) -> None:
+    manifest = _plan_manifest()
+    assert manifest.schema_version == "modelguard.saved-plan-identity.v2"
+    legacy = {
+        **manifest.model_dump(mode="json"),
+        "schema_version": "modelguard.saved-plan-identity.v1",
+    }
+    with pytest.raises(ValidationError, match="schema_version"):
+        PlanManifest.model_validate(legacy)
+
+    path = tmp_path / "legacy.identity.json"
+    _write_private_json(path, legacy)
+    with pytest.raises(GuardError, match="saved_plan_manifest_invalid"):
+        load_plan_manifest(path)
+
+    with pytest.raises(ValidationError, match="pre-destroy source state"):
+        PlanManifest.model_validate(
+            {**_plan_manifest(stage="destroy").model_dump(), "source_activation_state": None}
+        )
+    with pytest.raises(ValidationError, match="non-destroy manifest"):
+        PlanManifest.model_validate({**manifest.model_dump(), "source_activation_state": "active"})
+    with pytest.raises(ValidationError, match="deployment_governance_mode"):
+        PlanManifest.model_validate(
+            {
+                key: value
+                for key, value in manifest.model_dump().items()
+                if key != "deployment_governance_mode"
+            }
+        )
+    with pytest.raises(ValidationError, match="source_activation_state"):
+        PlanManifest.model_validate(
+            {
+                **_plan_manifest(stage="destroy").model_dump(),
+                "source_activation_state": "output_absent_partial_state",
+            }
+        )
+
+
+def test_plan_evidence_output_is_atomic_create_only_regular_and_mode_0600(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "plan.redacted.json"
+    write_evidence_file(output, '{"status":"passed"}\n')
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert not output.is_symlink()
+    original = output.read_bytes()
+    with pytest.raises(PlanEvidenceError, match="output_exists"):
+        write_evidence_file(output, "replacement")
+    assert output.read_bytes() == original
+
+    victim = tmp_path / "victim.md"
+    victim.write_text("unchanged", encoding="utf-8")
+    symlink = tmp_path / "plan.redacted.md"
+    symlink.symlink_to(victim)
+    with pytest.raises(PlanEvidenceError, match="output_exists"):
+        write_evidence_file(symlink, "replacement")
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_plan_seal_and_verify_require_clean_tracked_and_untracked_source(
+    tmp_path: Path,
+) -> None:
+    repository, tracked = _clean_plan_repository(tmp_path)
+    ignored = repository / ".venv" / "cache.bin"
+    ignored.parent.mkdir()
+    ignored.write_bytes(b"ignored")
+
+    plan = tmp_path / "prerequisites.tfplan"
+    variables = tmp_path / "demo.tfvars.json"
+    backend = tmp_path / "backend.hcl"
+    today = datetime.now(tz=UTC).date()
+    expiry = today + timedelta(days=7)
+    _write_private_bytes(plan, b"opaque-saved-plan")
+    _write_private_json(
+        variables,
+        _rendered_tfvars(stage="prerequisites", auto_destroy_date=expiry),
+    )
+    _write_private_backend(backend)
+    manifest = seal_plan(
+        plan_path=plan,
+        variable_file=variables,
+        backend_config=backend,
+        stage="prerequisites",
+        account_id="123456789012",
+        region="us-east-1",
+        auto_destroy_date=expiry,
+        activate_services=False,
+        repository=repository,
+    )
+    verify_plan(
+        manifest,
+        plan_path=plan,
+        variable_file=variables,
+        backend_config=backend,
+        account_id="123456789012",
+        region="us-east-1",
+        stage="prerequisites",
+        repository=repository,
+    )
+
+    tracked.write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(GuardError, match="git_source_tree_not_clean"):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="prerequisites",
+            repository=repository,
+        )
+    tracked.write_text("canonical\n", encoding="utf-8")
+    (repository / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    with pytest.raises(GuardError, match="git_source_tree_not_clean"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+
+
+def test_saved_plan_rejects_stage_pointer_type_and_date_contradictions(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _clean_plan_repository(tmp_path)
+    expiry = date.today() + timedelta(days=7)
+    plan, variables, backend = _guard_input_paths(
+        tmp_path,
+        plan_stage="prerequisites",
+        renderer_stage="activation",
+        auto_destroy_date=expiry,
+    )
+    with pytest.raises(GuardError, match="rendered_tfvars_fields_mismatch"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+
+    plan.unlink()
+    variables.unlink()
+    backend.unlink()
+    plan, variables, backend = _guard_input_paths(
+        tmp_path,
+        plan_stage="activation",
+        renderer_stage="activation",
+        auto_destroy_date=expiry,
+    )
+    activation_payload = _rendered_tfvars(stage="activation", auto_destroy_date=expiry)
+    del activation_payload["expected_model_version"]
+    _write_private_json(variables, activation_payload)
+    with pytest.raises(GuardError, match="rendered_tfvars_fields_mismatch"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="activation",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=True,
+            repository=repository,
+        )
+
+    prerequisite_payload = _rendered_tfvars(stage="prerequisites", auto_destroy_date=expiry)
+    prerequisite_payload["activate_services"] = 0
+    _write_private_json(variables, prerequisite_payload)
+    plan.unlink()
+    plan = tmp_path / "prerequisites.tfplan"
+    _write_private_bytes(plan, b"opaque-saved-plan")
+    with pytest.raises(GuardError, match="rendered_tfvars_boolean_type_invalid"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+
+    _write_private_json(
+        variables,
+        _rendered_tfvars(stage="prerequisites", auto_destroy_date=expiry + timedelta(days=1)),
+    )
+    with pytest.raises(GuardError, match="rendered_tfvars_stage_identity_mismatch"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+
+
+def test_saved_plan_verify_revalidates_tfvars_and_destroy_uses_prerequisite_renderer(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _clean_plan_repository(tmp_path)
+    expiry = date.today() + timedelta(days=7)
+    plan, variables, backend = _guard_input_paths(
+        tmp_path,
+        plan_stage="destroy",
+        renderer_stage="destroy",
+        auto_destroy_date=expiry,
+    )
+    manifest = seal_plan(
+        plan_path=plan,
+        variable_file=variables,
+        backend_config=backend,
+        stage="destroy",
+        account_id="123456789012",
+        region="us-east-1",
+        auto_destroy_date=expiry,
+        activate_services=False,
+        source_activation_state="active",
+        repository=repository,
+    )
+    assert manifest.activate_services is False
+    assert manifest.source_activation_state == "active"
+    verify_plan(
+        manifest,
+        plan_path=plan,
+        variable_file=variables,
+        backend_config=backend,
+        account_id="123456789012",
+        region="us-east-1",
+        stage="destroy",
+        repository=repository,
+    )
+
+    _write_private_json(
+        variables,
+        _rendered_tfvars(stage="destroy", auto_destroy_date=expiry + timedelta(days=1)),
+    )
+    with pytest.raises(GuardError, match="rendered_tfvars_stage_identity_mismatch"):
+        verify_plan(
+            manifest,
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            account_id="123456789012",
+            region="us-east-1",
+            stage="destroy",
+            repository=repository,
+        )
+
+
+def test_saved_plan_inputs_require_owner_only_regular_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, _ = _clean_plan_repository(tmp_path)
+    expiry = date.today() + timedelta(days=7)
+    plan, variables, backend = _guard_input_paths(
+        tmp_path,
+        plan_stage="prerequisites",
+        renderer_stage="prerequisites",
+        auto_destroy_date=expiry,
+    )
+    variables.chmod(0o644)
+    with pytest.raises(GuardError, match="rendered_tfvars_mode_invalid"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+    variables.chmod(0o600)
+    original = tmp_path / "original-plan"
+    plan.rename(original)
+    plan.symlink_to(original)
+    with pytest.raises(GuardError, match="saved_plan_not_regular"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+    plan.unlink()
+    original.rename(plan)
+    actual_euid = os.geteuid()
+    monkeypatch.setattr("scripts.terraform_demo_guard.os.geteuid", lambda: actual_euid + 1)
+    with pytest.raises(GuardError, match="saved_plan_owner_invalid"):
+        seal_plan(
+            plan_path=plan,
+            variable_file=variables,
+            backend_config=backend,
+            stage="prerequisites",
+            account_id="123456789012",
+            region="us-east-1",
+            auto_destroy_date=expiry,
+            activate_services=False,
+            repository=repository,
+        )
+
+
+def test_backend_verification_requires_owner_only_regular_mode_0600(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = tmp_path / "backend.hcl"
+    _write_private_backend(backend)
+    assert _backend_values(backend)["region"] == "us-east-1"
+
+    backend.chmod(0o644)
+    with pytest.raises(GuardError, match="backend_config_mode_invalid"):
+        _backend_values(backend)
+    backend.chmod(0o600)
+
+    target = tmp_path / "backend-target.hcl"
+    backend.rename(target)
+    backend.symlink_to(target)
+    with pytest.raises(GuardError, match="backend_config_not_regular"):
+        _backend_values(backend)
+    backend.unlink()
+    target.rename(backend)
+
+    actual_euid = os.geteuid()
+    monkeypatch.setattr("scripts.terraform_demo_guard.os.geteuid", lambda: actual_euid + 1)
+    with pytest.raises(GuardError, match="backend_config_owner_invalid"):
+        _backend_values(backend)
+
+
+def test_apply_wrappers_verify_private_backend_before_terraform_init(
+    repository_root: Path,
+) -> None:
+    for relative in (
+        "scripts/ci_apply_saved_plan.sh",
+        "scripts/safe_apply.sh",
+        "scripts/safe_destroy.sh",
+    ):
+        source = _read(repository_root, relative)
+        assert source.index("verify-backend") < source.index(" init ")
 
 
 def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
@@ -898,6 +2565,124 @@ def test_ci_input_renderer_enforces_prerequisite_and_activation_barriers(
         render_inputs(**{**activation, "runtime_verification": None})
     with pytest.raises(RenderInputError, match="source_commit"):
         render_inputs(**{**activation, "source_commit": "b" * 40})
+
+    expired = date.today() - timedelta(days=30)
+    destroy_paths = render_inputs(
+        **{
+            **common,
+            "output_dir": tmp_path / "destroy",
+            "stage": "destroy",
+            "auto_destroy_date": expired.isoformat(),
+            "teardown_authorized": True,
+        }
+    )
+    destroy_tfvars = json.loads(destroy_paths["tfvars"].read_text(encoding="utf-8"))
+    assert destroy_tfvars["auto_destroy_date"] == expired.isoformat()
+    assert destroy_tfvars["deployment_stage"] == "prerequisites"
+    assert destroy_tfvars["activate_services"] is False
+    assert destroy_tfvars["teardown_authorized"] is True
+    assert destroy_tfvars["runtime_contract_verified"] is False
+    assert destroy_tfvars["budget_prerequisite_verified"] is False
+    assert not any(key.endswith("_image_ref") for key in destroy_tfvars)
+    assert not any(key.startswith("expected_model_") for key in destroy_tfvars)
+
+    with pytest.raises(RenderInputError, match="teardown_authorization_stage_mismatch"):
+        render_inputs(
+            **{
+                **common,
+                "output_dir": tmp_path / "destroy-refused",
+                "stage": "destroy",
+                "auto_destroy_date": expired.isoformat(),
+            }
+        )
+    with pytest.raises(RenderInputError, match="teardown_authorization_stage_mismatch"):
+        render_inputs(
+            **{
+                **common,
+                "output_dir": tmp_path / "prerequisite-refused",
+                "teardown_authorized": True,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_json",
+    (
+        '{"do-not-emit":1,"do-not-emit":2}',
+        '{"do-not-emit":NaN}',
+        '{"nested":{"do-not-emit":1,"do-not-emit":2}}',
+    ),
+)
+def test_pointer_file_loaders_reject_duplicate_and_nonfinite_json_without_echo(
+    tmp_path: Path, invalid_json: str
+) -> None:
+    pointer = tmp_path / "pointer.json"
+    pointer.write_text(invalid_json, encoding="utf-8")
+    checks = (
+        (_load_guard_json, GuardError),
+        (_load_pointer, RenderInputError),
+        (_load_object, DeploymentInputError),
+    )
+    for loader, error_type in checks:
+        with pytest.raises(error_type) as captured:
+            loader(pointer)
+        assert "do-not-emit" not in str(captured.value)
+
+
+def test_cli_io_failure_categories_never_emit_operator_paths() -> None:
+    private_path = "/private/operator/location/do-not-emit.json"
+    failure = OSError(f"unable to read {private_path}")
+    assert _render_failure_reason(failure) == "local_io_failed"
+    assert _guard_failure_reason(failure) == "local_io_failed"
+    assert private_path not in _render_failure_reason(failure)
+    assert private_path not in _guard_failure_reason(failure)
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        '{"do-not-emit":1,"do-not-emit":2}',
+        '{"do-not-emit":Infinity}',
+        '{"nested":{"do-not-emit":1,"do-not-emit":2}}',
+    ),
+)
+def test_nested_ssm_pointer_json_is_strict_and_errors_are_value_free(
+    tmp_path: Path, invalid_value: str
+) -> None:
+    response = {
+        "Parameter": {
+            "Name": "/modelguard-ai/demo/models/active",
+            "Type": "String",
+            "Value": invalid_value,
+        }
+    }
+    variables = tmp_path / "activation.tfvars.json"
+    _write_private_json(
+        variables,
+        _rendered_tfvars(stage="activation", auto_destroy_date=date.today() + timedelta(days=7)),
+    )
+    with pytest.raises(GuardError, match="active_pointer_value_json_invalid") as guard_error:
+        verify_active_pointer_binding(
+            pointer_response=response,
+            variable_file=variables,
+            account_id="123456789012",
+            region="us-east-1",
+        )
+    assert "do-not-emit" not in str(guard_error.value)
+
+    with pytest.raises(
+        DeploymentInputError, match="active_pointer_value_json_invalid"
+    ) as verifier_error:
+        verify_inputs(
+            pointer_response=response,
+            account_id="123456789012",
+            region="us-east-1",
+            model_version="1.0.0",
+            manifest_sha256="a" * 64,
+            access_mode="http_cidr_only",
+            smoke_base_url="http://demo.example.test",
+        )
+    assert "do-not-emit" not in str(verifier_error.value)
 
 
 def test_saved_plan_workflows_and_terraform_cannot_accept_notification_pii(

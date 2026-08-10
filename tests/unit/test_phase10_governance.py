@@ -528,8 +528,9 @@ def test_destroy_mode_cannot_be_omitted_or_downgraded(
     assert "${DEPLOYMENT_GOVERNANCE_MODE:-team_protected}" not in source
     assert "DESTROY TEAM modelguard-ai demo" in source
     assert "DESTROY SOLO modelguard-ai demo" in source
-    assert "output -raw deployment_governance_mode" in source
-    assert '"$deployed_mode" != "$governance_mode"' in source
+    assert "output -raw deployment_governance_mode" not in source
+    assert ".deployment_governance_mode | select(" in source
+    assert "classify-destroy-plan-source-state" in source
 
     workflow = yaml.load(
         (repository_root / ".github/workflows/destroy-demo.yml").read_text(),
@@ -543,7 +544,9 @@ def test_destroy_mode_cannot_be_omitted_or_downgraded(
     assert "REVIEWED_DESTROY_PLAN_SHA256" in apply_source
     assert "REVIEWED_DESTROY_RUN_IDENTITY" in apply_source
     assert "DEPLOYMENT_GOVERNANCE_MODE" in apply_source
-    assert "output -raw deployment_governance_mode" in str(workflow["jobs"]["destroy-plan"])
+    destroy_plan = str(workflow["jobs"]["destroy-plan"])
+    assert "output -raw deployment_governance_mode" not in destroy_plan
+    assert "classify-destroy-plan-source-state" in destroy_plan
 
 
 def test_saved_apply_scripts_reject_governance_mode_substitution(
@@ -555,9 +558,13 @@ def test_saved_apply_scripts_reject_governance_mode_substitution(
     terraform = (repository_root / "infrastructure/environments/demo/variables.tf").read_text()
     outputs = (repository_root / "infrastructure/environments/demo/outputs.tf").read_text()
 
-    for source in (ci_apply, human_apply, human_destroy):
+    for source in (ci_apply, human_apply):
         assert ".deployment_governance_mode" in source
         assert "output -raw deployment_governance_mode" in source
+    assert ".deployment_governance_mode" in human_destroy
+    assert "output -raw deployment_governance_mode" not in human_destroy
+    assert "classify-destroy-plan-source-state" in human_destroy
+    assert 'if [[ "$PLAN_STAGE" == "activation" ]]' in ci_apply
     assert 'variable "deployment_governance_mode"' in terraform
     assert 'output "deployment_governance_mode"' in outputs
 
@@ -568,6 +575,372 @@ def test_saved_apply_scripts_reject_governance_mode_substitution(
         assert '--governance-mode "$GOVERNANCE_MODE"' in source
     assert deploy.count("DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}") == 2
     assert destroy.count("DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}") == 1
+
+
+@pytest.mark.parametrize(
+    ("script_name", "confirmation"),
+    (("safe_apply.sh", "CONFIRM_APPLY"), ("safe_destroy.sh", "CONFIRM_DESTROY")),
+)
+@pytest.mark.parametrize(
+    ("filename", "mode", "content", "expected"),
+    (
+        ("demo.auto.tfvars", 0o600, 'deployment_stage = "prerequisites"\n', "*.tfvars.json"),
+        ("demo-ci.tfvars.json", 0o644, "{}\n", "exact mode 0600"),
+        ("demo-ci.tfvars.json", 0o600, "{not-json}\n", "valid JSON"),
+    ),
+)
+def test_human_helpers_reject_nonrenderer_tfvars_before_any_cloud_command(
+    repository_root: Path,
+    tmp_path: Path,
+    script_name: str,
+    confirmation: str,
+    filename: str,
+    mode: int,
+    content: str,
+    expected: str,
+) -> None:
+    backend = tmp_path / "backend.hcl"
+    backend.write_text("placeholder = true\n", encoding="utf-8")
+    tfvars = tmp_path / filename
+    tfvars.write_text(content, encoding="utf-8")
+    tfvars.chmod(mode)
+    inventory_directory = tmp_path / "inventory"
+    inventory_directory.mkdir(mode=0o700)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            confirmation: "YES",
+            "EXPECTED_AWS_ACCOUNT_ID": "123456789012",
+            "AWS_REGION": "us-east-1",
+            "BACKEND_BUCKET_NAME": "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "BACKEND_CONFIG": str(backend),
+            "TFVARS_FILE": str(tfvars),
+            "POST_DESTROY_INVENTORY": str(inventory_directory / "initial.json"),
+            "PLAN_STAGE": "prerequisites",
+            "AUTO_DESTROY_DATE": "2099-01-01",
+            "TEARDOWN_AUTHORIZED": "true",
+            "AWS_PROFILE": "modelguard-bootstrap",
+            "DEPLOYMENT_GOVERNANCE_MODE": "solo_portfolio",
+        }
+    )
+
+    result = subprocess.run(
+        [str(repository_root / "scripts" / script_name)],
+        cwd=repository_root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stdout
+    assert "terraform" not in result.stderr.lower()
+
+
+def test_human_helpers_render_only_sealed_redacted_plan_evidence(
+    repository_root: Path,
+) -> None:
+    apply_source = (repository_root / "scripts/safe_apply.sh").read_text(encoding="utf-8")
+    destroy_source = (repository_root / "scripts/safe_destroy.sh").read_text(encoding="utf-8")
+
+    for source in (apply_source, destroy_source):
+        assert "umask 077" in source
+        assert "scripts.plan_evidence" in source
+        assert '--plan "$plan_path"' in source
+        assert 'show -json "$plan_path" 2>/dev/null' in source
+        assert 'show "$plan_path"' not in source
+        assert '"$plan_path" >/dev/null 2>&1' in source
+
+    assert 'review_dir="$(mktemp -d)"' in apply_source
+    assert 'chmod 0700 "$review_dir"' in apply_source
+    assert 'evidence_json="$review_dir/plan.redacted.json"' in apply_source
+    assert 'evidence_markdown="$review_dir/plan.redacted.md"' in apply_source
+    assert 'pointer_response="$review_dir/active-pointer.json"' in apply_source
+    assert 'evidence_json="$plan_path.redacted.json"' not in apply_source
+    assert apply_source.count("trap cleanup_review_dir EXIT") == 1
+    assert "trap 'rm -f" not in apply_source
+    assert 'rmdir -- "$review_dir"' in apply_source
+
+    assert 'evidence_json="$plan_path.redacted.json"' in destroy_source
+    assert 'evidence_markdown="$plan_path.redacted.md"' in destroy_source
+    target_refusal = destroy_source.index("for planned_output in")
+    destroy_plan = destroy_source.index('terraform -chdir="$env_dir" plan')
+    assert target_refusal < destroy_plan
+    assert "a destroy plan, identity, or redacted-evidence target already exists" in destroy_source
+    assert "\ntrap " not in destroy_source
+    assert '-out="$plan_path" >/dev/null 2>&1' in destroy_source
+    assert "raw Terraform output was suppressed" in apply_source
+    assert "raw Terraform output was suppressed" in destroy_source
+
+
+def test_human_apply_temp_review_survives_existing_evidence_and_cleans_on_rerun(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    harness = tmp_path / "repo"
+    scripts_dir = harness / "scripts"
+    environment_dir = harness / "infrastructure" / "environments" / "demo"
+    fake_bin = tmp_path / "bin"
+    review_parent = tmp_path / "reviews"
+    for directory in (scripts_dir, environment_dir, fake_bin, review_parent):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    apply_script = scripts_dir / "safe_apply.sh"
+    apply_script.write_text(
+        (repository_root / "scripts/safe_apply.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    apply_script.chmod(0o700)
+
+    terraform_stub = fake_bin / "terraform"
+    terraform_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'case "$*" in\n'
+        "  *\"workspace show\"*) printf 'default\\n' ;;\n"
+        "  *\"output -raw deployment_governance_mode\"*) printf 'solo_portfolio\\n' ;;\n"
+        '  *"show -json"*) printf \'{"format_version":"1.2"}\\n\' ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    terraform_stub.chmod(0o700)
+
+    aws_stub = fake_bin / "aws"
+    aws_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'case "$*" in\n'
+        "  *\"sts get-caller-identity\"*) printf '123456789012\\n' ;;\n"
+        "  *\"configure get region\"*) printf 'us-east-1\\n' ;;\n"
+        '  *"ssm get-parameter"*) printf \'{"Parameter":{}}\\n\' ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    aws_stub.chmod(0o700)
+
+    invocation_log = tmp_path / "review-modes.log"
+    uv_stub = fake_bin / "uv"
+    uv_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [[ " $* " == *" scripts.plan_evidence "* ]]; then\n'
+        "  output_json=''\n"
+        "  output_markdown=''\n"
+        "  while (( $# )); do\n"
+        '    case "$1" in\n'
+        '      --output-json) output_json="$2"; shift 2 ;;\n'
+        '      --output-markdown) output_markdown="$2"; shift 2 ;;\n'
+        "      *) shift ;;\n"
+        "    esac\n"
+        "  done\n"
+        '  test ! -e "$output_json"\n'
+        '  test ! -e "$output_markdown"\n'
+        "  cat >/dev/null\n"
+        "  printf '{}\\n' >\"$output_json\"\n"
+        "  printf '# Redacted plan\\n' >\"$output_markdown\"\n"
+        "  printf '%s:%s:%s\\n' \\\n"
+        '    "$(stat -c \'%a\' "$(dirname "$output_json")")" \\\n'
+        '    "$(stat -c \'%a\' "$output_json")" \\\n'
+        '    "$(stat -c \'%a\' "$output_markdown")" >>"$MODELGUARD_TEST_LOG"\n'
+        "fi\n",
+        encoding="utf-8",
+    )
+    uv_stub.chmod(0o700)
+
+    backend = tmp_path / "backend.hcl"
+    backend.write_text("placeholder = true\n", encoding="utf-8")
+    tfvars = tmp_path / "demo-ci.tfvars.json"
+    tfvars.write_text('{"deployment_governance_mode":"solo_portfolio"}\n', encoding="utf-8")
+    tfvars.chmod(0o600)
+    plan = environment_dir / "prerequisites.tfplan"
+    manifest = environment_dir / "prerequisites.tfplan.identity.json"
+    plan.write_bytes(b"opaque plan")
+    manifest.write_text("{}\n", encoding="utf-8")
+    (environment_dir / "activation.tfplan").write_bytes(b"opaque activation plan")
+    (environment_dir / "activation.tfplan.identity.json").write_text("{}\n", encoding="utf-8")
+    persistent_json = environment_dir / "prerequisites.tfplan.redacted.json"
+    persistent_markdown = environment_dir / "prerequisites.tfplan.redacted.md"
+    persistent_json.write_text('{"persistent":true}\n', encoding="utf-8")
+    persistent_markdown.write_text("# Persistent evidence\n", encoding="utf-8")
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "TMPDIR": str(review_parent),
+            "MODELGUARD_TEST_LOG": str(invocation_log),
+            "CONFIRM_APPLY": "YES",
+            "EXPECTED_AWS_ACCOUNT_ID": "123456789012",
+            "AWS_REGION": "us-east-1",
+            "BACKEND_BUCKET_NAME": "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "BACKEND_CONFIG": str(backend),
+            "TFVARS_FILE": str(tfvars),
+            "PLAN_STAGE": "prerequisites",
+            "AWS_PROFILE": "modelguard-bootstrap",
+            "DEPLOYMENT_GOVERNANCE_MODE": "solo_portfolio",
+        }
+    )
+
+    cancelled = subprocess.run(
+        [str(apply_script)],
+        cwd=harness,
+        env=environment,
+        input="cancel\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cancelled.returncode == 1
+    assert not list(review_parent.iterdir())
+
+    rerun = subprocess.run(
+        [str(apply_script)],
+        cwd=harness,
+        env=environment,
+        input="prerequisites\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rerun.returncode == 0
+    assert not list(review_parent.iterdir())
+    assert persistent_json.read_text(encoding="utf-8") == '{"persistent":true}\n'
+    assert persistent_markdown.read_text(encoding="utf-8") == "# Persistent evidence\n"
+
+    activation_environment = {**environment, "PLAN_STAGE": "activation"}
+    activation = subprocess.run(
+        [str(apply_script)],
+        cwd=harness,
+        env=activation_environment,
+        input="activation\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert activation.returncode == 0
+    assert not list(review_parent.iterdir())
+    assert invocation_log.read_text(encoding="utf-8").splitlines() == [
+        "700:600:600",
+        "700:600:600",
+        "700:600:600",
+    ]
+
+
+def test_human_destroy_refuses_a_preexisting_review_set_before_cloud_access(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    harness = tmp_path / "repo"
+    scripts_dir = harness / "scripts"
+    environment_dir = harness / "infrastructure" / "environments" / "demo"
+    scripts_dir.mkdir(parents=True)
+    environment_dir.mkdir(parents=True)
+    destroy_script = scripts_dir / "safe_destroy.sh"
+    destroy_script.write_text(
+        (repository_root / "scripts/safe_destroy.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    destroy_script.chmod(0o700)
+    existing = environment_dir / "destroy.tfplan.redacted.md"
+    existing.write_text("# Sealed prior review\n", encoding="utf-8")
+    inventory_directory = tmp_path / "inventory"
+    inventory_directory.mkdir(mode=0o700)
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CONFIRM_DESTROY": "YES",
+            "EXPECTED_AWS_ACCOUNT_ID": "123456789012",
+            "AWS_REGION": "us-east-1",
+            "BACKEND_BUCKET_NAME": "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "BACKEND_CONFIG": str(tmp_path / "not-read-backend.hcl"),
+            "TFVARS_FILE": str(tmp_path / "not-read.tfvars.json"),
+            "POST_DESTROY_INVENTORY": str(inventory_directory / "initial.json"),
+            "AUTO_DESTROY_DATE": "2099-01-01",
+            "TEARDOWN_AUTHORIZED": "true",
+            "AWS_PROFILE": "modelguard-bootstrap",
+            "DEPLOYMENT_GOVERNANCE_MODE": "solo_portfolio",
+        }
+    )
+    result = subprocess.run(
+        [str(destroy_script)],
+        cwd=harness,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "redacted-evidence target already exists" in result.stdout
+    assert existing.read_text(encoding="utf-8") == "# Sealed prior review\n"
+    assert "not found" not in result.stderr.lower()
+
+
+def test_human_activation_rechecks_live_pointer_at_the_final_boundary(
+    repository_root: Path,
+) -> None:
+    source = (repository_root / "scripts/safe_apply.sh").read_text(encoding="utf-8")
+    confirmation = source.index("read -r answer")
+    final_plan_check = source.rindex('"${guard[@]}" verify-plan')
+    pointer_read = source.index("aws ssm get-parameter")
+    pointer_binding = source.index('"${guard[@]}" verify-active-pointer')
+    final_identity = source.rindex("\nverify_human_identity\n")
+    apply = source.index('terraform -chdir="$env_dir" apply')
+
+    assert confirmation < final_plan_check < pointer_read < pointer_binding < final_identity < apply
+    assert 'if [[ "$PLAN_STAGE" = "activation" ]]' in source
+    assert "--name /modelguard-ai/demo/models/active" in source
+    assert '--profile "$AWS_PROFILE"' in source
+    assert '--region "$AWS_REGION"' in source
+    assert "--no-with-decryption" in source
+    assert "--no-cli-pager" in source
+    assert "--output json" in source
+    assert source.count("aws ssm get-parameter") == 1
+    assert source.count("\nverify_human_identity\n") == 2
+
+
+def test_human_destroy_rechecks_exact_identity_immediately_before_apply(
+    repository_root: Path,
+) -> None:
+    source = (repository_root / "scripts/safe_destroy.sh").read_text(encoding="utf-8")
+    final_confirmation = source.index("read -r final")
+    final_plan_check = source.rindex('"${guard[@]}" verify-plan')
+    final_identity = source.rindex("\nverify_human_identity\n")
+    apply = source.index('terraform -chdir="$env_dir" apply')
+
+    assert final_confirmation < final_plan_check < final_identity < apply
+    assert source.count("\nverify_human_identity\n") == 2
+    assert "browser-login identity verification failed" in source
+    assert "2>/dev/null" in source
+
+
+def test_human_operator_docs_bind_exact_json_and_governance_contract(
+    repository_root: Path,
+) -> None:
+    for relative in ("docs/08_AWS_DEPLOYMENT_ORDER.md", "docs/TERRAFORM_AWS.md"):
+        source = (repository_root / relative).read_text(encoding="utf-8")
+        assert "scripts.render_ci_terraform" in source
+        assert "demo-ci.tfvars.json" in source
+        assert "0600" in source
+        assert "DEPLOYMENT_GOVERNANCE_MODE=solo_portfolio" in source
+        assert "action-only redacted evidence" in source
+        assert "TFVARS_FILE=/absolute/path/demo.auto.tfvars" not in source
+
+    terraform_docs = (repository_root / "docs/TERRAFORM_AWS.md").read_text(encoding="utf-8")
+    cost_docs = (repository_root / "docs/04_COST_CONTROL.md").read_text(encoding="utf-8")
+    for source in (
+        terraform_docs,
+        (repository_root / "scripts/safe_apply.sh").read_text(encoding="utf-8"),
+        (repository_root / "scripts/safe_destroy.sh").read_text(encoding="utf-8"),
+    ):
+        assert "-input=false" in source
+        assert "-lockfile=readonly" in source
+    assert "umask 077" in terraform_docs
+    assert "POST_DESTROY_INVENTORY" in cost_docs
+    assert "different create-only target" in cost_docs
+    assert "./scripts/safe_destroy.sh" not in cost_docs
 
 
 def test_rollback_record_persists_mode_and_refuses_downgrade_by_variable_change(
@@ -583,3 +956,223 @@ def test_rollback_record_persists_mode_and_refuses_downgrade_by_variable_change(
     assert ".deployment_governance_mode" in deploy
     assert "steps.record.outputs.deployment_governance_mode" in rollback
     assert 'test "$RECORDED_GOVERNANCE_MODE" = "$GOVERNANCE_MODE"' in rollback
+
+
+def _run_ci_apply_identity_case(
+    repository_root: Path,
+    tmp_path: Path,
+    *,
+    caller_arn: str,
+    expected_role_arn: str = (
+        "arn:aws:iam::123456789012:role/modelguard-ai/bootstrap/modelguard-ai-ci-deploy"
+    ),
+    aws_profile: str | None = None,
+    fail_identity_lookup: bool = False,
+    fail_cleanup: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], str, str]:
+    harness = tmp_path / "repo"
+    scripts_dir = harness / "scripts"
+    environment_dir = harness / "infrastructure" / "environments" / "demo"
+    fake_bin = tmp_path / "bin"
+    runtime_parent = tmp_path / "runtime"
+    for directory in (scripts_dir, environment_dir, fake_bin, runtime_parent):
+        directory.mkdir(parents=True, exist_ok=True)
+    runtime_parent.chmod(0o700)
+
+    apply_script = scripts_dir / "ci_apply_saved_plan.sh"
+    apply_script.write_text(
+        (repository_root / "scripts/ci_apply_saved_plan.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    apply_script.chmod(0o700)
+
+    aws_log = tmp_path / "aws.log"
+    terraform_log = tmp_path / "terraform.log"
+    stubs = {
+        "git": "#!/usr/bin/env bash\nprintf '%s\\n' \"$MODELGUARD_TEST_COMMIT\"\n",
+        "uv": "#!/usr/bin/env bash\nexit 0\n",
+        "terraform": (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'printf \'%s\\n\' "$*" >>"$MODELGUARD_TERRAFORM_LOG"\n'
+            'case "$*" in\n'
+            "  *\"workspace show\"*) printf 'default\\n' ;;\n"
+            "esac\n"
+        ),
+        "aws": (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'printf \'%s\\n\' "$*" >>"$MODELGUARD_AWS_LOG"\n'
+            'if [[ "${MODELGUARD_FAIL_IDENTITY:-false}" == true ]]; then\n'
+            "  printf 'private-error-sentinel\\n' >&2\n"
+            "  exit 7\n"
+            "fi\n"
+            'printf \'{"Account":"123456789012","Arn":"%s"}\\n\' "$MODELGUARD_CALLER_ARN"\n'
+        ),
+    }
+    for name, source in stubs.items():
+        stub = fake_bin / name
+        stub.write_text(source, encoding="utf-8")
+        stub.chmod(0o700)
+    if fail_cleanup:
+        rm_stub = fake_bin / "rm"
+        rm_stub.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+        rm_stub.chmod(0o700)
+
+    backend = tmp_path / "backend.hcl"
+    tfvars = tmp_path / "demo-ci.tfvars.json"
+    plan = tmp_path / "prerequisites.tfplan"
+    manifest = tmp_path / "prerequisites.tfplan.identity.json"
+    backend.write_text("placeholder = true\n", encoding="utf-8")
+    tfvars.write_text('{"deployment_governance_mode":"solo_portfolio"}\n', encoding="utf-8")
+    plan.write_bytes(b"opaque-plan")
+    manifest.write_text("{}\n", encoding="utf-8")
+    for private_file in (backend, tfvars, plan, manifest):
+        private_file.chmod(0o600)
+
+    commit = "a" * 40
+    environment = os.environ.copy()
+    environment.pop("AWS_PROFILE", None)
+    environment.pop("AWS_DEFAULT_PROFILE", None)
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": "refs/heads/main",
+            "MODELGUARD_GITHUB_ENVIRONMENT": "demo",
+            "CONFIRM_APPLY": "YES",
+            "EXPECTED_AWS_ACCOUNT_ID": "123456789012",
+            "EXPECTED_AWS_ROLE_ARN": expected_role_arn,
+            "AWS_REGION": "us-east-1",
+            "BACKEND_BUCKET_NAME": "modelguard-ai-terraform-state-123456789012-us-east-1",
+            "BACKEND_CONFIG": str(backend),
+            "TFVARS_FILE": str(tfvars),
+            "PLAN_STAGE": "prerequisites",
+            "PLAN_FILE": str(plan),
+            "PLAN_MANIFEST": str(manifest),
+            "DEPLOYMENT_GOVERNANCE_MODE": "solo_portfolio",
+            "GITHUB_SHA": commit,
+            "MODELGUARD_TEST_COMMIT": commit,
+            "MODELGUARD_CALLER_ARN": caller_arn,
+            "MODELGUARD_FAIL_IDENTITY": str(fail_identity_lookup).lower(),
+            "MODELGUARD_AWS_LOG": str(aws_log),
+            "MODELGUARD_TERRAFORM_LOG": str(terraform_log),
+            "TMPDIR": str(runtime_parent),
+        }
+    )
+    if aws_profile is not None:
+        environment["AWS_PROFILE"] = aws_profile
+
+    result = subprocess.run(
+        [str(apply_script)],
+        cwd=harness,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if not fail_cleanup:
+        assert list(runtime_parent.iterdir()) == []
+    return (
+        result,
+        aws_log.read_text(encoding="utf-8") if aws_log.exists() else "",
+        terraform_log.read_text(encoding="utf-8") if terraform_log.exists() else "",
+    )
+
+
+def test_ci_apply_accepts_only_the_exact_oidc_deploy_role(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, aws_log, terraform_log = _run_ci_apply_identity_case(
+        repository_root,
+        tmp_path,
+        caller_arn=("arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/phase10-run"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '{"status":"passed","operation":"saved-plan-apply"}'
+    assert aws_log.count("sts get-caller-identity --region us-east-1") == 2
+    assert " apply " in f" {terraform_log} "
+
+
+@pytest.mark.parametrize(
+    "caller_arn",
+    (
+        "arn:aws:sts::123456789012:assumed-role/another-role/phase10-run",
+        "arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/x",
+        "arn:aws:iam::123456789012:role/modelguard-ai/bootstrap/modelguard-ai-ci-deploy",
+    ),
+)
+def test_ci_apply_rejects_wrong_or_malformed_caller_before_terraform(
+    repository_root: Path,
+    tmp_path: Path,
+    caller_arn: str,
+) -> None:
+    result, aws_log, terraform_log = _run_ci_apply_identity_case(
+        repository_root, tmp_path, caller_arn=caller_arn
+    )
+
+    assert result.returncode == 1
+    assert "sts get-caller-identity" in aws_log
+    assert terraform_log == ""
+    assert caller_arn not in result.stdout + result.stderr
+
+
+def test_ci_apply_fails_closed_when_private_identity_cleanup_fails(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, aws_log, terraform_log = _run_ci_apply_identity_case(
+        repository_root,
+        tmp_path,
+        caller_arn=("arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/phase10-run"),
+        fail_cleanup=True,
+    )
+
+    assert result.returncode == 1
+    assert "Temporary workflow identity cleanup failed" in result.stderr
+    assert aws_log.count("sts get-caller-identity") == 2
+    assert " apply " in f" {terraform_log} "
+
+
+def test_ci_apply_rejects_wrong_expected_role_and_named_profile_before_aws(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    wrong_role, aws_log, terraform_log = _run_ci_apply_identity_case(
+        repository_root,
+        tmp_path / "wrong-role",
+        caller_arn=("arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/phase10-run"),
+        expected_role_arn="arn:aws:iam::123456789012:role/another-role",
+    )
+    named_profile, profile_aws_log, profile_terraform_log = _run_ci_apply_identity_case(
+        repository_root,
+        tmp_path / "profile",
+        caller_arn=("arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/phase10-run"),
+        aws_profile="forbidden-profile",
+    )
+
+    assert wrong_role.returncode == 1
+    assert named_profile.returncode == 1
+    assert aws_log == profile_aws_log == ""
+    assert terraform_log == profile_terraform_log == ""
+
+
+def test_ci_apply_suppresses_identity_lookup_diagnostics(
+    repository_root: Path,
+    tmp_path: Path,
+) -> None:
+    result, aws_log, terraform_log = _run_ci_apply_identity_case(
+        repository_root,
+        tmp_path,
+        caller_arn=("arn:aws:sts::123456789012:assumed-role/modelguard-ai-ci-deploy/phase10-run"),
+        fail_identity_lookup=True,
+    )
+
+    assert result.returncode == 1
+    assert "OIDC caller identity lookup failed" in result.stderr
+    assert "private-error-sentinel" not in result.stdout + result.stderr
+    assert "sts get-caller-identity" in aws_log
+    assert terraform_log == ""

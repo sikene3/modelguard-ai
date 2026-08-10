@@ -135,6 +135,12 @@ variable "activate_services" {
   default     = false
 }
 
+variable "teardown_authorized" {
+  description = "Explicit one-run destroy authorization; false for every prerequisite and activation plan."
+  type        = bool
+  default     = false
+}
+
 variable "runtime_contract_verified" {
   description = "Human/CI proof that all digest-pinned images implement the AWS startup and one-shot monitor contracts."
   type        = bool

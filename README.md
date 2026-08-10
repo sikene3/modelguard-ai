@@ -367,9 +367,11 @@ accepts no credential or secret-value argument. The exact future command and fai
 [docs/08_AWS_DEPLOYMENT_ORDER.md](docs/08_AWS_DEPLOYMENT_ORDER.md); it has not been run.
 
 AWS deployment governance supports a protected team contract and a disclosed solo portfolio
-contract. The latter is not separation of duties and cannot be selected while the repository is
-Private. Public conversion, GitHub settings, OIDC, AWS bootstrap, budget creation, CloudTrail apply,
-and deployment all remain separate external actions. See
+contract. The latter is not separation of duties and requires a Public repository before Actions.
+The sanitized baseline is now Public with the exact solo `main` ruleset and three contract
+environments while Actions remains disabled. OIDC customization, AWS bootstrap, retained CloudTrail
+apply, artifact publication, and deployment remain separate Phase 10 boundaries; the retained USD
+10 Budget prerequisite already passed its value-free read-only check. See
 [docs/DEPLOYMENT_GOVERNANCE.md](docs/DEPLOYMENT_GOVERNANCE.md),
 [docs/AWS_ACCOUNT_PREREQUISITES.md](docs/AWS_ACCOUNT_PREREQUISITES.md), and
 [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md).

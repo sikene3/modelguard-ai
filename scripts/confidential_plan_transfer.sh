@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 set +x
+umask 077
 
 operation="${1:-}"
 if [[ "$operation" != "upload" && "$operation" != "download" && "$operation" != "delete" ]]; then
@@ -11,8 +12,8 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" || "${GITHUB_EVENT_NAME:-}" != "workflow_d
   echo "Refusing confidential plan transfer outside an explicitly dispatched workflow."
   exit 2
 fi
-if [[ -n "${AWS_PROFILE:-}" ]]; then
-  echo "Refusing confidential plan transfer with a human AWS profile in workflow mode."
+if [[ -n "${AWS_PROFILE:-}" || -n "${AWS_DEFAULT_PROFILE:-}" ]]; then
+  echo "Refusing confidential plan transfer with AWS profile selection in workflow mode."
   exit 2
 fi
 
@@ -67,8 +68,9 @@ transfer_prefix="reviewed-plans/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/${PLAN_ST
 if [[ "$operation" = "upload" ]]; then
   for name in "${transfer_names[@]}"; do
     path="${TRANSFER_DIRECTORY}/${name}"
-    if [[ ! -f "$path" || -L "$path" ]]; then
-      echo "Refusing confidential plan upload: an exact regular transfer file is missing."
+    if [[ ! -f "$path" || -L "$path" || ! -O "$path" \
+      || "$(stat -c '%a' -- "$path" 2>/dev/null || true)" != "600" ]]; then
+      echo "Refusing confidential plan upload: an exact owner-only regular transfer file is missing."
       exit 2
     fi
     aws s3api put-object \
@@ -81,7 +83,26 @@ if [[ "$operation" = "upload" ]]; then
       --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
   done
 elif [[ "$operation" = "download" ]]; then
-  install -d -m 0700 "$TRANSFER_DIRECTORY"
+  transfer_parent="$(dirname -- "$TRANSFER_DIRECTORY")"
+  if [[ -e "$TRANSFER_DIRECTORY" || -L "$TRANSFER_DIRECTORY" ]]; then
+    echo "Refusing confidential plan download: transfer directory must be a new path."
+    exit 2
+  fi
+  if [[ ! -d "$transfer_parent" || -L "$transfer_parent" || ! -O "$transfer_parent" \
+    || "$(stat -c '%a' -- "$transfer_parent" 2>/dev/null || true)" != "700" ]]; then
+    echo "Refusing confidential plan download: parent directory is not owner-only."
+    exit 2
+  fi
+  if ! mkdir -m 0700 -- "$TRANSFER_DIRECTORY"; then
+    echo "Refusing confidential plan download: transfer directory creation failed."
+    exit 2
+  fi
+  if [[ ! -d "$TRANSFER_DIRECTORY" || -L "$TRANSFER_DIRECTORY" \
+    || ! -O "$TRANSFER_DIRECTORY" \
+    || "$(stat -c '%a' -- "$TRANSFER_DIRECTORY" 2>/dev/null || true)" != "700" ]]; then
+    echo "Refusing confidential plan download: transfer directory is not owner-only."
+    exit 2
+  fi
   for name in "${transfer_names[@]}"; do
     path="${TRANSFER_DIRECTORY}/${name}"
     if [[ -e "$path" || -L "$path" ]]; then
@@ -94,7 +115,11 @@ elif [[ "$operation" = "download" ]]; then
       --checksum-mode ENABLED \
       --expected-bucket-owner "$AWS_ACCOUNT_ID" \
       "$path" >/dev/null
-    chmod 0600 "$path"
+    if [[ ! -f "$path" || -L "$path" || ! -O "$path" \
+      || "$(stat -c '%a' -- "$path" 2>/dev/null || true)" != "600" ]]; then
+      echo "Refusing confidential plan download: transferred file is not owner-only."
+      exit 2
+    fi
   done
 else
   for name in "${transfer_names[@]}"; do

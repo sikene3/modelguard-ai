@@ -18,15 +18,20 @@ commit message is `fix: remediate Phase 10 live deployment blockers`.
 
 The overall Phase 10 controlled AWS deployment remains `in_progress`. The browser-authenticated
 non-root AWS identity and the single combined value-free Budget/Firehose preflight passed in
-`us-east-1`; no subscriber endpoint was queried. Repository publication, retained audit bootstrap,
-OIDC/bootstrap, saved plans, applies, artifact publication, live tests, and teardown have not yet
-executed. The repository's `runtime_contract_verified` Terraform default remains `false` until an
-activation supplies registry-digest evidence matching the verified source and all three images.
+`us-east-1`; no subscriber endpoint was queried. The sanitized history was published once to the
+Public repository, the exact active `main` ruleset and three solo environments were verified, and
+Actions remain disabled. Retained audit bootstrap, OIDC/bootstrap, applies, artifact publication,
+live tests, and teardown have not yet executed. One value-free audit-bootstrap saved plan was
+reviewed locally and remains unapplied at the mandatory encrypted-state/human-approval boundary.
+The repository's `runtime_contract_verified` Terraform default remains `false` until an activation
+supplies registry-digest evidence matching the verified source and all three images.
 
-No GitHub setting, AWS resource, Terraform state, repository remote, push, image/model publication,
-or deployment was created or changed by either local readiness segment or the history rewrite. The
-later AWS calls were read-only identity and prerequisite checks. No Terraform apply/destroy/import,
-state mutation, or Phase 11 work occurred.
+No AWS resource, Terraform state, image/model publication, or deployment was created or changed by
+either local readiness segment or the history rewrite. After the sealed Publication Audit passed,
+the exact audited history was pushed once and only the contract-defined Public ruleset and three
+solo environments were configured while Actions remained disabled. The later AWS calls were
+read-only identity, prerequisite, collision, and saved-plan checks. No Terraform
+apply/destroy/import, state mutation, or Phase 11 work occurred.
 
 ## Consolidated blocker remediation
 
@@ -93,9 +98,11 @@ state mutation, or Phase 11 work occurred.
     inspect/SBOM metadata use authenticated RSA/AES-GCM ciphertext or private S3. Public solo mode
     withholds ordinary container metadata artifacts and masks account IDs.
 13. **Protected destroy and mode downgrade.** `destroy-demo.yml` is a separate manual saved-plan
-    review/apply workflow. Mode is mandatory and checked against tfvars and deployed Terraform
-    state. The immutable last-known-good record is v2 and persists the mode, so rollback also refuses
-    a repository-variable downgrade.
+    review/apply workflow. Mode is mandatory and bound to the sealed tfvars and configured workflow
+    mode. Destroy evidence also validates the deployment guard's saved before-value when present;
+    absence after a partial apply stays recoverable without inventing deployed state. The immutable
+    last-known-good record is v2 and persists the mode, so rollback also refuses a
+    repository-variable downgrade.
 14. **Human AWS authentication.** Human apply, destroy, notification enrollment, and readiness paths
     require the exact `modelguard-bootstrap` browser-login profile, temporary `login` credentials,
     canonical Region, and non-root bootstrap user. Static/shared/environment credentials and root are
@@ -478,6 +485,86 @@ src/modelguard/storage/publisher.py (new)
 tests/unit/test_phase10_model_publisher.py (new)
 ```
 
+## Current protected-live-path checkpoint
+
+The checksum-verified `PUBLICATION_AUDIT_PACKAGES_AUTHORIZED_RECEIPT.json` records a complete
+Publication Audit `PASS` for the canonical sanitized tree at
+`22e9d2ff84545f996aa1718be7b58b5abf640197`. Repository privacy passed, the repository was verified
+Public, the exact active solo `main` ruleset and three contract environments were read back, and the
+audit recorded zero GitHub mutations and no displayed private values. The audited tree was pushed
+once. Actions remains disabled and the GitHub OIDC subject template remains at its default until the
+matching AWS trust exists.
+
+The browser-authenticated non-root AWS identity and the single combined value-free readiness
+preflight passed in `us-east-1`. The retained Budget is the exact monthly COST/USD 10 contract with
+ACTUAL 50/80/100 percent and FORECASTED 100 percent notifications, all `GREATER_THAN`; Firehose is
+accessible and the future demo delivery stream is absent. No subscriber endpoint was queried.
+
+A value-free audit-bootstrap plan was produced and reviewed but **not applied**. It contains exactly
+11 creates (10 tagged/namespaced AWS resources plus one `terraform_data` guard), with no update,
+delete, or replacement. It is checkpoint evidence only: the required clean corrective commit changes
+the source identity, so a new clean-source plan must be generated, reviewed, and sealed before any
+apply. Its bounded identities are:
+
+```text
+opaque plan SHA-256:        a327f946caff85b6820e62e971cab73a9e2fe9a4dd629686d7b91c9cbda526ef
+redacted summary SHA-256:   2cc70e2a35714f2001ab84cad27d5654f848b6ab34f4e17f700050e9440e11a4
+plan identity SHA-256:      d18ac07399778233c8ed542ffbddb700a6b21b895610d0eeaf9c593e677019bf
+```
+
+The current `agent/phase10-live-guard-fixes` candidate hardens saved-plan identity and action
+contracts, exact OIDC/browser-login identity rechecks, private create-only plan/evidence handling,
+activation pointer binding, confidential transfer, partial-state destroy recovery, retained Budget
+classification, inactive nonbillable ECS metadata, two-attempt teardown evidence, and exact-role
+cleanup. The final independent integration review found no remaining critical or high-severity
+local guard defect. No AWS or GitHub mutation was performed by this candidate.
+
+The exact current validation results are:
+
+```text
+uv run --frozen --no-sync pytest -q --no-cov \
+  tests/unit/test_phase08_terraform.py \
+  tests/unit/test_phase09_cicd.py \
+  tests/unit/test_phase10_governance.py
+PASS — 245 passed.
+
+uv run ruff format --check .
+uv run ruff check .
+make typecheck
+make shell-check
+terraform fmt -check -recursive infrastructure
+terraform validate (audit-bootstrap, bootstrap, and demo; backend disabled)
+git diff --check
+git fsck --full --strict --no-reflogs --unreachable
+PASS — 208 Python files formatted; no Ruff findings; strict Mypy passed for 74 source files;
+       Bash syntax and ShellCheck passed for 21 files; all three Terraform roots validated;
+       whitespace and Git integrity passed.
+
+make security
+make security-scan
+PASS — Bandit and hashed pip-audit passed with no known vulnerabilities; actionlint 1.7.9,
+       ShellCheck 0.11.0, Checkov 3.3.9, Gitleaks 8.30.1, and Trivy 0.70.0 all exited zero.
+PASS — Checkov Terraform 477/0/63, Dockerfile 317/0/3, and GitHub Actions 956/0/4
+       passed/failed/skipped; full-history and worktree secret policy passed.
+
+make release-gates
+EXPECTED FAIL-CLOSED — 554 tests passed and one clean-source provenance test refused; total
+       coverage was 83.51% versus the 70% gate. The generated manifest is one byte shorter because
+       it truthfully records the current uncommitted source as dirty. The measured clean-source
+       manifest bound is unchanged and was not weakened. A clean corrective commit and regenerated
+       bundle are required before this gate can pass.
+
+FILE_MANIFEST.txt exact inventory
+private-email/path/account/language scan of the candidate diff
+PASS — exact manifest parity; no untracked nonignored file; no approved account literal,
+       host-private path, or non-English tracked content in the candidate diff.
+```
+
+The retained audit-bootstrap apply remains stopped before mutation. It requires both an immediate
+human plan approval and an OS-encrypted state work volume with two independently encrypted offline
+copies and a restore/hash verification. The current corrective candidate must first become a clean
+ordinary commit so the bundle and all deployment artifacts can truthfully bind to clean source.
+
 ## Read-only continuation evidence
 
 - AWS profile: `modelguard-bootstrap`; Region: `us-east-1`.
@@ -487,15 +574,16 @@ tests/unit/test_phase10_model_publisher.py (new)
   documented effective `PERCENTAGE`, while explicit `ABSOLUTE_VALUE` remains rejected.
 - Firehose: service access is active in `us-east-1`; the exact demo stream is not pre-existing.
 - Publication rewrite: one verified 12-commit rewrite completed locally; the full bundle, `.git`
-  archive, original working copy, commit map, and exact five-file corrective patch remain private and
-  checksum-verified. No remote received the pre-sanitized history.
+  archive, commit map, and exact five-file corrective patch remain private and checksum-verified.
+  No remote received the pre-sanitized history. The original history and Git metadata remain
+  preserved, and the tracked corrective tree is reconstructable from the verified bundle and patch.
+  The sanitized audited `main` history was later pushed once to the authorized Public repository.
 
 ## Remaining external blockers
 
-- Controlled Public audit and authorized visibility change while Actions is off.
 - `solo_portfolio` remains a disclosed non-production governance mode without independent review.
 - Separate review/apply and encrypted state preservation for retained CloudTrail.
-- Live GitHub environments/protections/variables/OIDC and AWS bootstrap resources.
+- Live GitHub variables/OIDC and AWS bootstrap resources; Actions remain disabled.
 - Immutable registry image/model publication, reviewed Terraform plans, live smoke, rollback, and
   teardown. Local publisher tests do not satisfy the unchecked live publication gate.
 
@@ -505,10 +593,12 @@ The Docker host remediation was separately authorized maintenance and did not mo
 repository or durable backup artifacts. The blocker-remediation commit is one ordinary descendant
 of `aad098c`. One later pre-publication rewrite was explicitly authorized, completed against a
 verified candidate, and adopted only after the exact corrective files were restored byte-for-byte;
-the untouched original working copy remains recoverable. No further rewrite is authorized. Nothing
-has yet been pushed, published, deployed, or applied. AWS activity was limited to browser login and
-read-only identity/Budget/Firehose checks. No Terraform apply/destroy/import/refresh/state command or
-Phase 11 work occurred.
+the original history and Git metadata remain preserved, and the corrective working tree is exactly
+reconstructable from the verified bundle and patch. No further rewrite is authorized. The audited
+sanitized history has been pushed and the exact solo ruleset/environments configured; no image,
+model, AWS resource, or deployment has been published or applied. AWS activity was limited to
+browser login and read-only identity/Budget/Firehose/collision/plan checks. No Terraform
+apply/destroy/import/refresh/state mutation or Phase 11 work occurred.
 
 Authorized blocker-remediation commit message:
 
