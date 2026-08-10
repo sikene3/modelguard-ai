@@ -150,6 +150,11 @@ The plan role accepts only `terraform-plan.yml` in `demo-plan`. The deploy role 
 workflow condition. See `docs/CICD_SECURITY.md` and `.github/oidc-subject-template.json` for the exact
 subjects, legacy/immutable inputs, and repository setting.
 
+The plan role's state-bucket listing permission accepts only the exact state key, its lock key, and
+Terraform's literal `env:/` workspace-discovery prefix. Terraform performs that bounded discovery
+even though every guarded command separately requires the `default` workspace; no wildcard bucket
+prefix is granted.
+
 Create the matching IAM conditions first through the browser-authenticated human bootstrap. Only after reviewing the
 Terraform subject/template outputs may a repository administrator activate the matching GitHub OIDC
 customization. Switching GitHub first is forbidden. Phase 09 ensures fork/untrusted PR jobs receive
