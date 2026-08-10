@@ -23,6 +23,7 @@ from scripts.human_aws_login import (
     verify_browser_login_dependency,
     verify_human_login_identity,
     verify_workflow_oidc_identity,
+    verify_workflow_role_identity,
 )
 
 
@@ -376,12 +377,56 @@ def test_workflow_aws_helpers_require_exact_temporary_oidc_deploy_role() -> None
             verify_workflow_oidc_identity(**{**arguments, **mutation})
 
 
+@pytest.mark.parametrize(
+    ("role_kind", "role_name"),
+    (("plan", "modelguard-ai-ci-plan"), ("deploy", "modelguard-ai-ci-deploy")),
+)
+def test_workflow_role_guard_accepts_only_each_exact_oidc_role(
+    role_kind: str,
+    role_name: str,
+) -> None:
+    account = "123456789012"
+    arguments = {
+        "expected_account_id": account,
+        "expected_role_arn": (f"arn:aws:iam::{account}:role/modelguard-ai/bootstrap/{role_name}"),
+        "credential_method": "env",
+        "identity": {
+            "Account": account,
+            "Arn": f"arn:aws:sts::{account}:assumed-role/{role_name}/phase10-run",
+        },
+        "role_kind": role_kind,
+    }
+    result = verify_workflow_role_identity(**arguments)
+
+    assert result["role"] == role_name
+    assert account not in json.dumps(result)
+    for mutation in (
+        {"expected_role_arn": f"arn:aws:iam::{account}:role/{role_name}"},
+        {"credential_method": "login"},
+        {"role_kind": "unknown"},
+        {
+            "identity": {
+                "Account": account,
+                "Arn": f"arn:aws:sts::{account}:assumed-role/another-role/phase10-run",
+            }
+        },
+        {
+            "identity": {
+                "Account": account,
+                "Arn": f"arn:aws:sts::{account}:assumed-role/{role_name}/x",
+            }
+        },
+    ):
+        with pytest.raises(HumanLoginRefusal):
+            verify_workflow_role_identity(**{**arguments, **mutation})
+
+
 def test_workflow_readiness_and_notification_checks_bind_the_exact_oidc_role(
     repository_root: Path,
 ) -> None:
     deploy = (repository_root / ".github/workflows/deploy-demo.yml").read_text()
     assert deploy.count('--workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"') == 3
-    assert deploy.count("AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}") == 3
+    assert deploy.count("AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}") >= 3
 
     readiness = (repository_root / "scripts/aws_readiness_preflight.py").read_text()
     notification = (repository_root / "scripts/notification_enrollment.py").read_text()

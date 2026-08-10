@@ -125,7 +125,12 @@ locals {
 }
 
 resource "terraform_data" "deployment_guard" {
-  input = "${var.project_name}-${var.environment}-${var.deployment_stage}"
+  input = {
+    deployment_governance_mode = var.deployment_governance_mode
+    deployment_stage           = var.deployment_stage
+    environment                = var.environment
+    project                    = var.project_name
+  }
 
   lifecycle {
     precondition {
@@ -172,17 +177,20 @@ resource "terraform_data" "deployment_guard" {
     }
 
     precondition {
-      condition = try(
-        timecmp("${var.auto_destroy_date}T23:59:59Z", plantimestamp()) >= 0 &&
-        timecmp("${var.auto_destroy_date}T23:59:59Z", timeadd(plantimestamp(), "336h")) <= 0,
-        false,
+      condition = var.teardown_authorized || try(
+        (
+          timecmp("${var.auto_destroy_date}T23:59:59Z", plantimestamp()) >= 0 &&
+          timecmp("${var.auto_destroy_date}T23:59:59Z", timeadd(plantimestamp(), "336h")) <= 0
+        ),
+        false
       )
-      error_message = "auto_destroy_date must be today through 14 days from this plan; it is a reminder, not automation."
+      error_message = "auto_destroy_date must be today through 14 days unless the exact dormant teardown contract is authorized."
     }
 
     precondition {
       condition = (
         (
+          !var.teardown_authorized &&
           var.deployment_stage == "prerequisites" &&
           !var.activate_services &&
           var.expected_model_version == null &&
@@ -190,13 +198,27 @@ resource "terraform_data" "deployment_guard" {
           length(var.expected_model_object_version_ids) == 0
         ) ||
         (
+          !var.teardown_authorized &&
           var.deployment_stage == "activation" &&
           var.activate_services &&
           var.expected_model_version != null &&
           var.expected_model_manifest_sha256 != null
+        ) ||
+        (
+          var.teardown_authorized &&
+          var.deployment_stage == "prerequisites" &&
+          !var.activate_services &&
+          !var.runtime_contract_verified &&
+          !var.budget_prerequisite_verified &&
+          var.api_image_ref == null &&
+          var.dashboard_image_ref == null &&
+          var.monitor_image_ref == null &&
+          var.expected_model_version == null &&
+          var.expected_model_manifest_sha256 == null &&
+          length(var.expected_model_object_version_ids) == 0
         )
       )
-      error_message = "Prerequisites must omit expected model identity; activation must bind the verified model identity."
+      error_message = "Prerequisites and activation forbid teardown authorization; teardown requires dormant prerequisite-form runtime inputs."
     }
 
     precondition {

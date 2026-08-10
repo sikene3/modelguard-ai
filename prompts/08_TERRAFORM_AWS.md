@@ -71,7 +71,7 @@ Implement a secure, cost-aware, destroyable Terraform architecture for the tempo
 
 ```bash
 terraform fmt -recursive infrastructure
-terraform -chdir=infrastructure/environments/demo init -backend=false
+terraform -chdir=infrastructure/environments/demo init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infrastructure/environments/demo validate
 checkov -d infrastructure
 ```

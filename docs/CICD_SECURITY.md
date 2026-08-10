@@ -85,12 +85,13 @@ omitting the mode never selects a weaker default.
 ## Required GitHub protections
 
 Protect `main` against direct pushes and require pull requests. At minimum, require the four always-
-running CI job checks:
+running CI job checks. GitHub rulesets require each normal workflow's exact emitted job name; the
+web interface may display the workflow name separately, but it is not part of the ruleset context:
 
-- `CI / Format, lint, and typecheck`
-- `CI / Pytest and branch coverage`
-- `CI / Reproducible security release gates`
-- `CI / Workflow YAML compatibility lint`
+- `Format, lint, and typecheck`
+- `Pytest and branch coverage`
+- `Reproducible security release gates`
+- `Workflow YAML compatibility lint`
 
 Use path-aware rules or required-workflow rules for container and Terraform checks. Do not make a
 path-filtered check globally required on repositories where GitHub leaves an untriggered check in a

@@ -303,6 +303,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
     }
   }
 
+  rule {
+    id     = "expire-phase-10-evidence"
+    status = "Enabled"
+
+    filter {
+      prefix = "phase-10-evidence/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
   depends_on = [aws_s3_bucket_versioning.state]
 
   lifecycle {

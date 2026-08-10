@@ -162,10 +162,16 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact prerequisite-plan OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Verify account and render guarded prerequisite inputs
         run: |
-          actual_account="$(aws sts get-caller-identity --query Account --output text)"
-          test "$actual_account" = "$AWS_ACCOUNT_ID"
           uv run --frozen --no-sync python -m scripts.aws_readiness_preflight all \
             --region "$AWS_REGION" \
             --workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"
@@ -194,6 +200,7 @@ jobs:
           rm -f artifacts/deploy/prerequisite/preflight.json
       - name: Create and seal the runtime-disabled saved plan
         run: |
+          umask 077
           terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
             -lockfile=readonly \
             -backend-config="$GITHUB_WORKSPACE/artifacts/deploy/prerequisite/backend.hcl"
@@ -221,6 +228,7 @@ jobs:
           terraform -chdir=infrastructure/environments/demo show -json \
             "$GITHUB_WORKSPACE/artifacts/deploy/prerequisite/prerequisites.tfplan" 2>/dev/null | \
             uv run --frozen --no-sync python -m scripts.plan_evidence \
+              --plan artifacts/deploy/prerequisite/prerequisites.tfplan \
               --manifest artifacts/deploy/prerequisite/prerequisites.tfplan.identity.json \
               --output-json artifacts/deploy/prerequisite/prerequisites.redacted.json \
               --output-markdown artifacts/deploy/prerequisite/prerequisites.redacted.md \
@@ -293,6 +301,21 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact prerequisite-apply OIDC identity
+        env:
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$EXPECTED_AWS_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
+      - name: Create the private prerequisite-transfer parent
+        run: |
+          test ! -e artifacts/deploy
+          test ! -L artifacts/deploy
+          mkdir -m 0700 artifacts/deploy
       - name: Download only this run's encrypted private prerequisite transfer
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -328,6 +351,7 @@ jobs:
           MODELGUARD_GITHUB_ENVIRONMENT: demo
           CONFIRM_APPLY: "YES"
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           BACKEND_BUCKET_NAME: ${{ vars.TF_BACKEND_BUCKET }}
           BACKEND_CONFIG: ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/backend.hcl
           TFVARS_FILE: ${{ github.workspace }}/artifacts/deploy/prerequisite-transfer/demo-ci.tfvars.json
@@ -389,6 +413,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact notification-gate OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Refuse activation until manual drift notification enrollment is present
         run: >-
           uv run --frozen --no-sync python -m scripts.notification_enrollment verify
@@ -479,6 +511,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
       ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
       PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
@@ -535,6 +568,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact input-verification OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Retrieve the solo release manifest only from encrypted private storage
         if: ${{ inputs.governance_mode == 'solo_portfolio' }}
         run: |
@@ -757,6 +798,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact activation-plan OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Retrieve solo activation inputs only from encrypted private storage
         if: ${{ inputs.governance_mode == 'solo_portfolio' }}
         run: |
@@ -772,8 +821,6 @@ jobs:
           done
       - name: Render and preflight digest-only activation inputs
         run: |
-          actual_account="$(aws sts get-caller-identity --query Account --output text)"
-          test "$actual_account" = "$AWS_ACCOUNT_ID"
           uv run --frozen --no-sync python -m scripts.aws_readiness_preflight all \
             --region "$AWS_REGION" \
             --workflow-role-arn "$AWS_DEPLOY_ROLE_ARN"
@@ -812,6 +859,7 @@ jobs:
             artifacts/deploy/activation/active-pointer.json
       - name: Create and seal the digest-only activation saved plan
         run: |
+          umask 077
           terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
             -lockfile=readonly \
             -backend-config="$GITHUB_WORKSPACE/artifacts/deploy/activation/backend.hcl"
@@ -841,6 +889,7 @@ jobs:
           terraform -chdir=infrastructure/environments/demo show -json \
             "$GITHUB_WORKSPACE/artifacts/deploy/activation/activation.tfplan" 2>/dev/null | \
             uv run --frozen --no-sync python -m scripts.plan_evidence \
+              --plan artifacts/deploy/activation/activation.tfplan \
               --manifest artifacts/deploy/activation/activation.tfplan.identity.json \
               --output-json artifacts/deploy/activation/activation.redacted.json \
               --output-markdown artifacts/deploy/activation/activation.redacted.md \
@@ -912,6 +961,22 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact activation-apply OIDC identity
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$EXPECTED_AWS_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
+      - name: Create the private activation-transfer parent
+        run: |
+          test ! -e artifacts/deploy
+          test ! -L artifacts/deploy
+          mkdir -m 0700 artifacts/deploy
       - name: Download only this run's encrypted private activation transfer
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -964,6 +1029,7 @@ jobs:
           MODELGUARD_GITHUB_ENVIRONMENT: demo
           CONFIRM_APPLY: "YES"
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           BACKEND_BUCKET_NAME: ${{ vars.TF_BACKEND_BUCKET }}
           BACKEND_CONFIG: ${{ github.workspace }}/artifacts/deploy/activation-transfer/backend.hcl
           TFVARS_FILE: ${{ github.workspace }}/artifacts/deploy/activation-transfer/demo-ci.tfvars.json
@@ -1006,6 +1072,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
       API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
       SMOKE_BASE_URL: ${{ vars.DEMO_SMOKE_BASE_URL }}
@@ -1048,6 +1115,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact smoke-test OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Retrieve private deployment identities from encrypted audit storage
         run: |
           root=artifacts/deploy/record-inputs
@@ -1192,6 +1267,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
     steps:
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1214,6 +1290,14 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact automatic-rollback OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Load and validate the durable last-known-good record
         id: rollback
         run: |

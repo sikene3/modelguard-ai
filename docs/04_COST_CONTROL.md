@@ -44,8 +44,8 @@ can be guaranteed by the current architecture.
 ```bash
 uv run --frozen --no-sync python -m scripts.human_aws_login dependency
 # After separately approved browser login and identity verification, use only the guarded,
-# stage-specific saved-plan flow in docs/08_AWS_DEPLOYMENT_ORDER.md.
-terraform -chdir=infrastructure/environments/demo show prerequisites.tfplan
+# value-free, stage-specific saved-plan review flow in docs/TERRAFORM_AWS.md and
+# docs/08_AWS_DEPLOYMENT_ORDER.md. Never print the raw plan.
 ```
 
 Review these cost drivers especially carefully:
@@ -59,12 +59,11 @@ Review these cost drivers especially carefully:
 
 ## After recording the demo
 
-```bash
-CONFIRM_DESTROY=YES \
-AWS_PROFILE=modelguard-bootstrap \
-DEPLOYMENT_GOVERNANCE_MODE="$DEPLOYMENT_GOVERNANCE_MODE" \
-./scripts/safe_destroy.sh
-```
+Use only the complete guarded destroy recipe in `docs/TERRAFORM_AWS.md`; this summary does not
+duplicate its identity, backend, tfvars, expiry, and confirmation inputs. Supply a new absolute
+`POST_DESTROY_INVENTORY` target inside an existing owner-only mode-`0700` directory for the initial
+proof, and a different create-only target for the eventual-consistency confirmation. Never
+overwrite the first inventory receipt.
 
 Then verify through the console or CLI that the demo no longer has unintended:
 

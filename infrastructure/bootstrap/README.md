@@ -17,7 +17,7 @@ into disposable demo state. `prevent_destroy` guards the retained trust/state re
 Validation does not need credentials:
 
 ```bash
-terraform -chdir=infrastructure/bootstrap init -backend=false
+terraform -chdir=infrastructure/bootstrap init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infrastructure/bootstrap validate
 ```
 

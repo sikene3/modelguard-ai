@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
+from modelguard.core.serialization import parse_strict_json_bytes
 from scripts.terraform_demo_guard import ActivePointer
 
 
@@ -20,7 +21,10 @@ class DeploymentInputError(RuntimeError):
 
 
 def _load_object(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = parse_strict_json_bytes(path.read_bytes())
+    except (OSError, ValueError) as error:
+        raise DeploymentInputError("json_invalid") from error
     if not isinstance(value, dict):
         raise DeploymentInputError("json_root_not_object")
     return value
@@ -37,7 +41,10 @@ def _parameter_value(response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         raise DeploymentInputError("active_pointer_parameter_identity_invalid")
     if not isinstance(value, str):
         raise DeploymentInputError("active_pointer_value_missing")
-    parsed = json.loads(value)
+    try:
+        parsed = parse_strict_json_bytes(value.encode("utf-8"))
+    except ValueError as error:
+        raise DeploymentInputError("active_pointer_value_json_invalid") from error
     if not isinstance(parsed, dict):
         raise DeploymentInputError("active_pointer_value_not_object")
     return name, parsed

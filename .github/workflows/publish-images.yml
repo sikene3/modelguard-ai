@@ -238,6 +238,7 @@ jobs:
     env:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       PROVENANCE_TAG: git-${{ inputs.source_commit }}
@@ -325,10 +326,16 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact image-publication OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Verify account, repositories, and create-only tags
         run: |
-          actual_account="$(aws sts get-caller-identity --query Account --output text)"
-          test "$actual_account" = "$AWS_ACCOUNT_ID"
           for component in api dashboard monitor; do
             repository="modelguard-ai/demo/${component}"
             aws ecr describe-repositories --repository-names "$repository" >/dev/null

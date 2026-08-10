@@ -132,8 +132,9 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       `prevent_destroy`, and documents encrypted local-state preservation and usage costs.
 - [ ] The retained CloudTrail prerequisite has been separately reviewed, applied, state-preserved,
       and verified in AWS.
-- [x] Initial deployment uses a reviewed prerequisites plan with runtimes disabled, verifies exact
-      image/model/token prerequisites, then uses a second reviewed digest-pinned activation plan.
+- [x] The guarded deployment design requires a reviewed prerequisites plan with runtimes disabled,
+      exact image/model/token prerequisite verification, and a second reviewed digest-pinned
+      activation plan; the corresponding live applies remain unchecked Phase 10 work.
 - [x] The model publisher verifies the strict seven-file bundle and measured size bounds before AWS,
       refuses any current or historical object under the semantic-version prefix, uses conditional
       create-only writes plus exact checksum/VersionId readback, publishes the checksum index last,
@@ -157,8 +158,9 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       from Terraform state/plans and workflow artifacts. Retained Budget and CloudWatch key-policy
       statements remain independently restricted by exact source-account, source-ARN, topic-context,
       and regional SNS ViaService conditions; the manual budget itself is not Terraform-owned.
-- [x] CloudWatch logs and alarms exist; every alarm has a tested native-service or bounded EMF source,
-      and scheduler submission is not treated as monitor completion.
+- [x] The Terraform design defines CloudWatch logs and alarms; every alarm has a tested
+      native-service or bounded EMF source, and scheduler submission is not treated as monitor
+      completion. Live alarm/source verification remains unchecked Phase 10 work.
 - [ ] `terraform destroy` removes the demo environment without orphaned resources.
 
 ## CI/CD
@@ -176,8 +178,11 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Human apply, destroy, enrollment, and readiness helpers require the exact
       `modelguard-bootstrap` browser-login profile and reject root, static keys, environment
       credentials, and workflow callers; workflow checks separately require the exact OIDC role.
-- [ ] The repository has passed the future-publication audit, been deliberately made Public with
-      Actions disabled, and had the selected governance mode configured in GitHub.
+- [x] The sanitized baseline passed the checksum-verified Publication Audit, was deliberately made
+      Public with Actions disabled, and received the exact solo `main` ruleset plus the three
+      contract environments.
+- [ ] Repository variables, customized OIDC claims, and matching AWS trust are configured and read
+      back before Actions is enabled.
 - [x] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
       actions/base images are pinned.
 - [ ] Post-deploy smoke test runs.

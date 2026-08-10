@@ -42,14 +42,18 @@
 
 ## Live deployment segment — authorized; mutation not yet executed
 
+- [ ] Commit the reviewed live-path guard corrections, regenerate the model bundle from that clean
+      commit, and pass the clean-source release gate; the current dirty candidate passes all other
+      applicable local gates and deliberately fails closed at the bundle provenance check
 - [x] AWS identity confirmed with the browser-authenticated non-root operator profile in `us-east-1`
 - [ ] Account/Region/backend/tags/CIDR/budget/expiry/access-mode guardrails confirmed
 - [x] Manual USD 10 budget exists and passes the value-free read-only preflight
 - [x] Firehose account readiness passes without `SubscriptionRequiredException`
 - [ ] Retained CloudTrail design reviewed/applied and its encrypted state preservation verified
 - [ ] Bootstrap trust boundary reviewed with temporary browser-authenticated human identity
-- [ ] GitHub governance mode, visibility, environments, protections, variables, OIDC template, and
-      Actions-disabled setup reviewed and configured
+- [x] Public visibility, exact solo main ruleset, and the three contract environments reviewed and
+      configured while Actions remains disabled
+- [ ] GitHub variables and OIDC template configured only after the matching AWS trust exists
 - [ ] Prerequisite saved plan applied with runtimes disabled
 - [ ] Each image scanned/pushed once and immutable digest resolved
 - [ ] Model no-overwrite publish verified; exact manifest pointer promoted

@@ -161,9 +161,9 @@ neither `id-token: write` nor state/AWS credentials.
 
 ```bash
 terraform fmt -check -recursive infrastructure
-terraform -chdir=infrastructure/bootstrap init -backend=false
+terraform -chdir=infrastructure/bootstrap init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infrastructure/bootstrap validate
-terraform -chdir=infrastructure/environments/demo init -backend=false
+terraform -chdir=infrastructure/environments/demo init -backend=false -input=false -lockfile=readonly
 terraform -chdir=infrastructure/environments/demo validate
 make security-tools-bootstrap
 make security-scan
@@ -191,26 +191,68 @@ apply, the account/organization owner must confirm an existing CloudTrail trail
 captures S3 data events for the exact future state-bucket ARN; that retained account-level control is
 why this root does not create a circular second state-log bucket.
 
-Copy `backend.hcl.example` to Git-ignored `backend.hcl` with bootstrap outputs. The required fields
-are exact bucket/key/Region/KMS, `encrypt=true`, and `use_lockfile=true`. The guard refuses missing or
-additional backend fields, a wrong account/Region key ARN, or a bucket that does not match the exact
-account/Region naming contract.
+The demo backend is rendered together with its guarded stage inputs in the next step. The required
+fields are exact bucket/key/Region/KMS, `encrypt=true`, and `use_lockfile=true`; do not maintain a
+second copied backend configuration. The guard refuses missing or additional fields, a wrong
+account/Region key ARN, or a bucket that does not match the exact account/Region naming contract.
 
 ### 3. First reviewed saved plan: prerequisites
 
-Copy `demo.auto.tfvars.example` to a Git-ignored file. Use a current restricted CIDR and an
-AutoDestroyDate no more than 14 days away. For HTTPS, include only ACM and SecureString ARNs. No
-notification address is a Terraform input. Set `alert_kms_key_arn` only from the bootstrap
-`alert_kms_key_arn` output; it is non-secret and is bound to the guarded account and Region.
+Render the noncommitted inputs with `scripts.render_ci_terraform` into an absolute, Git-ignored
+operator directory. For this solo run, set `DEPLOYMENT_GOVERNANCE_MODE=solo_portfolio` exactly and
+pass it as `--governance-mode "$DEPLOYMENT_GOVERNANCE_MODE"`. There is no implicit governance mode;
+`team_protected` is allowed only with a real independent reviewer. The supported human
+`TFVARS_FILE` is the renderer's `demo-ci.tfvars.json`, which is strict JSON with exact mode `0600`:
 
 ```bash
-terraform -chdir=infrastructure/environments/demo init \
-  -reconfigure -backend-config=/absolute/path/backend.hcl
-terraform -chdir=infrastructure/environments/demo plan \
-  -var-file=/absolute/path/demo.auto.tfvars \
-  -out=prerequisites.tfplan
-terraform -chdir=infrastructure/environments/demo show prerequisites.tfplan
+export DEPLOYMENT_GOVERNANCE_MODE=solo_portfolio
+umask 077
+uv run --frozen --no-sync python -m scripts.render_ci_terraform \
+  --output-dir /absolute/git-ignored/operator-inputs/prerequisites \
+  --stage prerequisites \
+  --account-id 123456789012 \
+  --region us-east-1 \
+  --owner-tag portfolio-owner \
+  --governance-mode "$DEPLOYMENT_GOVERNANCE_MODE" \
+  --auto-destroy-date YYYY-MM-DD \
+  --backend-bucket modelguard-ai-terraform-state-123456789012-us-east-1 \
+  --backend-kms-key-arn '<bootstrap-state-key-arn>' \
+  --permission-boundary-arn '<bootstrap-boundary-arn>' \
+  --alert-kms-key-arn '<bootstrap-alert-key-arn>' \
+  --alb-allowed-cidr '<restricted-cidr>' \
+  --access-mode http_cidr_only
+export TFVARS_FILE=/absolute/git-ignored/operator-inputs/prerequisites/demo-ci.tfvars.json
+export BACKEND_CONFIG=/absolute/git-ignored/operator-inputs/prerequisites/backend.hcl
 ```
+
+Use the HTTPS-only renderer arguments instead when `https_token` is selected. Use a current
+restricted CIDR and an AutoDestroyDate no more than 14 days away. For HTTPS, include only ACM and
+SecureString ARNs. No notification address is a Terraform input. Set `alert_kms_key_arn` only from
+the bootstrap `alert_kms_key_arn` output; it is non-secret and is bound to the guarded account and
+Region. The human helpers reject HCL tfvars, symlinks, foreign-owned inputs, invalid JSON, and any
+permission mode other than `0600`.
+The renderer's `backend.hcl` is the canonical `BACKEND_CONFIG`; it is also owner-controlled,
+non-symlinked, and mode `0600`. Do not substitute a separately copied or more permissive backend
+file after review.
+
+```bash
+umask 077
+uv run --frozen --no-sync python scripts/terraform_demo_guard.py verify-backend \
+  --input "$BACKEND_CONFIG" \
+  --bucket modelguard-ai-terraform-state-123456789012-us-east-1 \
+  --account-id 123456789012 --region us-east-1
+terraform -chdir=infrastructure/environments/demo init \
+  -input=false -reconfigure -lockfile=readonly \
+  -backend-config="$BACKEND_CONFIG"
+if ! terraform -chdir=infrastructure/environments/demo plan -input=false -no-color \
+  -var-file="$TFVARS_FILE" -out=prerequisites.tfplan >/dev/null 2>&1; then
+  echo "Prerequisite-plan creation failed; raw Terraform output was suppressed." >&2
+  exit 1
+fi
+```
+
+The restrictive umask is mandatory: the opaque saved plan must be an owner-controlled regular file
+with mode `0600`, or the seal and evidence guards refuse it.
 
 The first plan must have `deployment_stage=prerequisites`, `activate_services=false`,
 `runtime_contract_verified=false`, no image inputs, API/dashboard desired count zero, and schedule
@@ -221,16 +263,35 @@ invalid identity, date, transport combination, or stage a plan error. Do not use
 
 Bind the opaque saved plan to its plan hash, variable-file hash, backend-file hash, account, Region,
 project, environment, backend key, default workspace, Git commit, stage, activation state, and
-AutoDestroyDate:
+AutoDestroyDate. The strict identity is `modelguard.saved-plan-identity.v2`, which also binds the
+required Owner tag, deployment governance mode, and teardown authorization. Destroy identities also
+bind the plan-derived runtime source-state enum; legacy v1 manifests are rejected rather than
+inferred or upgraded:
 
 ```bash
-uv run python scripts/terraform_demo_guard.py seal-plan \
+uv run --frozen --no-sync python scripts/terraform_demo_guard.py seal-plan \
   --plan infrastructure/environments/demo/prerequisites.tfplan \
-  --var-file /absolute/path/demo.auto.tfvars \
-  --backend-config /absolute/path/backend.hcl \
+  --var-file "$TFVARS_FILE" \
+  --backend-config "$BACKEND_CONFIG" \
   --stage prerequisites --account-id 123456789012 --region us-east-1 \
   --repository . --auto-destroy-date YYYY-MM-DD --activate-services false \
   --output infrastructure/environments/demo/prerequisites.tfplan.identity.json
+```
+
+Render persistent review evidence only after the plan is sealed. This is a separate, create-only
+evidence command; `safe_apply.sh` does not populate or overwrite these paths. The raw
+human-readable plan and the raw JSON must never be printed or persisted as evidence:
+
+```bash
+terraform -chdir=infrastructure/environments/demo show -json prerequisites.tfplan 2>/dev/null \
+  | uv run --frozen --no-sync python -m scripts.plan_evidence \
+      --plan infrastructure/environments/demo/prerequisites.tfplan \
+      --manifest infrastructure/environments/demo/prerequisites.tfplan.identity.json \
+      --output-json infrastructure/environments/demo/prerequisites.tfplan.redacted.json \
+      --output-markdown infrastructure/environments/demo/prerequisites.tfplan.redacted.md \
+      --repository local/operator --run-id human --run-attempt 1 \
+      --workflow-ref local/operator
+chmod 0600 infrastructure/environments/demo/prerequisites.tfplan.redacted.{json,md}
 ```
 
 Verification must run immediately before applying the same saved plan in Phase 10. A renamed,
@@ -238,9 +299,17 @@ modified, more-than-24-hour-old, implausibly future-dated, wrong-commit, wrong-a
 wrong-backend, or wrong-stage plan is refused.
 
 In Phase 10 only, the manual operator path applies this exact file through `scripts/safe_apply.sh`.
-The script rechecks backend/account/Region/default workspace, displays the plan, verifies the sealed
-identity, requires the operator to type the exact stage, and verifies identity again immediately
-before `terraform apply <saved-plan>`. It never creates a plan and accepts no arbitrary plan name:
+The script rechecks backend/account/Region/default workspace, renders and displays only the sealed
+action-only redacted evidence from a newly created mode-`0700` temporary directory, verifies the
+sealed identity, requires the operator to type the exact stage, and verifies identity again
+immediately before `terraform apply <saved-plan>`. Both temporary evidence files are mode `0600`;
+the helper prints only the Markdown and removes the directory on success, cancellation, or failure.
+Persistent redacted evidence may already exist and is never reused or modified. Activation also
+re-reads the non-secret SSM active pointer into that same temporary directory with the explicit
+profile and Region and `--no-with-decryption`, then calls `verify-active-pointer` after the
+confirmation and final plan check. Prerequisites skip that pointer read. One EXIT cleanup handles
+both the evidence and pointer without replacing an earlier trap. The helper suppresses raw Terraform
+apply diagnostics, never creates a plan, and accepts no arbitrary plan name:
 
 ```bash
 CONFIRM_APPLY=YES \
@@ -248,8 +317,9 @@ EXPECTED_AWS_ACCOUNT_ID=123456789012 \
 AWS_REGION=us-east-1 \
 AWS_PROFILE=modelguard-bootstrap \
 BACKEND_BUCKET_NAME=modelguard-ai-terraform-state-123456789012-us-east-1 \
-BACKEND_CONFIG=/absolute/path/backend.hcl \
-TFVARS_FILE=/absolute/path/demo.auto.tfvars \
+BACKEND_CONFIG="$BACKEND_CONFIG" \
+TFVARS_FILE=/absolute/git-ignored/operator-inputs/prerequisites/demo-ci.tfvars.json \
+DEPLOYMENT_GOVERNANCE_MODE=solo_portfolio \
 PLAN_STAGE=prerequisites \
 scripts/safe_apply.sh
 ```
@@ -300,10 +370,11 @@ requires exact equality with those inputs before setting desired count one, enab
 and enabling the schedule.
 
 ```bash
-terraform -chdir=infrastructure/environments/demo plan \
-  -var-file=/absolute/path/demo.auto.tfvars \
-  -out=activation.tfplan
-terraform -chdir=infrastructure/environments/demo show activation.tfplan
+if ! terraform -chdir=infrastructure/environments/demo plan -input=false -no-color \
+  -var-file="$TFVARS_FILE" -out=activation.tfplan >/dev/null 2>&1; then
+  echo "Activation-plan creation failed; raw Terraform output was suppressed." >&2
+  exit 1
+fi
 ```
 
 Seal the identity beside the activation plan, then use the same guarded script with
@@ -417,13 +488,92 @@ automatic retraining, or automatic deletion service.
 
 ## Guarded destroy and retained inventory
 
+Render a fresh private, one-run destroy input set rather than reusing prerequisite or activation
+tfvars. The AutoDestroyDate is the exact deployed tag value and must not be moved forward merely
+because it has expired:
+
+```bash
+umask 077
+uv run --frozen --no-sync python -m scripts.render_ci_terraform \
+  --output-dir /absolute/git-ignored/operator-inputs/destroy \
+  --stage destroy --teardown-authorized \
+  --account-id 123456789012 --region us-east-1 \
+  --owner-tag '<deployed-owner>' --governance-mode solo_portfolio \
+  --auto-destroy-date '<exact-deployed-AutoDestroyDate>' \
+  --backend-bucket modelguard-ai-terraform-state-123456789012-us-east-1 \
+  --backend-kms-key-arn '<bootstrap-state-key-arn>' \
+  --permission-boundary-arn '<bootstrap-boundary-arn>' \
+  --alert-kms-key-arn '<bootstrap-alert-key-arn>' \
+  --alb-allowed-cidr '<deployed-restricted-cidr>' \
+  --access-mode '<deployed-access-mode>'
+export TFVARS_FILE=/absolute/git-ignored/operator-inputs/destroy/demo-ci.tfvars.json
+export BACKEND_CONFIG=/absolute/git-ignored/operator-inputs/destroy/backend.hcl
+export TEARDOWN_AUTHORIZED=true
+```
+
+For deployed `https_token`, add the exact deployed ACM certificate and SSM parameter ARNs. The
+renderer fixes the Terraform stage to prerequisite form, disables services, removes all runtime and
+model identity inputs, and sets the otherwise-false teardown authorization. This file is valid only
+for the guarded destroy that seals it.
+
 Run `scripts/safe_destroy.sh` only in Phase 10 with the required explicit account, Region, backend,
-tfvars, and date inputs. It verifies backend identity before init, confirms STS and configured Region,
-requires the default workspace, creates exactly `destroy.tfplan`, displays it, seals its identity,
-requires two human confirmations, verifies the unchanged saved plan immediately before apply, then
-calls `scripts/verify_aws_teardown.sh`. The saved-plan identity guard deliberately accepts an expired
+renderer-produced mode-`0600` `.tfvars.json`, exact `DEPLOYMENT_GOVERNANCE_MODE`, and date inputs. It
+also requires `POST_DESTROY_INVENTORY` to be a new absolute path under an already existing,
+operator-owned, non-symlinked, mode-`0700` encrypted evidence directory. For example:
+
+```bash
+install -d -m 0700 /absolute/encrypted/phase-10/teardown
+export POST_DESTROY_INVENTORY=/absolute/encrypted/phase-10/teardown/post-destroy-inventory-initial.json
+```
+
+Run the complete guarded command with the same reviewed renderer output and deployed date:
+
+```bash
+CONFIRM_DESTROY=YES \
+TEARDOWN_AUTHORIZED=true \
+EXPECTED_AWS_ACCOUNT_ID=123456789012 \
+AWS_REGION=us-east-1 \
+AWS_PROFILE=modelguard-bootstrap \
+BACKEND_BUCKET_NAME=modelguard-ai-terraform-state-123456789012-us-east-1 \
+BACKEND_CONFIG="$BACKEND_CONFIG" \
+TFVARS_FILE="$TFVARS_FILE" \
+AUTO_DESTROY_DATE=YYYY-MM-DD \
+DEPLOYMENT_GOVERNANCE_MODE=solo_portfolio \
+POST_DESTROY_INVENTORY="$POST_DESTROY_INVENTORY" \
+scripts/safe_destroy.sh
+```
+
+The two interactive phrases are exactly `modelguard-ai` and
+`DESTROY SOLO modelguard-ai demo` for this governance mode. Review the value-free destroy evidence
+before entering the second phrase.
+
+The helper verifies backend identity before init, confirms STS and configured Region, requires the default
+workspace, creates exactly `destroy.tfplan` while suppressing raw plan diagnostics, seals its
+identity, displays only action-only redacted evidence, requires two human confirmations, verifies
+the unchanged saved plan immediately before a raw-output-suppressed apply, then calls
+`scripts/verify_aws_teardown.sh`. The saved-plan identity guard deliberately accepts an expired
 AutoDestroyDate for the exact `destroy.tfplan`; it is a teardown deadline, not an authorization to
 strand resources. Phase 10 must still review the provider-backed destroy plan before applying it.
+
+The destroy plan, identity manifest, redacted JSON, and redacted Markdown are one persistent,
+create-only review set beside the plan. The helper refuses before the plan command when any one of
+those targets already exists. A cancellation never overwrites or deletes the sealed set: archive all
+four files to approved private storage or deliberately remove those exact files before beginning a
+new review. This differs intentionally from `safe_apply.sh`, whose plan/identity already exist and
+whose additional interactive review rendering is temporary.
+
+Destroy evidence is accepted only when it contains at least one managed resource and every managed
+resource action is exactly `delete`. Managed `no-op`, replacement, create, update, mixed, and empty
+destroy plans are refused; data-source `read`/`no-op` entries do not count as teardown. Destroy-only
+provider drift is accepted only after exact address, provider, resource type, required
+ModelGuard tag, and Owner validation; the review evidence emits only the redacted address/action and
+count. Unknown, foreign, untagged, or any non-destroy drift fails closed. The saved
+manifest keeps `activate_services=false` for the dormant destroy inputs and separately binds
+`source_activation_state` as `active`, `dormant`, or `mixed_or_partial`. The guard derives that enum
+from the API and dashboard desired counts plus Scheduler state in the saved destroy plan's private
+before-values; it never relies on a potentially absent or stale root output. Plan evidence
+independently recomputes the enum. When the deployment guard is present in state, its before-value
+must match the sealed governance mode; absence after a partial apply remains recoverable.
 
 Tag inventory is necessary but not sufficient. Record service-specific post-destroy queries for:
 
@@ -437,11 +587,71 @@ Tag inventory is necessary but not sufficient. Record service-specific post-dest
 - SNS topics/subscriptions, SSM pointer locations, and workload IAM roles. The manual budget and
   retained audit resources are expected retained inventory and are not demo orphans.
 
-The teardown verifier produces one machine-readable payload containing Resource Groups tag inventory
-plus exact service queries, including active and inactive ECS task definitions. The Python guard
-rejects any tagged or service-specific residual. Retain the JSON under `reports/generated/phase-10/`
-and run the verifier again after an eventual-consistency delay; an empty first response is not proof
-by itself. Any query error fails closed instead of being normalized to an empty result.
+The teardown verifier produces the strict `modelguard.post-destroy-inventory.v2` payload. It binds
+the evidence to the verified account and Region and keeps three exhaustive sections separate:
+
+- `service_residuals` contains every live-resource query, including active ECS task definitions;
+- `retained_resources` must contain exactly the mandatory `modelguard-ai-demo-monthly` Budget; and
+- `nonbillable_metadata` may contain only inactive revisions of the exact ModelGuard API,
+  dashboard, and monitor task-definition families in the bound account and Region.
+
+The Python guard rejects unknown or missing schema fields/categories, any missing or additional
+Budget, malformed/foreign inactive task-definition metadata, and any tagged or service-specific
+live residual. Inactive task-definition revisions are immutable, nonbillable ECS registration
+metadata; they are recorded as validated evidence rather than misreported as live resources. Retain
+the create-only initial JSON in the encrypted directory. After the eventual-consistency delay, run
+the verifier directly with the same identity inputs and
+`INVENTORY_OUTPUT=/absolute/encrypted/phase-10/teardown/post-destroy-inventory-confirmation.json`.
+Both files must remain mode `0600`; an empty first response is not proof by itself, and neither path
+may be reused. Any query error fails closed instead of being normalized to an empty result.
+
+After the bounded eventual-consistency wait, create the distinct confirmation receipt directly:
+
+```bash
+EXPECTED_AWS_ACCOUNT_ID=123456789012 \
+AWS_REGION=us-east-1 \
+AWS_PROFILE=modelguard-bootstrap \
+INVENTORY_OUTPUT=/absolute/encrypted/phase-10/teardown/post-destroy-inventory-confirmation.json \
+scripts/verify_aws_teardown.sh
+```
+
+The protected destroy workflow performs the same two-receipt sequence. It uploads both raw receipts
+create-only under the encrypted state bucket's dedicated `phase-10-evidence/teardown/` prefix,
+requires S3 SHA-256 checksum readback, emits only receipt SHA-256 values publicly, and removes the
+runner copies. That prefix has an independent 30-day lifecycle; it is not the one-day confidential
+saved-plan transfer area. Closure must retrieve and seal the receipts before that finite retention
+expires.
+
+If the reviewed destroy plan was applied successfully but the inventory or receipt-retention step
+failed, the workflow remains failed. Do not rerun or apply a zero-delete plan and do not convert the
+event into a green workflow. A browser-authenticated human must bind the failed repository,
+workflow run/attempt, source commit, reviewed plan and manifest hashes, account, and Region; inspect
+the exact retained backend read-only and prove zero managed resources; then run
+`scripts/verify_aws_teardown.sh` twice into distinct new create-only private paths. Record both
+checksums against the failed workflow's private evidence. Preserve the old confidential transfer
+until the provenance and both receipts have been independently reconciled. Any managed state
+requires a fresh ordinary nonempty plan in which every managed action is exactly `delete`.
+
+Use the same exact mode-`0600` destroy `BACKEND_CONFIG` and never persist or print raw state:
+
+```bash
+uv run --frozen --no-sync python -m scripts.human_aws_login verify \
+  --profile modelguard-bootstrap --region us-east-1 \
+  --expected-account-id "$EXPECTED_AWS_ACCOUNT_ID" >/dev/null
+uv run --frozen --no-sync python scripts/terraform_demo_guard.py verify-backend \
+  --input "$BACKEND_CONFIG" --bucket "$BACKEND_BUCKET_NAME" \
+  --account-id "$EXPECTED_AWS_ACCOUNT_ID" --region us-east-1 >/dev/null
+terraform -chdir=infrastructure/environments/demo init \
+  -input=false -reconfigure -lockfile=readonly -backend-config="$BACKEND_CONFIG" >/dev/null
+test "$(terraform -chdir=infrastructure/environments/demo workspace show)" = default
+terraform -chdir=infrastructure/environments/demo state pull 2>/dev/null | \
+  uv run --frozen --no-sync python scripts/terraform_demo_guard.py \
+    verify-empty-managed-state >/dev/null
+```
+
+Any identity, backend, workspace, state-structure, or nonempty-managed-state failure stops recovery.
+Only after this proof may the operator create the two new inventory receipts described above; the
+original failed run and confidential transfer remain unchanged pending separately reviewed cleanup.
 
 The expected retained inventory is separate and explicit:
 

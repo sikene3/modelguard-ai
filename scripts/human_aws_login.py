@@ -21,6 +21,10 @@ APPROVED_REGION = "us-east-1"
 APPROVED_USER = "modelguard-bootstrap-admin"
 APPROVED_AWSCRT_VERSION = "0.36.0"
 AWSCRT_REQUIREMENT_PATTERN = re.compile(r"^awscrt \(==([0-9]+(?:\.[0-9]+)+)\)")
+APPROVED_WORKFLOW_ROLE_NAMES = {
+    "deploy": "modelguard-ai-ci-deploy",
+    "plan": "modelguard-ai-ci-plan",
+}
 
 
 class HumanLoginRefusal(RuntimeError):
@@ -63,10 +67,32 @@ def verify_workflow_oidc_identity(
 ) -> dict[str, Any]:
     """Require the exact deploy-role session injected by the OIDC credentials action."""
 
+    return verify_workflow_role_identity(
+        expected_account_id=expected_account_id,
+        expected_role_arn=expected_role_arn,
+        credential_method=credential_method,
+        identity=identity,
+        role_kind="deploy",
+    )
+
+
+def verify_workflow_role_identity(
+    *,
+    expected_account_id: str,
+    expected_role_arn: str,
+    credential_method: str | None,
+    identity: Mapping[str, Any],
+    role_kind: str,
+) -> dict[str, Any]:
+    """Require one exact plan/deploy OIDC role and a bounded assumed-role session."""
+
     if re.fullmatch(r"[0-9]{12}", expected_account_id) is None:
         raise HumanLoginRefusal("expected_account_invalid")
+    role_name = APPROVED_WORKFLOW_ROLE_NAMES.get(role_kind)
+    if role_name is None:
+        raise HumanLoginRefusal("workflow_role_kind_invalid")
     required_role_arn = (
-        f"arn:aws:iam::{expected_account_id}:role/modelguard-ai/bootstrap/modelguard-ai-ci-deploy"
+        f"arn:aws:iam::{expected_account_id}:role/modelguard-ai/bootstrap/{role_name}"
     )
     if expected_role_arn != required_role_arn:
         raise HumanLoginRefusal("workflow_role_identity_invalid")
@@ -75,7 +101,7 @@ def verify_workflow_oidc_identity(
     if identity.get("Account") != expected_account_id:
         raise HumanLoginRefusal("workflow_account_identity_invalid")
     arn = identity.get("Arn")
-    prefix = f"arn:aws:sts::{expected_account_id}:assumed-role/modelguard-ai-ci-deploy/"
+    prefix = f"arn:aws:sts::{expected_account_id}:assumed-role/{role_name}/"
     if (
         not isinstance(arn, str)
         or not arn.startswith(prefix)
@@ -85,7 +111,7 @@ def verify_workflow_oidc_identity(
     return {
         "account_id_masked": f"********{expected_account_id[-4:]}",
         "credential_source": "github_oidc_temporary_session",
-        "role": "modelguard-ai-ci-deploy",
+        "role": role_name,
         "status": "passed",
     }
 
@@ -137,6 +163,13 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--profile", required=True)
     verify.add_argument("--region", required=True)
     verify.add_argument("--expected-account-id", required=True)
+    workflow = subparsers.add_parser("verify-workflow")
+    workflow.add_argument("--region", required=True)
+    workflow.add_argument("--expected-account-id", required=True)
+    workflow.add_argument("--expected-role-arn", required=True)
+    workflow.add_argument(
+        "--role-kind", choices=sorted(APPROVED_WORKFLOW_ROLE_NAMES), required=True
+    )
     return parser
 
 
@@ -148,6 +181,40 @@ def main() -> int:
         except HumanLoginRefusal as error:
             print(json.dumps({"reason": str(error), "status": "refused"}), file=sys.stderr)
             return 2
+        print(json.dumps(result, sort_keys=True))
+        return 0
+
+    if args.command == "verify-workflow":
+        named_profile_environment = {
+            name for name in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE") if os.environ.get(name)
+        }
+        try:
+            if args.region != APPROVED_REGION:
+                raise HumanLoginRefusal("canonical_region_required")
+            if named_profile_environment:
+                raise HumanLoginRefusal("workflow_named_profile_forbidden")
+            session = boto3.Session(region_name=args.region)
+            credentials = session.get_credentials()
+            method = None if credentials is None else credentials.method
+            identity = session.client("sts", region_name=args.region).get_caller_identity()
+            result = verify_workflow_role_identity(
+                expected_account_id=args.expected_account_id,
+                expected_role_arn=args.expected_role_arn,
+                credential_method=method,
+                identity=identity,
+                role_kind=args.role_kind,
+            )
+        except HumanLoginRefusal as error:
+            print(json.dumps({"reason": str(error), "status": "refused"}), file=sys.stderr)
+            return 2
+        except (BotoCoreError, ClientError, RuntimeError):
+            print(
+                json.dumps(
+                    {"reason": "workflow_identity_verification_failed", "status": "refused"}
+                ),
+                file=sys.stderr,
+            )
+            return 3
         print(json.dumps(result, sort_keys=True))
         return 0
 

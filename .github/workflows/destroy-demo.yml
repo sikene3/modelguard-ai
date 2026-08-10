@@ -19,6 +19,11 @@ on:
         description: Exact AutoDestroyDate from the deployed state
         required: true
         type: string
+      teardown_authorized:
+        description: Explicit one-run authorization for dormant destroy inputs
+        required: true
+        default: false
+        type: boolean
       confirmation:
         description: Exact governance-mode destroy phrase
         required: true
@@ -49,6 +54,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
       BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       PERMISSION_BOUNDARY_ARN: ${{ vars.TF_PERMISSION_BOUNDARY_ARN }}
       ALERT_KMS_KEY_ARN: ${{ vars.TF_ALERT_KMS_KEY_ARN }}
       OWNER_TAG: ${{ vars.DEMO_OWNER_TAG }}
@@ -87,6 +93,7 @@ jobs:
           job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
           job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
           test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
+          test "${{ inputs.teardown_authorized }}" = "true"
           uv run --frozen --no-sync python -m scripts.deployment_governance entry \
             --mode "$GOVERNANCE_MODE" \
             --operation destroy \
@@ -110,11 +117,20 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact destroy-plan OIDC identity
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$AWS_DEPLOY_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
       - name: Render exact destroy inputs and initialize retained backend
         run: |
           uv run --frozen --no-sync python -m scripts.render_ci_terraform \
             --output-dir artifacts/destroy \
-            --stage prerequisites \
+            --stage destroy \
+            --teardown-authorized \
             --account-id "$AWS_ACCOUNT_ID" \
             --region "$AWS_REGION" \
             --owner-tag "$OWNER_TAG" \
@@ -128,20 +144,29 @@ jobs:
             --access-mode "$API_ACCESS_MODE" \
             --acm-certificate-arn "$ACM_CERTIFICATE_ARN" \
             --prediction-token-ssm-arn "$PREDICTION_TOKEN_SSM_ARN"
+          uv run --frozen --no-sync python scripts/terraform_demo_guard.py preflight \
+            --input artifacts/destroy/preflight.json \
+            --account-id "$AWS_ACCOUNT_ID" \
+            --region "$AWS_REGION" \
+            --stage destroy \
+            --backend-bucket "$BACKEND_BUCKET"
           rm -f artifacts/destroy/preflight.json
           terraform -chdir=infrastructure/environments/demo init -input=false -reconfigure \
             -lockfile=readonly -backend-config="$GITHUB_WORKSPACE/artifacts/destroy/backend.hcl"
           test "$(terraform -chdir=infrastructure/environments/demo workspace show)" = "default"
-          test "$(terraform -chdir=infrastructure/environments/demo output -raw deployment_governance_mode)" = \
-            "$GOVERNANCE_MODE"
       - name: Create, seal, and summarize the exact destroy plan
         run: |
-          activation="$(terraform -chdir=infrastructure/environments/demo output -json activation_state | jq -r '.activate_services')"
-          [[ "$activation" = "true" || "$activation" = "false" ]]
+          umask 077
           terraform -chdir=infrastructure/environments/demo plan -destroy -input=false \
             -lock-timeout=5m -no-color \
             -var-file="$GITHUB_WORKSPACE/artifacts/destroy/demo-ci.tfvars.json" \
             -out="$GITHUB_WORKSPACE/artifacts/destroy/destroy.tfplan" >/dev/null 2>&1
+          source_activation_state="$(
+            terraform -chdir=infrastructure/environments/demo show -json \
+              "$GITHUB_WORKSPACE/artifacts/destroy/destroy.tfplan" 2>/dev/null | \
+              uv run --frozen --no-sync python scripts/terraform_demo_guard.py \
+                classify-destroy-plan-source-state 2>/dev/null
+          )"
           uv run --frozen --no-sync python scripts/terraform_demo_guard.py seal-plan \
             --plan artifacts/destroy/destroy.tfplan \
             --var-file artifacts/destroy/demo-ci.tfvars.json \
@@ -151,11 +176,13 @@ jobs:
             --region "$AWS_REGION" \
             --repository . \
             --auto-destroy-date "${{ inputs.auto_destroy_date }}" \
-            --activate-services "$activation" \
+            --activate-services false \
+            --source-activation-state "$source_activation_state" \
             --output artifacts/destroy/destroy.tfplan.identity.json
           terraform -chdir=infrastructure/environments/demo show -json \
             "$GITHUB_WORKSPACE/artifacts/destroy/destroy.tfplan" 2>/dev/null | \
             uv run --frozen --no-sync python -m scripts.plan_evidence \
+              --plan artifacts/destroy/destroy.tfplan \
               --manifest artifacts/destroy/destroy.tfplan.identity.json \
               --output-json artifacts/destroy/destroy.redacted.json \
               --output-markdown artifacts/destroy/destroy.redacted.md \
@@ -194,6 +221,7 @@ jobs:
       BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
       BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      TEARDOWN_AUTHORIZED: ${{ inputs.teardown_authorized }}
     steps:
       - name: Check out the exact source commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -221,11 +249,28 @@ jobs:
           audience: sts.amazonaws.com
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           mask-aws-account-id: true
+      - name: Verify the exact destroy-apply OIDC identity
+        env:
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: >-
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow
+          --region "$AWS_REGION"
+          --expected-account-id "$AWS_ACCOUNT_ID"
+          --expected-role-arn "$EXPECTED_AWS_ROLE_ARN"
+          --role-kind deploy
+          >/dev/null
+      - name: Create the private destroy-transfer parent
+        run: |
+          test ! -e artifacts/destroy
+          test ! -L artifacts/destroy
+          mkdir -m 0700 artifacts/destroy
       - name: Retrieve only this run's encrypted private destroy transfer
         env:
           PLAN_STAGE: destroy
-          TRANSFER_DIRECTORY: artifacts/destroy-transfer
+          TRANSFER_DIRECTORY: artifacts/destroy/destroy-transfer
         run: ./scripts/confidential_plan_transfer.sh download
+      - name: Reverify the explicit one-run teardown authorization
+        run: test "$TEARDOWN_AUTHORIZED" = "true"
       - name: Verify the exact human-reviewed destroy evidence
         env:
           REVIEWED_PLAN_SHA256: ${{ vars.REVIEWED_DESTROY_PLAN_SHA256 }}
@@ -233,8 +278,8 @@ jobs:
           REVIEWED_RUN_IDENTITY: ${{ vars.REVIEWED_DESTROY_RUN_IDENTITY }}
           REVIEW_CONFIRMATION: ${{ vars.REVIEWED_DESTROY_CONFIRMATION }}
         run: |
-          plan=artifacts/destroy-transfer/destroy.tfplan
-          identity=artifacts/destroy-transfer/destroy.tfplan.identity.json
+          plan=artifacts/destroy/destroy-transfer/destroy.tfplan
+          identity=artifacts/destroy/destroy-transfer/destroy.tfplan.identity.json
           uv run --frozen --no-sync python -m scripts.deployment_governance evidence \
             --mode "$GOVERNANCE_MODE" \
             --stage destroy \
@@ -253,21 +298,116 @@ jobs:
           MODELGUARD_GITHUB_ENVIRONMENT: demo-destroy
           CONFIRM_APPLY: "YES"
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           BACKEND_BUCKET_NAME: ${{ vars.TF_BACKEND_BUCKET }}
-          BACKEND_CONFIG: ${{ github.workspace }}/artifacts/destroy-transfer/backend.hcl
-          TFVARS_FILE: ${{ github.workspace }}/artifacts/destroy-transfer/demo-ci.tfvars.json
+          BACKEND_CONFIG: ${{ github.workspace }}/artifacts/destroy/destroy-transfer/backend.hcl
+          TFVARS_FILE: ${{ github.workspace }}/artifacts/destroy/destroy-transfer/demo-ci.tfvars.json
           PLAN_STAGE: destroy
           DEPLOYMENT_GOVERNANCE_MODE: ${{ inputs.governance_mode }}
-          PLAN_FILE: ${{ github.workspace }}/artifacts/destroy-transfer/destroy.tfplan
-          PLAN_MANIFEST: ${{ github.workspace }}/artifacts/destroy-transfer/destroy.tfplan.identity.json
+          PLAN_FILE: ${{ github.workspace }}/artifacts/destroy/destroy-transfer/destroy.tfplan
+          PLAN_MANIFEST: >-
+            ${{ github.workspace }}/artifacts/destroy/destroy-transfer/destroy.tfplan.identity.json
         run: ./scripts/ci_apply_saved_plan.sh
-      - name: Delete the exact confidential destroy transfer
-        env:
-          PLAN_STAGE: destroy
-          TRANSFER_DIRECTORY: artifacts/destroy-transfer
-        run: ./scripts/confidential_plan_transfer.sh delete
-      - name: Verify the exact demo inventory is empty
+      - name: Verify twice and privately retain the exact teardown inventories
         env:
           EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          INVENTORY_OUTPUT: artifacts/destroy/post-destroy-inventory.json
-        run: ./scripts/verify_aws_teardown.sh
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          evidence_prefix="phase-10-evidence/teardown/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          preserve_inventory() {
+            local label="$1"
+            local path="$2"
+            local local_sha256
+            local put_checksum
+            local readback_checksum
+            if [[ ! -f "$path" || -L "$path" || ! -O "$path" \
+              || "$(stat -c '%a' -- "$path" 2>/dev/null || true)" != "600" ]]; then
+              echo "Refusing teardown evidence retention: private inventory receipt is invalid." >&2
+              return 1
+            fi
+            local_sha256="$(sha256sum "$path" | awk '{print $1}')"
+            if ! put_checksum="$(aws s3api put-object \
+              --bucket "$BACKEND_BUCKET" \
+              --key "${evidence_prefix}/${label}.json" \
+              --body "$path" \
+              --content-type application/json \
+              --server-side-encryption aws:kms \
+              --ssekms-key-id "$BACKEND_KMS_KEY_ARN" \
+              --checksum-algorithm SHA256 \
+              --if-none-match '*' \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+              --query ChecksumSHA256 --output text 2>/dev/null)"; then
+              echo "Refusing teardown evidence retention: encrypted create-only upload failed." >&2
+              return 1
+            fi
+            if [[ -z "$put_checksum" || "$put_checksum" == "None" ]]; then
+              echo "Refusing teardown evidence retention: upload checksum is missing." >&2
+              return 1
+            fi
+            if ! readback_checksum="$(aws s3api head-object \
+              --bucket "$BACKEND_BUCKET" \
+              --key "${evidence_prefix}/${label}.json" \
+              --checksum-mode ENABLED \
+              --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+              --query ChecksumSHA256 --output text 2>/dev/null)"; then
+              echo "Refusing teardown evidence retention: checksum readback failed." >&2
+              return 1
+            fi
+            if [[ "$readback_checksum" != "$put_checksum" ]]; then
+              echo "Refusing teardown evidence retention: checksum readback mismatch." >&2
+              return 1
+            fi
+            if [[ "$label" == "initial" ]]; then
+              initial_sha256="$local_sha256"
+            else
+              confirmation_sha256="$local_sha256"
+            fi
+          }
+
+          initial_sha256=""
+          confirmation_sha256=""
+          initial_path=artifacts/destroy/post-destroy-inventory-initial.json
+          initial_status=0
+          INVENTORY_OUTPUT="$initial_path" ./scripts/verify_aws_teardown.sh || initial_status=$?
+          if [[ ! -f "$initial_path" ]]; then
+            echo "Initial teardown inventory failed before producing a private receipt." >&2
+            if (( initial_status == 0 )); then exit 1; else exit "$initial_status"; fi
+          fi
+          preserve_inventory initial "$initial_path"
+
+          sleep 30
+
+          confirmation_path=artifacts/destroy/post-destroy-inventory-confirmation.json
+          confirmation_status=0
+          INVENTORY_OUTPUT="$confirmation_path" ./scripts/verify_aws_teardown.sh \
+            || confirmation_status=$?
+          if [[ ! -f "$confirmation_path" ]]; then
+            echo "Confirmation teardown inventory failed before producing a private receipt." >&2
+            if (( confirmation_status == 0 )); then exit 1; else exit "$confirmation_status"; fi
+          fi
+          preserve_inventory confirmation "$confirmation_path"
+          if (( confirmation_status != 0 )); then
+            echo "Confirmation teardown inventory found a residual or invalid contract." >&2
+            exit "$confirmation_status"
+          fi
+          {
+            echo "### Teardown inventory"
+            echo "- Initial create-only encrypted receipt retained (status: ${initial_status}; SHA-256: ${initial_sha256})."
+            echo "- Delayed confirmation create-only encrypted receipt retained and passed (SHA-256: ${confirmation_sha256})."
+          } >>"$GITHUB_STEP_SUMMARY"
+          if ! rm -f -- "$initial_path" "$confirmation_path"; then
+            echo "Private teardown inventory cleanup failed." >&2
+            exit 1
+          fi
+      - name: Delete the exact confidential destroy transfer after evidence retention
+        env:
+          EXPECTED_AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          PLAN_STAGE: destroy
+          TRANSFER_DIRECTORY: artifacts/destroy/destroy-transfer
+        run: |
+          uv run --frozen --no-sync python -m scripts.human_aws_login verify-workflow \
+            --region "$AWS_REGION" \
+            --expected-account-id "$AWS_ACCOUNT_ID" \
+            --expected-role-arn "$EXPECTED_AWS_ROLE_ARN" \
+            --role-kind deploy >/dev/null
+          ./scripts/confidential_plan_transfer.sh delete

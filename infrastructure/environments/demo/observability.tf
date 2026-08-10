@@ -91,7 +91,7 @@ resource "aws_cloudwatch_log_stream" "firehose" {
 }
 
 locals {
-  alarm_actions = [aws_sns_topic.alerts.arn]
+  alarm_actions = var.activate_services ? [aws_sns_topic.alerts.arn] : []
   api_emf_dimensions = {
     Service     = "api"
     Environment = "aws"
