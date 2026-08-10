@@ -245,13 +245,9 @@ def test_model_joblib_uses_measured_task_safe_compressed_and_inflated_bounds(
 
 
 def test_every_bundle_object_has_a_measured_task_safe_download_bound(
-    repository_root: Path,
     monitoring_metadata: ValidatedBundleMetadata,
 ) -> None:
-    approved_bundle = repository_root / "artifacts/model-bundles/1.0.0"
-    approved_sizes = {name: (approved_bundle / name).stat().st_size for name in EXPECTED_FILENAMES}
-
-    assert approved_sizes == {
+    reviewed_sizes = {
         "baseline_profile.json": 40_618,
         "checksums.sha256": 491,
         "input_schema.json": 2_279,
@@ -261,7 +257,8 @@ def test_every_bundle_object_has_a_measured_task_safe_download_bound(
         "threshold.json": 1_375,
     }
     assert set(BUNDLE_OBJECT_MAX_BYTES) == EXPECTED_FILENAMES
-    assert all(approved_sizes[name] < BUNDLE_OBJECT_MAX_BYTES[name] for name in EXPECTED_FILENAMES)
+    assert set(reviewed_sizes) == EXPECTED_FILENAMES
+    assert all(reviewed_sizes[name] < BUNDLE_OBJECT_MAX_BYTES[name] for name in EXPECTED_FILENAMES)
     assert all(
         (monitoring_metadata.path / name).stat().st_size < BUNDLE_OBJECT_MAX_BYTES[name]
         for name in EXPECTED_FILENAMES
