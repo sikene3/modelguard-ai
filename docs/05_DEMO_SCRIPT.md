@@ -1,5 +1,9 @@
 # Demo Video Script — 3 to 5 Minutes
 
+The exact Phase 11 commands, expected machine-readable output, evidence paths, and claim boundaries
+are in [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md). Use that runbook for new evidence; the older Phase 07
+container commands below remain useful only when a live Compose walkthrough is desired.
+
 ## 0:00–0:25 — The problem
 
 Show the architecture diagram and say:
@@ -22,9 +26,10 @@ Do not spend a long time scrolling through code.
 ## 0:55–1:30 — Healthy drift state
 
 ```bash
-./scripts/build_local_images.sh
-docker compose up -d
-./scripts/smoke_local.sh
+PHASE11_ANCHOR="$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:00Z)"
+make phase11-demo-local \
+  PHASE11_RUN_ID=phase11-recording \
+  PHASE11_ANCHOR="$PHASE11_ANCHOR"
 ```
 
 Show the dashboard with separate states: `run=succeeded`, `data_quality=valid`, `drift=healthy`, and
@@ -33,9 +38,9 @@ target count.
 
 ## 1:30–2:20 — Drift injection
 
-```bash
-./scripts/demo_local.sh
-```
+The same Phase 11 command produces the separate non-overlapping drifted window after capturing the
+healthy dashboard evidence. Open the generated baseline and drifted summaries and their immutable
+HTML reports; do not run an additional mixed-window traffic command.
 
 Show:
 
@@ -44,9 +49,10 @@ Show:
 - The HTML incident report.
 - An SNS email or CloudWatch alarm, if configured.
 
-For the Phase 07 local recording, open the final dashboard on `http://127.0.0.1:8501` and show the
-validated `artifacts/phase-07-evidence/<run-id>/demo-summary.json`. SNS/CloudWatch remain later AWS
-evidence and must not be implied by the local run.
+For the Phase 11 local recording, show
+`artifacts/phase-11-evidence/phase11-recording/summary.json`, the two report-backed dashboard
+snapshots, and the real Streamlit in-process render results. SNS/CloudWatch remain unconfigured
+locally and must not be implied by this run.
 
 ## 2:20–3:10 — Engineering evidence
 
@@ -65,7 +71,9 @@ Demonstrate either:
 - Rolling back an ECS task definition after a deliberately bad deployment, or
 - Promoting a validated model bundle and showing the readiness/model-version change.
 
-Do not imply automatic retraining. Explain that promotion is controlled.
+The Phase 11 local path uses the second option: it verifies and manually promotes `1.0.1`, retains
+`1.0.0` as previous, and proves readiness/version. Do not imply automatic retraining, a metric-based
+selection, or that promotion fixes the observed drift; the deployment-control story is separate.
 
 ## 3:50–4:10 — Outcome
 
