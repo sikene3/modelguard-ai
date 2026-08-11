@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from modelguard.api.main import create_app
-from modelguard.core.config import Settings
+from modelguard.core.config import EventSink, Settings
 from modelguard.core.telemetry import PrometheusTelemetry
 
 LOAD_REQUESTS = 100
@@ -42,6 +42,7 @@ def test_measured_local_prediction_load_targets(
             update={
                 "api_max_concurrency": LOAD_CONCURRENCY,
                 "api_concurrency_wait_timeout_seconds": 2.0,
+                "event_sink": EventSink.DISABLED,
             }
         )
         app = create_app(
@@ -49,9 +50,9 @@ def test_measured_local_prediction_load_targets(
             telemetry=PrometheusTelemetry(),
             logger=SilentLogger(),
         )
+        semaphore = asyncio.Semaphore(LOAD_CONCURRENCY)
         latencies_ms: list[float] = []
         status_codes: list[int] = []
-        semaphore = asyncio.Semaphore(LOAD_CONCURRENCY)
 
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
@@ -74,11 +75,13 @@ def test_measured_local_prediction_load_targets(
                 await asyncio.gather(*[send_one() for _ in range(LOAD_REQUESTS)])
                 elapsed = time.perf_counter() - started
 
-        throughput = LOAD_REQUESTS / elapsed
-        error_rate = sum(code != 200 for code in status_codes) / LOAD_REQUESTS
         sorted_latencies = sorted(latencies_ms)
         p95_index = max(math.ceil(0.95 * len(sorted_latencies)) - 1, 0)
-        return throughput, error_rate, sorted_latencies[p95_index]
+        return (
+            LOAD_REQUESTS / elapsed,
+            sum(code != 200 for code in status_codes) / LOAD_REQUESTS,
+            sorted_latencies[p95_index],
+        )
 
     throughput, error_rate, p95_latency_ms = asyncio.run(exercise())
     print(

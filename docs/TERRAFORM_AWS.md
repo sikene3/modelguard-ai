@@ -304,12 +304,16 @@ modified, more-than-24-hour-old, implausibly future-dated, wrong-commit, wrong-a
 wrong-backend, or wrong-stage plan is refused.
 
 If a prerequisite apply stops partway through, its single recovery plan may carry provider-state
-normalization records only when every drift address is an exact owned ModelGuard resource, uses the
-expected provider and tags, and has an identical desired state with a managed `no-op` action in that
-same plan. The recovery plan must also contain both existing `no-op` resources and remaining
-`create` actions. Configuration-changing drift, unrelated resources, replacements, deletions,
-imports, deposed instances, activation drift, or drift without an exact desired-state match remains
-fail-closed.
+normalization records only when every drift address is an exact owned ModelGuard resource and uses
+the expected provider and tags. Each drifted resource must have an identical desired state with a
+managed `no-op` action in that same plan. The only bounded completion update is `aws_lb.this` after
+an interrupted create: the live ALB must still have disabled access logging, invalid-header dropping,
+and the provider-default defensive desync mode. The plan changes only those fields to the exact
+ModelGuard audit bucket and `alb` prefix, enabled invalid-header dropping, and `strictest` mode. The
+recovery plan must also contain both existing `no-op` resources and remaining `create` actions. Every
+other configuration-changing drift, unrelated
+resource, replacement, deletion, import, deposed instance, activation drift, or drift without an
+exact desired-state match remains fail-closed.
 
 In Phase 10 only, the manual operator path applies this exact file through `scripts/safe_apply.sh`.
 The script rechecks backend/account/Region/default workspace, renders and displays only the sealed
