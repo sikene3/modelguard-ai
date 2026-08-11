@@ -522,6 +522,11 @@ def _after_values(changes: dict[str, dict[str, Any]], address: str) -> dict[str,
     return after
 
 
+def _provider_null_as_empty_list(value: Any) -> Any:
+    """Normalize an optional Terraform provider collection without masking bad values."""
+    return [] if value is None else value
+
+
 def _before_values(changes: dict[str, dict[str, Any]], address: str) -> dict[str, Any]:
     change = changes.get(address)
     if not isinstance(change, dict):
@@ -634,9 +639,9 @@ def _validate_stage_contract(
         if after.get("actions_enabled") is not (manifest.stage == "activation"):
             raise PlanEvidenceError("plan_alarm_activation_mismatch")
         if (
-            after.get("alarm_actions") != expected_actions
-            or after.get("ok_actions") != expected_actions
-            or after.get("insufficient_data_actions") != []
+            _provider_null_as_empty_list(after.get("alarm_actions")) != expected_actions
+            or _provider_null_as_empty_list(after.get("ok_actions")) != expected_actions
+            or _provider_null_as_empty_list(after.get("insufficient_data_actions")) != []
         ):
             raise PlanEvidenceError("plan_alarm_action_boundary_mismatch")
 
