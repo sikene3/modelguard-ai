@@ -1517,6 +1517,103 @@ def test_post_destroy_inventory_v2_classifies_strict_retained_evidence() -> None
 
 
 @pytest.mark.parametrize(
+    "resource_arn",
+    (
+        "arn:aws:ecs:us-east-1:123456789012:cluster/modelguard-ai-demo",
+        "arn:aws:ecs:us-east-1:123456789012:service/modelguard-ai-demo/modelguard-ai-demo-api",
+        "arn:aws:ecs:us-east-1:123456789012:task/"
+        "modelguard-ai-demo/0123456789abcdef0123456789abcdef",
+        "arn:aws:ecs:us-east-1:123456789012:task-definition/modelguard-ai-demo-monitor:12",
+        "arn:aws:ec2:us-east-1:123456789012:natgateway/nat-0123456789abcdef0",
+        "arn:aws:ec2:us-east-1:123456789012:security-group/sg-0123456789abcdef0",
+        "arn:aws:ec2:us-east-1:123456789012:security-group-rule/sgr-0123456789abcdef0",
+        "arn:aws:ec2:us-east-1:123456789012:vpc-endpoint/vpce-0123456789abcdef0",
+    ),
+)
+def test_post_destroy_inventory_v2_accepts_only_exact_stale_tag_index_metadata(
+    resource_arn: str,
+) -> None:
+    payload = _post_destroy_inventory()
+    payload["ResourceTagMappingList"] = [
+        {
+            "ResourceARN": resource_arn,
+            "Tags": [
+                {"Key": "Project", "Value": "modelguard-ai"},
+                {"Key": "Environment", "Value": "demo"},
+                {"Key": "Ownership", "Value": "demo"},
+                {"Key": "ManagedBy", "Value": "Terraform"},
+                {"Key": "Owner", "Value": "modelguard-maintainer"},
+                {"Key": "AutoDestroyDate", "Value": "2026-08-23"},
+            ],
+        }
+    ]
+
+    result = _evaluate_post_destroy_inventory(payload)
+
+    assert result["residual_demo"] == []
+    assert result["residual_service"] == []
+    assert result["validated_nonbillable"] == [f"resource_tagging_api_stale:{resource_arn}"]
+
+
+@pytest.mark.parametrize(
+    "resource_arn",
+    (
+        "arn:aws:ecs:eu-west-1:123456789012:cluster/modelguard-ai-demo",
+        "arn:aws:ecs:us-east-1:999999999999:cluster/modelguard-ai-demo",
+        "arn:aws:ecs:us-east-1:123456789012:cluster/unrelated",
+        "arn:aws:sns:us-east-1:123456789012:modelguard-ai-demo-alerts",
+    ),
+)
+def test_post_destroy_inventory_v2_keeps_foreign_or_unknown_tag_metadata_residual(
+    resource_arn: str,
+) -> None:
+    payload = _post_destroy_inventory()
+    payload["ResourceTagMappingList"] = [
+        {
+            "ResourceARN": resource_arn,
+            "Tags": [
+                {"Key": "Project", "Value": "modelguard-ai"},
+                {"Key": "Environment", "Value": "demo"},
+                {"Key": "Ownership", "Value": "demo"},
+                {"Key": "ManagedBy", "Value": "Terraform"},
+                {"Key": "Owner", "Value": "modelguard-maintainer"},
+                {"Key": "AutoDestroyDate", "Value": "2026-08-23"},
+            ],
+        }
+    ]
+
+    result = _evaluate_post_destroy_inventory(payload)
+
+    assert result["residual_demo"] == [resource_arn]
+    assert result["validated_nonbillable"] == []
+
+
+def test_post_destroy_inventory_v2_never_reclassifies_tag_metadata_with_live_residuals() -> None:
+    payload = _post_destroy_inventory()
+    cluster_arn = "arn:aws:ecs:us-east-1:123456789012:cluster/modelguard-ai-demo"
+    payload["ResourceTagMappingList"] = [
+        {
+            "ResourceARN": cluster_arn,
+            "Tags": [
+                {"Key": "Project", "Value": "modelguard-ai"},
+                {"Key": "Environment", "Value": "demo"},
+                {"Key": "Ownership", "Value": "demo"},
+                {"Key": "ManagedBy", "Value": "Terraform"},
+                {"Key": "Owner", "Value": "modelguard-maintainer"},
+                {"Key": "AutoDestroyDate", "Value": "2026-08-23"},
+            ],
+        }
+    ]
+    payload["service_residuals"]["ecs_clusters"] = [cluster_arn]
+
+    result = _evaluate_post_destroy_inventory(payload)
+
+    assert result["residual_demo"] == [cluster_arn]
+    assert result["residual_service"] == [f"ecs_clusters:{cluster_arn}"]
+    assert result["validated_nonbillable"] == []
+
+
+@pytest.mark.parametrize(
     "budgets",
     (
         [],
