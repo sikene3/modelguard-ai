@@ -55,7 +55,7 @@ VPC. No interface endpoints or second NAT are present.
 | Network | VPC, IGW, two public and two private subnets, route tables, one EIP/NAT, S3 gateway endpoint, four security groups | Disposable; one NAT is an explicit non-HA cost choice |
 | Images/data | Three immutable ECR repositories; model, prediction, report, and audit S3 buckets | Disposable; force-delete; version and object expiry; no public access |
 | Ingestion | Firehose delivery stream and finite log group/stream | GZIP newline JSON; exact `.jsonl.gz` suffix; physical UTC year/month/day/hour prefixes |
-| Runtime | ECS cluster, API/dashboard task definitions and services, monitor task definition | Desired counts default zero; schedule default disabled; digest-form images, non-root users, read-only roots, task-scoped writable `/tmp` volumes |
+| Runtime | ECS cluster, API/dashboard task definitions and services, monitor task definition | Desired counts default zero; schedule default disabled; digest-form images, non-root users, read-only roots, task-scoped writable `/tmp` scratch plus image-owned `/runtime` model volumes |
 | Routing | ALB, listeners, two target groups, rules and health checks | Restricted CIDR; `/metrics` fixed 404; circuit-breaker rollback on both services |
 | Identity | Execution, API, dashboard, monitor, Firehose, Scheduler roles and inline policies | Exact project path/names; mandatory bootstrap boundary; separate responsibilities |
 | Model identity | Active and previous SSM String pointers | Explicit unset sentinel; `ignore_changes` gives later values to promotion |

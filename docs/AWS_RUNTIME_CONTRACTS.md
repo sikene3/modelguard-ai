@@ -42,7 +42,10 @@ It has not been run against AWS in the local readiness segment.
 
 ## API bundle hydration
 
-An AWS API task starts with an empty model destination on its task-scoped writable `/tmp` volume.
+An AWS API task starts with an empty model destination on its task-scoped writable `/runtime`
+volume. The API and monitor images declare that exact image-owned path with `VOLUME`, so Amazon ECS
+copies its UID/GID 10001 ownership and mode into the matching Fargate bind mount instead of creating
+a root-owned default mount.
 Startup performs this ordered,
 fail-closed sequence:
 
@@ -64,7 +67,7 @@ fail-closed sequence:
    seven-object download below 1.25 MiB; `model.joblib` is bounded to 64 KiB compressed and its
    reviewed zlib stream to 4 MiB inflated bytes before trusted deserialization. These measured
    ceilings replace the former generic 256 MiB allowance for the 1 GiB API task.
-6. Rename the verified directory atomically into `/tmp/model-bundle`, `fsync` the parent, repeat
+6. Rename the verified directory atomically into `/runtime/model-bundle`, `fsync` the parent, repeat
    the trusted-bundle verification, and only then deserialize and install the model once.
 
 An existing destination is never reused merely because its semantic model identity looks valid: it

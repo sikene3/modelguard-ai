@@ -794,7 +794,7 @@ def test_terraform_runtime_contracts_match_monitor_settings_firehose_and_metric(
     settings = Settings(_env_file=None, **settings_values)
     assert settings.runtime_component.value == "monitor"
     assert settings.api_access_mode.value == "local_open"
-    assert settings.model_bundle_path == Path("/tmp/model-bundle")
+    assert settings.model_bundle_path == Path("/runtime/model-bundle")
     with pytest.raises(ValidationError, match="cannot use local_open"):
         Settings(
             _env_file=None,
