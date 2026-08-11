@@ -17,9 +17,8 @@ Minimum effort: XHigh. Max handles high-coupling/statistical/cloud work. Ultra i
 independent design review and final audit only. After every phase: run the gate, inspect changes,
 update checklist/report/evidence, then commit manually.
 
-Current boundary (2026-08-10): continue Phase 10 only. The local-runtime baseline is aad098c; the
-single authorized pre-publication history sanitization is complete, and its original history and
-working copy remain in the verified private backup. AWS browser identity plus the value-free Budget
-and Firehose preflight have passed. Continue with the publication and live-deployment checklist; run
-`aws login --profile modelguard-bootstrap` only if the short-lived session expires. Do not run Phase
-11 until Phase 10 live evidence and teardown are complete.
+Current boundary (2026-08-11): Phase 10 is closed. The Public solo-governed repository, retained
+audit/bootstrap controls, immutable image/model publication, restricted live deployment, smoke and
+monitoring evidence, and guarded disposable-demo teardown all passed. Encrypted state/evidence and
+backup restores are verified; the retained USD 10 Budget remains active. Phase 11 is still
+`not_started` and must not be run without a new explicit phase request.

@@ -1,4 +1,4 @@
-# Phase 10 report — local readiness and live-blocker remediation
+# Phase 10 report — controlled AWS deployment and teardown closure
 
 ## Outcome
 
@@ -16,22 +16,21 @@ The descendant live-blocker-remediation commit
 adds the controlled model-bundle publication/promotion implementation described below. Its exact
 commit message is `fix: remediate Phase 10 live deployment blockers`.
 
-The overall Phase 10 controlled AWS deployment remains `in_progress`. The browser-authenticated
-non-root AWS identity and the single combined value-free Budget/Firehose preflight passed in
-`us-east-1`; no subscriber endpoint was queried. The sanitized history was published once to the
-Public repository, the exact active `main` ruleset and three solo environments were verified, and
-Actions remain disabled. Retained audit bootstrap, OIDC/bootstrap, applies, artifact publication,
-live tests, and teardown have not yet executed. One value-free audit-bootstrap saved plan was
-reviewed locally and remains unapplied at the mandatory encrypted-state/human-approval boundary.
-The repository's `runtime_contract_verified` Terraform default remains `false` until an activation
-supplies registry-digest evidence matching the verified source and all three images.
+Phase 10 is **closed**. The browser-authenticated non-root identity deployed only the reviewed
+ModelGuard resources in `us-east-1`; the Public repository uses the exact solo `main` ruleset,
+custom OIDC subjects, three contract environments, and required Actions checks. Retained
+audit/bootstrap plans, the disabled-runtime prerequisite plan, immutable image/model publication,
+digest-pinned activation, and the exact runner-`/32` update were all reviewed, sealed, applied, and
+backed up on encrypted storage. No subscriber endpoint, credential, token, private Terraform value,
+or full account ID is present in tracked evidence.
 
-No AWS resource, Terraform state, image/model publication, or deployment was created or changed by
-either local readiness segment or the history rewrite. After the sealed Publication Audit passed,
-the exact audited history was pushed once and only the contract-defined Public ruleset and three
-solo environments were configured while Actions remained disabled. The later AWS calls were
-read-only identity, prerequisite, collision, and saved-plan checks. No Terraform
-apply/destroy/import, state mutation, or Phase 11 work occurred.
+The replacement self-hosted runner passed API live/ready/version/prediction and dashboard health.
+Firehose delivered the event; a one-shot monitor created an immutable JSON/HTML report pair and one
+CloudWatch EMF completion record, then returned the designed exit-4 insufficient-data result for the
+single accepted live sample. The exact destroy plan deleted 122 managed resources with no create,
+update, replacement, or import. Terraform state, its encrypted backup/restore, and all authoritative
+service inventories prove zero live disposable-demo residuals. The USD 10 Budget and retained
+audit/bootstrap control plane remain intentionally. Phase 11 has not started.
 
 ## Consolidated blocker remediation
 
@@ -485,7 +484,7 @@ src/modelguard/storage/publisher.py (new)
 tests/unit/test_phase10_model_publisher.py (new)
 ```
 
-## Current protected-live-path checkpoint
+## Historical protected-live-path checkpoint (superseded)
 
 The checksum-verified `PUBLICATION_AUDIT_PACKAGES_AUTHORIZED_RECEIPT.json` records a complete
 Publication Audit `PASS` for the canonical sanitized tree at
@@ -579,7 +578,7 @@ ordinary commit so the bundle and all deployment artifacts can truthfully bind t
   preserved, and the tracked corrective tree is reconstructable from the verified bundle and patch.
   The sanitized audited `main` history was later pushed once to the authorized Public repository.
 
-## Remaining external blockers
+## Historical external blockers (resolved or superseded)
 
 - `solo_portfolio` remains a disclosed non-production governance mode without independent review.
 - Separate review/apply and encrypted state preservation for retained CloudTrail.
@@ -587,7 +586,7 @@ ordinary commit so the bundle and all deployment artifacts can truthfully bind t
 - Immutable registry image/model publication, reviewed Terraform plans, live smoke, rollback, and
   teardown. Local publisher tests do not satisfy the unchecked live publication gate.
 
-## Boundary confirmation
+## Historical boundary confirmation (superseded)
 
 The Docker host remediation was separately authorized maintenance and did not modify the protected
 repository or durable backup artifacts. The blocker-remediation commit is one ordinary descendant
@@ -605,3 +604,80 @@ Authorized blocker-remediation commit message:
 ```text
 fix: remediate Phase 10 live deployment blockers
 ```
+
+## Live AWS deployment and closure evidence
+
+This section supersedes every earlier `in_progress`, Actions-disabled, unapplied-plan, and
+no-live-evidence statement retained above as historical audit context.
+
+### Control-plane plans and encrypted state
+
+- Audit bootstrap plan `3b2c5f6ec90ffda364a2ca3c476d832307bda2065d1f67c63538ba16d0ea975b`
+  was applied from `ca2fadb1785f242e25edd56720d090ad2f06af74`; CloudTrail is logging data
+  events for only the exact state and lock objects.
+- Bootstrap plan `669bc8959812176e5eb2e891cbc48daa8eab0c205c2a31ef8e9462eb4ca8b346`
+  was applied, followed by the approved state-only refresh
+  `d3ae8262510a46a33312ecc57443c15aefe3183bbbe86531eaaf232ac5e97be9` and
+  the two-update least-privilege IAM reconciliation
+  `15ad2991b9b734a0834fc200a430304fefd9db0592d940626ea647ef2ee78e5a`.
+- Every state, plan, raw review, identity, log, backup, and restore artifact is owner-only beneath
+  `/mnt/modelguard-phase10-state/terraform` and
+  `/mnt/modelguard-phase10-backup/terraform-backups`. The mounts were independently verified as
+  active LUKS2/dm-crypt storage; directories are mode `0700`, files are mode `0600`, and restored
+  state hashes match.
+
+### Immutable publication and activation
+
+- The disabled-runtime prerequisite plan hash is
+  `6d4ef260a37cad0483d7012c0dcfdb9d06ce64249bc1c3f1ea4ece4f2d7953fb`.
+- Image publication run `31501286222` built/scanned each component once and deployed only immutable
+  ECR digests. The private release-manifest SHA-256 is
+  `b9da29394b03e6e959693ad8783f4b97e01fe7c23967e43738b5124b7cdf1d`.
+- The create-only model publisher stored version `1.0.3`; its exact seven-object bundle manifest is
+  `a2ea5aca2a173f57229bceed8498d5c198e3f7f1996569c83b32d3319115e078`.
+  Runtime digest verification record SHA-256 is
+  `7ba5c6d37413d8b142015ed44e0d0de90e613044096912c649bb39794b4176ea`.
+- Activation plan `03e2b171f1a13994ebf60d2c9f5178d636a9f1132753093fa712939d4b261643`
+  enabled the digest-pinned services. The source-bound ingress-only plan
+  `9a8e74d355e513107531135785c02de3a801b5dfb5b9ffc761ddc51f7ae9733a`
+  replaced only the API task definition, API service, and ALB HTTP ingress to use
+  `41.68.210.73/32`; the old CIDR and `0.0.0.0/0` were absent.
+
+### Live verification
+
+- Notification enrollment had exactly one confirmed subscriber without querying or recording its
+  address. Runner `modelguard-demo-vm` was online, idle, and carried exactly the required labels.
+  Egress verification run `31513598233` proved the runner's current address matched the reviewed
+  `/32` without printing it.
+- Restricted smoke run `31517078978` passed API live, ready, version, prediction, and dashboard
+  health. Both ECS services were `1/1`, both ALB targets were healthy, and the monitor schedule was
+  enabled.
+- Firehose delivery, one immutable monitoring report pair, one EMF `MonitorCompletions` record, and
+  the expected fail-closed insufficient-data result were all read back. Twelve alarm definitions,
+  four finite-retention log groups, four private/versioned data buckets, three immutable scan-on-push
+  ECR repositories, six permission-bounded workload roles, and 87 tagged resources matched state.
+- The retained monthly COST Budget remained exactly USD 10 and reported USD 0.00 actual spend at the
+  captured pre-teardown boundary.
+- ECS circuit breakers and the exact API/dashboard/monitor task plus model-pointer identities were
+  verified. Because this was the first staged deployment and no durable last-known-good record
+  existed, the explicit rollback mutation refused fail closed rather than inventing a target; the
+  separate model-pointer rollback policy remained unchanged.
+
+### Teardown
+
+Destroy plan `6d00d7d2e8a09ab6870554a371370e4f751235ab0567517cc3c82f7508911a14`
+was sealed against source `52e406f423f61bcc364e96c1c2a47a548b477b34` and contained exactly
+122 deletes with zero creates, updates, replacements, or imports. After apply:
+
+- Terraform managed-resource count is zero and the encrypted backup restore hash matches.
+- Every service-specific live inventory is empty; no unrelated resource appears.
+- Resource Groups Tagging retains 38 exact deleted/stopped/inactive metadata records. The corrected
+  fail-closed guard accepts only their bounded ModelGuard EC2/ECS ARN classes when all authoritative
+  live lists are empty; foreign, unknown, malformed, or concurrently live entries still fail.
+- Disposable billable demo resource count is zero. The required Budget and retained
+  audit/bootstrap controls remain by architecture.
+
+Raw receipts are checksum-sealed below the two encrypted roots. Public documentation records only
+masked identity, bounded counts, source commits, and approved plan/artifact hashes. The repository
+remains Public and protected; `solo_portfolio` is explicitly not separation of duties. Phase 11 is
+`not_started`.
