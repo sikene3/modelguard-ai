@@ -1944,6 +1944,109 @@ def test_prerequisite_recovery_allows_only_the_supported_alb_log_policy_correcti
         _summarize(unrecognized_before, manifest)
 
 
+def test_prerequisite_recovery_allows_only_the_supported_scheduler_trust_correction() -> None:
+    manifest = _plan_manifest()
+    schedule_group = f"{manifest.project}-{manifest.environment}-monitor"
+    source_prefix = f"arn:aws:scheduler:{manifest.region}:{manifest.account_id}"
+    common_statement = {
+        "Action": "sts:AssumeRole",
+        "Condition": {
+            "StringEquals": {"aws:SourceAccount": manifest.account_id},
+        },
+        "Effect": "Allow",
+        "Principal": {"Service": "scheduler.amazonaws.com"},
+        "Sid": "SchedulerOnly",
+    }
+    before_policy = {
+        "Statement": [
+            {
+                **common_statement,
+                "Condition": {
+                    **common_statement["Condition"],
+                    "ArnEquals": {
+                        "aws:SourceArn": (
+                            f"{source_prefix}:schedule/{schedule_group}/{schedule_group}"
+                        )
+                    },
+                },
+            }
+        ],
+        "Version": "2012-10-17",
+    }
+    after_policy = {
+        "Statement": [
+            {
+                **common_statement,
+                "Condition": {
+                    **common_statement["Condition"],
+                    "ArnEquals": {
+                        "aws:SourceArn": f"{source_prefix}:schedule-group/{schedule_group}"
+                    },
+                },
+            }
+        ],
+        "Version": "2012-10-17",
+    }
+    role_update = _plan_change(
+        manifest,
+        address="aws_iam_role.scheduler",
+        resource_type="aws_iam_role",
+        actions=["update"],
+    )
+    unchanged = {
+        "name": f"{manifest.project}-{manifest.environment}-scheduler",
+        "tags_all": _required_plan_tags(manifest),
+    }
+    role_update["change"]["before"] = {
+        **unchanged,
+        "assume_role_policy": json.dumps(before_policy, sort_keys=True),
+    }
+    role_update["change"]["after"] = {
+        **unchanged,
+        "assume_role_policy": json.dumps(after_policy, sort_keys=True),
+    }
+    existing = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["no-op"],
+    )
+    plan = _show_plan(manifest, existing, role_update)
+
+    summary = _summarize(plan, manifest)
+    assert summary["action_counts"]["update"] == 1
+    assert (
+        summary["contract_attestations"]["prerequisite_scheduler_trust_correction_verified"] is True
+    )
+
+    for mutation in ("principal", "account", "source", "unrelated"):
+        adversarial = json.loads(json.dumps(plan))
+        role = next(
+            item
+            for item in adversarial["resource_changes"]
+            if item["address"] == "aws_iam_role.scheduler"
+        )
+        if mutation == "unrelated":
+            role["change"]["after"]["name"] = "unrelated-role"
+        else:
+            policy = json.loads(role["change"]["after"]["assume_role_policy"])
+            statement = policy["Statement"][0]
+            if mutation == "principal":
+                statement["Principal"]["Service"] = "events.amazonaws.com"
+            elif mutation == "account":
+                statement["Condition"]["StringEquals"]["aws:SourceAccount"] = "000000000000"
+            else:
+                statement["Condition"]["ArnEquals"]["aws:SourceArn"] = (
+                    f"{source_prefix}:schedule-group/*"
+                )
+            role["change"]["after"]["assume_role_policy"] = json.dumps(policy)
+        with pytest.raises(
+            PlanEvidenceError,
+            match=r"scheduler_trust_(scope|transition)_invalid",
+        ):
+            _summarize(adversarial, manifest)
+
+
 def test_destroy_governance_is_bound_when_guard_state_exists_and_absence_is_recoverable() -> None:
     manifest = _plan_manifest(stage="destroy")
     plan = _show_plan(manifest)

@@ -27,6 +27,7 @@ class PlanEvidenceError(RuntimeError):
 AWS_PROVIDER = "registry.terraform.io/hashicorp/aws"
 TERRAFORM_PROVIDER = "terraform.io/builtin/terraform"
 AUDIT_BUCKET_POLICY_ADDRESS = 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
+SCHEDULER_ROLE_ADDRESS = "aws_iam_role.scheduler"
 DEPOSED_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REQUIRED_TAGGED_BASES = frozenset(
     {
@@ -856,9 +857,9 @@ def _validate_alb_prerequisite_recovery_update(
         raise PlanEvidenceError("plan_recovery_alb_desired_state_invalid")
 
 
-def _parse_bucket_policy(value: Any) -> dict[str, Any]:
+def _parse_policy(value: Any, *, reason: str) -> dict[str, Any]:
     if not isinstance(value, str) or not value or len(value) > 1024 * 1024:
-        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        raise PlanEvidenceError(reason)
     try:
         parsed = json.loads(
             value,
@@ -866,11 +867,11 @@ def _parse_bucket_policy(value: Any) -> dict[str, Any]:
             parse_constant=_reject_plan_constant,
         )
     except json.JSONDecodeError as error:
-        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid") from error
+        raise PlanEvidenceError(reason) from error
     if not isinstance(parsed, dict) or set(parsed) != {"Statement", "Version"}:
-        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        raise PlanEvidenceError(reason)
     if parsed.get("Version") != "2012-10-17":
-        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        raise PlanEvidenceError(reason)
     return parsed
 
 
@@ -906,8 +907,12 @@ def _validate_audit_bucket_policy_prerequisite_update(
     if normalized_after != desired_before:
         raise PlanEvidenceError("plan_recovery_alb_log_policy_scope_invalid")
 
-    before_policy = _parse_bucket_policy(desired_before.get("policy"))
-    after_policy = _parse_bucket_policy(desired_after.get("policy"))
+    before_policy = _parse_policy(
+        desired_before.get("policy"), reason="plan_recovery_alb_log_policy_invalid"
+    )
+    after_policy = _parse_policy(
+        desired_after.get("policy"), reason="plan_recovery_alb_log_policy_invalid"
+    )
     before_statements = _policy_statements_by_sid(before_policy)
     after_statements = _policy_statements_by_sid(after_policy)
     if set(before_statements) != set(after_statements):
@@ -954,6 +959,72 @@ def _validate_audit_bucket_policy_prerequisite_update(
         raise PlanEvidenceError("plan_recovery_alb_log_policy_transition_invalid")
 
 
+def _validate_scheduler_trust_prerequisite_update(
+    desired_change: dict[str, Any], manifest: PlanManifest
+) -> None:
+    desired_before = desired_change.get("before")
+    desired_after = desired_change.get("after")
+    if not isinstance(desired_before, dict) or not isinstance(desired_after, dict):
+        raise PlanEvidenceError("plan_recovery_scheduler_trust_invalid")
+
+    normalized_after = dict(desired_after)
+    normalized_after["assume_role_policy"] = desired_before.get("assume_role_policy")
+    if normalized_after != desired_before:
+        raise PlanEvidenceError("plan_recovery_scheduler_trust_scope_invalid")
+
+    before_policy = _parse_policy(
+        desired_before.get("assume_role_policy"),
+        reason="plan_recovery_scheduler_trust_invalid",
+    )
+    after_policy = _parse_policy(
+        desired_after.get("assume_role_policy"),
+        reason="plan_recovery_scheduler_trust_invalid",
+    )
+    common_statement: dict[str, Any] = {
+        "Action": "sts:AssumeRole",
+        "Condition": {
+            "StringEquals": {"aws:SourceAccount": manifest.account_id},
+        },
+        "Effect": "Allow",
+        "Principal": {"Service": "scheduler.amazonaws.com"},
+        "Sid": "SchedulerOnly",
+    }
+    schedule_group = f"{manifest.project}-{manifest.environment}-monitor"
+    source_prefix = f"arn:aws:scheduler:{manifest.region}:{manifest.account_id}"
+    expected_before = {
+        "Statement": [
+            {
+                **common_statement,
+                "Condition": {
+                    **common_statement["Condition"],
+                    "ArnEquals": {
+                        "aws:SourceArn": (
+                            f"{source_prefix}:schedule/{schedule_group}/{schedule_group}"
+                        )
+                    },
+                },
+            }
+        ],
+        "Version": "2012-10-17",
+    }
+    expected_after = {
+        "Statement": [
+            {
+                **common_statement,
+                "Condition": {
+                    **common_statement["Condition"],
+                    "ArnEquals": {
+                        "aws:SourceArn": f"{source_prefix}:schedule-group/{schedule_group}"
+                    },
+                },
+            }
+        ],
+        "Version": "2012-10-17",
+    }
+    if before_policy != expected_before or after_policy != expected_after:
+        raise PlanEvidenceError("plan_recovery_scheduler_trust_transition_invalid")
+
+
 def _validate_prerequisite_recovery_drift(
     plan: dict[str, Any],
     manifest: PlanManifest,
@@ -989,6 +1060,15 @@ def _validate_prerequisite_recovery_drift(
         if audit_policy_actions == ["update"]:
             _validate_audit_bucket_policy_prerequisite_update(audit_policy_change, manifest)
             recovery_updates.add(AUDIT_BUCKET_POLICY_ADDRESS)
+    scheduler_role_resource = changes_by_address.get(SCHEDULER_ROLE_ADDRESS)
+    if scheduler_role_resource is not None:
+        scheduler_role_change = scheduler_role_resource.get("change")
+        if not isinstance(scheduler_role_change, dict):
+            raise PlanEvidenceError("plan_recovery_scheduler_trust_invalid")
+        scheduler_role_actions = _safe_actions(scheduler_role_change.get("actions"))
+        if scheduler_role_actions == ["update"]:
+            _validate_scheduler_trust_prerequisite_update(scheduler_role_change, manifest)
+            recovery_updates.add(SCHEDULER_ROLE_ADDRESS)
     if not raw_drift and not recovery_updates:
         return [], frozenset()
     if recovery_identity_invalid:
@@ -1197,6 +1277,8 @@ def summarize_plan(
         attestations["prerequisite_owned_recovery_drift_verified"] = True
     if AUDIT_BUCKET_POLICY_ADDRESS in prerequisite_recovery_updates:
         attestations["prerequisite_alb_log_policy_correction_verified"] = True
+    if SCHEDULER_ROLE_ADDRESS in prerequisite_recovery_updates:
+        attestations["prerequisite_scheduler_trust_correction_verified"] = True
     masked_account = f"********{manifest.account_id[-4:]}"
     return {
         "schema_version": "modelguard.redacted-terraform-plan.v1",

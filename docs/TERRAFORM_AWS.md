@@ -316,7 +316,14 @@ exact account and Region in `aws:SourceArn`; it removes the unsupported `aws:Sou
 condition and uses AWS's documented `loadbalancer/*` SourceArn shape. The evidence guard compares
 the complete before/after policy and rejects any other statement, principal, action, resource,
 account, Region, or condition change. The recovery plan must also contain both existing `no-op`
-resources and remaining `create` actions. Every other configuration-changing drift, unrelated
+resources and remaining `create` actions. A partial apply may also expose the original Scheduler
+execution-role trust policy, which incorrectly scoped `aws:SourceArn` to an individual schedule.
+AWS requires that condition to use the schedule-group ARN. The recovery guard therefore accepts
+only the exact transition from the ModelGuard monitor schedule ARN to its exact monitor
+schedule-group ARN, while retaining the exact Scheduler service principal, `sts:AssumeRole`,
+`aws:SourceAccount`, account, Region, role identity, boundary, tags, and every unrelated role field.
+Wildcard groups, schedule-name prefixes, other principals, or any additional role mutation are
+refused. Every other configuration-changing drift, unrelated
 resource, replacement, deletion, import, deposed instance, activation drift, or drift without an
 exact desired-state match remains fail-closed.
 
