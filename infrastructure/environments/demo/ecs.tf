@@ -111,6 +111,7 @@ module "api_service" {
   depends_on = [
     aws_iam_role_policy.ecs_execution,
     aws_iam_role_policy.api,
+    aws_lb_listener_rule.api,
   ]
 }
 
@@ -144,6 +145,8 @@ module "dashboard_service" {
   depends_on = [
     aws_iam_role_policy.ecs_execution,
     aws_iam_role_policy.dashboard,
+    aws_lb_listener.http_demo,
+    aws_lb_listener.https,
   ]
 }
 

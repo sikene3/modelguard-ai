@@ -605,6 +605,20 @@ def test_securestring_is_arn_only_and_injected_through_ecs_secrets(repository_ro
     assert "prediction_token_ssm_arn" not in outputs
 
 
+def test_ecs_services_wait_for_alb_target_group_association(repository_root: Path) -> None:
+    ecs = _read(repository_root, "infrastructure/environments/demo/ecs.tf")
+    api_service = ecs.split('module "api_service" {', maxsplit=1)[1].split(
+        'module "dashboard_service" {', maxsplit=1
+    )[0]
+    dashboard_service = ecs.split('module "dashboard_service" {', maxsplit=1)[1].split(
+        "locals {", maxsplit=1
+    )[0]
+
+    assert "aws_lb_listener_rule.api" in api_service
+    assert "aws_lb_listener.http_demo" in dashboard_service
+    assert "aws_lb_listener.https" in dashboard_service
+
+
 def test_alarm_matrix_has_a_real_native_or_emf_source_and_correct_missing_policy(
     repository_root: Path,
 ) -> None:
