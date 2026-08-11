@@ -84,7 +84,7 @@ data "aws_iam_policy_document" "scheduler_trust" {
       test     = "ArnEquals"
       variable = "aws:SourceArn"
       values = [
-        "arn:${local.partition}:scheduler:${var.aws_region}:${var.aws_account_id}:schedule/${local.name_prefix}-monitor/${local.name_prefix}-monitor",
+        "arn:${local.partition}:scheduler:${var.aws_region}:${var.aws_account_id}:schedule-group/${local.name_prefix}-monitor",
       ]
     }
   }

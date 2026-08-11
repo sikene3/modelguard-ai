@@ -1835,6 +1835,26 @@ def test_alb_log_delivery_policy_matches_the_supported_least_privilege_contract(
     assert "alb_name" not in environment
 
 
+def test_scheduler_trust_uses_the_exact_schedule_group_confused_deputy_scope(
+    repository_root: Path,
+) -> None:
+    iam = _read(repository_root, "infrastructure/environments/demo/iam.tf")
+    statement = iam.split('data "aws_iam_policy_document" "scheduler_trust"', maxsplit=1)[1].split(
+        'resource "aws_iam_role" "ecs_execution"', maxsplit=1
+    )[0]
+
+    assert 'identifiers = ["scheduler.amazonaws.com"]' in statement
+    assert 'actions = ["sts:AssumeRole"]' in statement
+    assert 'variable = "aws:SourceAccount"' in statement
+    assert "values   = [var.aws_account_id]" in statement
+    assert 'variable = "aws:SourceArn"' in statement
+    assert (
+        '"arn:${local.partition}:scheduler:${var.aws_region}:${var.aws_account_id}:'
+        'schedule-group/${local.name_prefix}-monitor"' in statement
+    )
+    assert ":schedule/${local.name_prefix}-monitor/" not in statement
+
+
 def test_operator_scripts_refuse_without_explicit_confirmation(repository_root: Path) -> None:
     for relative in ("scripts/safe_apply.sh", "scripts/safe_destroy.sh"):
         result = subprocess.run(
