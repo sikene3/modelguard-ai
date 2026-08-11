@@ -130,6 +130,12 @@ POST_DESTROY_SERVICE_CATEGORIES = frozenset(
 )
 POST_DESTROY_RETAINED_BUDGET = "modelguard-ai-demo-monthly"
 POST_DESTROY_TASK_FAMILIES = ("api", "dashboard", "monitor")
+POST_DESTROY_STALE_TAG_REQUIRED = {
+    "Project": PROJECT,
+    "Environment": ENVIRONMENT,
+    "Ownership": ENVIRONMENT,
+    "ManagedBy": "Terraform",
+}
 
 
 def _expected_backend_bucket(account_id: str, region: str) -> str:
@@ -889,6 +895,69 @@ def verify_plan(
         raise GuardError("saved_plan_auto_destroy_date_expired")
 
 
+def _is_validated_stale_tag_metadata(
+    arn: str,
+    tags: dict[str, str],
+    *,
+    account_id: str,
+    region: str,
+) -> bool:
+    """Recognize only nonbillable tag-index history covered by authoritative live queries."""
+
+    if any(tags.get(key) != value for key, value in POST_DESTROY_STALE_TAG_REQUIRED.items()):
+        return False
+    owner = tags.get("Owner")
+    if (
+        not isinstance(owner, str)
+        or "@" in owner
+        or re.fullmatch(r"[A-Za-z0-9._-]{2,64}", owner) is None
+    ):
+        return False
+    auto_destroy_date = tags.get("AutoDestroyDate")
+    try:
+        if not isinstance(auto_destroy_date, str):
+            return False
+        date.fromisoformat(auto_destroy_date)
+    except ValueError:
+        return False
+    allowed_tag_keys = {
+        "AutoDestroyDate",
+        "Component",
+        "Environment",
+        "ManagedBy",
+        "Name",
+        "Owner",
+        "Ownership",
+        "Project",
+        "aws:ecs:clusterName",
+        "aws:ecs:serviceName",
+    }
+    if not set(tags).issubset(allowed_tag_keys):
+        return False
+    if tags.get("aws:ecs:clusterName", "modelguard-ai-demo") != "modelguard-ai-demo":
+        return False
+    service_name = tags.get("aws:ecs:serviceName")
+    if service_name is not None and service_name not in {
+        "modelguard-ai-demo-api",
+        "modelguard-ai-demo-dashboard",
+    }:
+        return False
+
+    ecs_prefix = rf"arn:aws:ecs:{re.escape(region)}:{re.escape(account_id)}:"
+    ec2_prefix = rf"arn:aws:ec2:{re.escape(region)}:{re.escape(account_id)}:"
+    exact_patterns = (
+        ecs_prefix + r"cluster/modelguard-ai-demo",
+        ecs_prefix + r"service/modelguard-ai-demo/modelguard-ai-demo-(?:api|dashboard)",
+        ecs_prefix + r"task/modelguard-ai-demo/[0-9a-f]{32}",
+        ecs_prefix + r"task-definition/modelguard-ai-demo-(?:api|dashboard|monitor):[1-9][0-9]*",
+        ec2_prefix + r"natgateway/nat-[0-9a-f]{8,32}",
+        ec2_prefix + r"security-group/sg-[0-9a-f]{8,32}",
+        ec2_prefix + r"security-group-rule/sgr-[0-9a-f]{8,32}",
+        ec2_prefix + r"vpc-endpoint/vpce-[0-9a-f]{8,32}",
+    )
+    return any(re.fullmatch(pattern, arn) is not None for pattern in exact_patterns)
+
+
 def evaluate_post_destroy_inventory(
     payload: dict[str, Any],
     *,
@@ -951,6 +1020,7 @@ def evaluate_post_destroy_inventory(
         "validated_nonbillable": [],
         "unrelated": [],
     }
+    tagged_resources: list[tuple[str, dict[str, str]]] = []
     for item in raw_resources:
         if not isinstance(item, dict) or set(item) != {"ResourceARN", "Tags"}:
             raise GuardError("inventory_resource_invalid")
@@ -972,7 +1042,7 @@ def evaluate_post_destroy_inventory(
                 raise GuardError("inventory_tags_invalid")
             tags[tag["Key"]] = tag["Value"]
         if tags.get("Project") == project and tags.get("Environment") == environment:
-            result["residual_demo"].append(arn)
+            tagged_resources.append((arn, tags))
         else:
             raise GuardError("inventory_resource_tag_scope_mismatch")
 
@@ -993,6 +1063,17 @@ def evaluate_post_destroy_inventory(
                 raise GuardError("inventory_service_identifier_duplicate")
             seen.add(identifier)
             result["residual_service"].append(f"{service}:{identifier}")
+
+    for arn, tags in tagged_resources:
+        if not result["residual_service"] and _is_validated_stale_tag_metadata(
+            arn,
+            tags,
+            account_id=account_id,
+            region=region,
+        ):
+            result["validated_nonbillable"].append(f"resource_tagging_api_stale:{arn}")
+        else:
+            result["residual_demo"].append(arn)
 
     retained_resources = payload["retained_resources"]
     if not isinstance(retained_resources, dict) or set(retained_resources) != {"budgets"}:

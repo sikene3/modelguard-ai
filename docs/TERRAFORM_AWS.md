@@ -655,6 +655,14 @@ the verifier directly with the same identity inputs and
 Both files must remain mode `0600`; an empty first response is not proof by itself, and neither path
 may be reused. Any query error fails closed instead of being normalized to an empty result.
 
+Resource Groups Tagging can retain exact tags for deleted EC2 resources and stopped/inactive ECS
+metadata after the authoritative service APIs are empty. The guard accepts only the bounded
+ModelGuard NAT, security-group, security-group-rule, VPC-endpoint, ECS cluster/service/task, and
+task-definition ARN forms as validated nonbillable tag-index metadata, and only when every
+service-specific live-resource list is empty. A foreign account/Region/name, an unknown resource
+class, malformed or substituted tags, or any concurrent live-service residual remains a hard
+teardown failure.
+
 After the bounded eventual-consistency wait, create the distinct confirmation receipt directly:
 
 ```bash
