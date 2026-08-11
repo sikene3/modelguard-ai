@@ -113,7 +113,7 @@ locals {
     "rate(6 hours)" = 21600
   }
 
-  active_pointer = var.activate_services ? try(jsondecode(data.aws_ssm_parameter.active_current[0].value), {}) : {}
+  active_pointer = try(jsondecode(data.aws_ssm_parameter.active_current[0].value), null)
   active_model_version = var.activate_services ? try(
     local.active_pointer.target_identity.model_version,
     "UNSET",

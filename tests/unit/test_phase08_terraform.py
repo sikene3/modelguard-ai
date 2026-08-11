@@ -547,6 +547,11 @@ def test_activation_defaults_off_and_runtime_state_is_derived_only_from_barrier(
     assert "must exactly match monitor_schedule_expression" in locals
     assert "schedule_period_seconds" in locals
     assert "expected_bundle_filenames" in locals
+    assert (
+        "active_pointer = try(jsondecode(data.aws_ssm_parameter.active_current[0].value), null)"
+        in locals
+    )
+    assert "var.activate_services ? try(jsondecode(" not in locals
     assert "var.activate_services ? 1 : 0" in locals
     assert 'monitor_schedule_state = var.activate_services ? "ENABLED" : "DISABLED"' in locals
     observability = _read(repository_root, "infrastructure/environments/demo/observability.tf")
