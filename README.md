@@ -16,11 +16,13 @@ ShellCheck, Checkov, Trivy, and Gitleaks; the same repository scripts enforce th
 GitHub Actions; and only sanitized SARIF is eligible for Code Scanning upload.
 
 The Phase 10 local-runtime baseline is committed at `aad098c`; its follow-up blocker-remediation
-commit is `e5095af`. That patch adds the exact Botocore browser-login CRT dependency and a create-only, checksum-verifying,
-version-pinned model publisher with serialized active/previous promotion and rollback. Phase 10
-remains `in_progress`: no GitHub workflow or AWS plan/apply/destroy has run, and no image or model has
-been published. Activation remains fail-closed until an authorized deployment supplies live
-prerequisites and a clean-source immutable-registry-digest runtime record. See
+commit is `e5095af`. That patch adds the exact Botocore browser-login CRT dependency and a
+create-only, checksum-verifying, version-pinned model publisher with serialized active/previous
+promotion and rollback. Phase 10 is closed: retained audit/bootstrap controls were applied with
+encrypted state recovery, immutable images and model `1.0.3` were published, the restricted live
+demo passed API/dashboard/Firehose/monitoring evidence checks, and the exact saved destroy plan left
+zero disposable demo resources. The USD 10 Budget and retained audit/bootstrap controls remain by
+design; Phase 11 has not started. See
 [`docs/CICD_SECURITY.md`](docs/CICD_SECURITY.md),
 [`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-10.md`.
 
@@ -364,14 +366,15 @@ approval is granted, `scripts.model_bundle_publisher` verifies the exact seven-f
 refuses any prior S3 version history for the semantic version, conditionally creates and reads back
 every object, and promotes active/previous under a conditional S3 lock. It writes no local file and
 accepts no credential or secret-value argument. The exact future command and failure recovery are in
-[docs/08_AWS_DEPLOYMENT_ORDER.md](docs/08_AWS_DEPLOYMENT_ORDER.md); it has not been run.
+[docs/08_AWS_DEPLOYMENT_ORDER.md](docs/08_AWS_DEPLOYMENT_ORDER.md); the Phase 10 publication and
+promotion are complete and their raw receipts remain only in encrypted evidence storage.
 
 AWS deployment governance supports a protected team contract and a disclosed solo portfolio
 contract. The latter is not separation of duties and requires a Public repository before Actions.
-The sanitized baseline is now Public with the exact solo `main` ruleset and three contract
-environments while Actions remains disabled. OIDC customization, AWS bootstrap, retained CloudTrail
-apply, artifact publication, and deployment remain separate Phase 10 boundaries; the retained USD
-10 Budget prerequisite already passed its value-free read-only check. See
+The sanitized repository is Public with the exact solo `main` ruleset, three contract environments,
+custom OIDC subjects, least-privilege AWS roles, and required Actions checks. Retained CloudTrail,
+bootstrap, artifact publication, live deployment, and disposable-demo teardown all completed under
+their separate Phase 10 boundaries; the retained USD 10 Budget remains active. See
 [docs/DEPLOYMENT_GOVERNANCE.md](docs/DEPLOYMENT_GOVERNANCE.md),
 [docs/AWS_ACCOUNT_PREREQUISITES.md](docs/AWS_ACCOUNT_PREREQUISITES.md), and
 [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md).

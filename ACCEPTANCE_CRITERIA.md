@@ -103,9 +103,9 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Bootstrap owns OIDC roles and a mandatory permission boundary that demo deploy cannot alter;
       customized legacy/immutable subjects bind exact repository, ref, protected environment,
       workflow, and audience; bounded `iam:PassRole` is evidenced.
-- [x] GitHub Actions uses customized exact-subject OIDC, not stored AWS access keys; IAM is updated
-      before the matching repository subject template, and live claim exchange remains a Phase 10
-      execution check.
+- [x] GitHub Actions uses customized exact-subject OIDC, not stored AWS access keys; IAM was updated
+      before the matching repository subject template, and live plan/deploy claim exchange passed
+      with the exact bounded roles.
 - [x] actionlint, ShellCheck, Checkov, Gitleaks, and Trivy share one repository-owned fail-closed
       local/CI gate and one exact version/checksum-or-digest lock; missing tools and scanner nonzero
       exits fail the release gate.
@@ -130,11 +130,11 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] A separate retained CloudTrail Terraform design limits S3 data events to the exact future
       state and lock objects, uses protected encrypted storage with finite retention and
       `prevent_destroy`, and documents encrypted local-state preservation and usage costs.
-- [ ] The retained CloudTrail prerequisite has been separately reviewed, applied, state-preserved,
+- [x] The retained CloudTrail prerequisite has been separately reviewed, applied, state-preserved,
       and verified in AWS.
 - [x] The guarded deployment design requires a reviewed prerequisites plan with runtimes disabled,
-      exact image/model/token prerequisite verification, and a second reviewed digest-pinned
-      activation plan; the corresponding live applies remain unchecked Phase 10 work.
+      exact image/model/access prerequisite verification, and a second reviewed digest-pinned
+      activation plan; the live applies and exact `/32` ingress update were evidence-bound.
 - [x] The model publisher verifies the strict seven-file bundle and measured size bounds before AWS,
       refuses any current or historical object under the semantic-version prefix, uses conditional
       create-only writes plus exact checksum/VersionId readback, publishes the checksum index last,
@@ -145,23 +145,25 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       The CLI accepts no credential/secret-value or local-output argument and emits bounded identity
       metadata only.
 - [x] ECS deployment circuit breaker/rollback is enabled.
-- [ ] Scheduled monitor task can read inputs and write reports.
+- [x] Scheduled monitor task read the active model/prediction inputs, wrote an immutable report pair
+      plus EMF heartbeat, and failed closed with the exact insufficient-data category below 500 rows.
 - [x] The local production-equivalent runtime verifier checks actual API hydration, typed dashboard
       AWS health, and one-shot monitor contents/entrypoints; activation evidence must match all three
       immutable image references before `runtime_contract_verified` can be true in rendered inputs.
 - [x] A pre-rewrite sealed three-image verifier run passed AppArmor, built-in seccomp, genuine
-      `no-new-privileges`, and all other required host controls. Its record is bound to the exact
-      historical local image IDs, then-current source revision, and `uv.lock`, and is retained only
-      as historical functional evidence. Current activation still requires a newly generated
-      clean-source immutable registry-digest record; the Terraform default remains false until then.
+      `no-new-privileges`, and all other required host controls. It remains historical functional
+      evidence only; activation used the newly generated clean-source immutable registry-digest
+      record and enabled the runtime contract only after all three image identities matched.
 - [x] Drift/alarm SNS email enrollment is interactive, fail-closed before publication, and absent
       from Terraform state/plans and workflow artifacts. Retained Budget and CloudWatch key-policy
       statements remain independently restricted by exact source-account, source-ARN, topic-context,
       and regional SNS ViaService conditions; the manual budget itself is not Terraform-owned.
 - [x] The Terraform design defines CloudWatch logs and alarms; every alarm has a tested
       native-service or bounded EMF source, and scheduler submission is not treated as monitor
-      completion. Live alarm/source verification remains unchecked Phase 10 work.
-- [ ] `terraform destroy` removes the demo environment without orphaned resources.
+      completion. All 12 live alarm/source contracts were inventoried before teardown.
+- [x] The exact saved `terraform destroy` plan removed the disposable demo environment. Terraform
+      state and every live service namespace are empty; only validated nonbillable provider/tag
+      metadata and the required retained Budget remain.
 
 ## CI/CD
 
@@ -181,11 +183,12 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] The sanitized baseline passed the checksum-verified Publication Audit, was deliberately made
       Public with Actions disabled, and received the exact solo `main` ruleset plus the three
       contract environments.
-- [ ] Repository variables, customized OIDC claims, and matching AWS trust are configured and read
+- [x] Repository variables, customized OIDC claims, and matching AWS trust are configured and read
       back before Actions is enabled.
 - [x] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
       actions/base images are pinned.
-- [ ] Post-deploy smoke test runs.
+- [x] The replacement restricted runner passed live/ready/version/prediction and dashboard health
+      from the exact `41.68.210.73/32` ingress rule.
 - [x] HTTPS smoke keeps the bearer token out of curl argv/environment and persisted evidence by
       validating it and supplying the Authorization header only through anonymous config stdin.
 - [x] Failed deployment does not silently remain marked successful and has explicit protected ECS
@@ -198,4 +201,5 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [ ] 3–5 minute demo recording exists.
 - [ ] At least four screenshots/GIFs exist.
 - [ ] Case study explains the problem, trade-offs, implementation, evidence, and outcome.
-- [ ] No active infrastructure or secrets remain after capture unless intentionally retained.
+- [x] No disposable demo infrastructure or secrets remain after capture; the USD 10 Budget and
+      retained audit/bootstrap control plane remain intentionally.

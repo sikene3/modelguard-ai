@@ -40,43 +40,45 @@
       insufficient-data, corrupt-bundle, and sink-outage matrix passed using the repaired functional
       tree; it remains functional local evidence only, not current source-bound publication evidence.
 
-## Live deployment segment — authorized; mutation not yet executed
+## Live deployment segment — complete
 
-- [ ] Commit the reviewed live-path guard corrections, regenerate the model bundle from that clean
-      commit, and pass the clean-source release gate; the current dirty candidate passes all other
-      applicable local gates and deliberately fails closed at the bundle provenance check
+- [x] Reviewed live-path corrections were merged through protected pull requests; clean-source
+      model/image artifacts and their source-bound release evidence passed before activation
 - [x] AWS identity confirmed with the browser-authenticated non-root operator profile in `us-east-1`
-- [ ] Account/Region/backend/tags/CIDR/budget/expiry/access-mode guardrails confirmed
+- [x] Account/Region/backend/tags/expiry/access-mode guardrails confirmed; ingress was exactly the
+      verified runner address `41.68.210.73/32`, never world-open
 - [x] Manual USD 10 budget exists and passes the value-free read-only preflight
 - [x] Firehose account readiness passes without `SubscriptionRequiredException`
-- [ ] Retained CloudTrail design reviewed/applied and its encrypted state preservation verified
-- [ ] Bootstrap trust boundary reviewed with temporary browser-authenticated human identity
+- [x] Retained CloudTrail design reviewed/applied; encrypted state, backup, and restore verified
+- [x] Bootstrap trust boundary and the two least-privilege IAM reconciliation updates reviewed,
+      applied, state-preserved, and read back with the temporary browser-authenticated identity
 - [x] Public visibility, exact solo main ruleset, and the three contract environments reviewed and
-      configured while Actions remains disabled
-- [ ] GitHub variables and OIDC template configured only after the matching AWS trust exists
-- [ ] Prerequisite saved plan applied with runtimes disabled
-- [ ] Each image scanned/pushed once and immutable digest resolved
-- [ ] Model no-overwrite publish verified; exact manifest pointer promoted
-- [ ] Token ARN/ACM verified for HTTPS-token mode; no token value captured
-- [ ] Second saved digest-pinned activation plan reviewed/applied
-- [ ] Targets healthy
-- [ ] Firehose delivery verified
-- [ ] Monitor/report verified
-- [ ] Resource inventory recorded
-- [ ] Exact image/model identity and rollback targets verified
-- [ ] Cleanup plan and post-destroy verification prepared
-- [ ] Raw plans restricted/redacted; exact plan/commit/account/backend identities match
-- [ ] Live ECS/IAM runtime hydration, dashboard source health, monitor `aws-run`, and teardown pass
+      configured before Actions was enabled
+- [x] GitHub variables and customized OIDC template configured only after matching AWS trust existed
+- [x] Prerequisite saved plan applied with runtimes disabled
+- [x] Each image scanned/pushed once and immutable digest resolved
+- [x] Model `1.0.3` no-overwrite publish verified; exact manifest pointer promoted
+- [x] `http_cidr_only` selected; no ACM/token value or token reference was used
+- [x] Digest-pinned activation and exact `/32` ingress-update saved plans reviewed/applied
+- [x] API and dashboard services stable; both ALB target groups healthy
+- [x] Restricted-runner prediction reached the encrypted Firehose destination
+- [x] One-shot monitor persisted an immutable report pair and EMF heartbeat, then returned the exact
+      fail-closed insufficient-data category for the deliberately sub-threshold live sample
+- [x] Provider-backed resource, IAM-boundary, encryption, logging, alarm, and cost inventory recorded
+- [x] Exact image/model/task/schedule identities and ECS circuit-breaker rollback policy verified;
+      the first-deployment explicit rollback correctly refused without an invented LKG record
+- [x] Cleanup plan applied; initial and delayed service-specific inventories retained and verified
+- [x] Raw plans remained encrypted/restricted; redacted evidence bound exact plan/source/account/backend
+- [x] Live ECS/IAM hydration, dashboard source health, monitor `aws-run`, state restore, and teardown pass
 
 ## Evidence
 
 - Commands: see `reports/phase-10.md`
 - Test results: see `reports/phase-10.md`
-- Artifact paths: local-only evidence is listed in `reports/phase-10.md`; baseline private evidence
-  is sealed under the approved Phase 10 backup root; account-level read-only AWS prerequisite evidence
-  exists, but no live deployment/runtime evidence exists
+- Artifact paths: complete raw evidence is mode-`0600` below the approved encrypted Phase 10 state
+  root and checksum-mirrored below the encrypted backup root; only bounded identities are tracked
 - Local-runtime baseline commit: `aad098ccb54d51c64a48b2105992d242f1c96b09`
 - Blocker-remediation commit: `e5095af0114a938ffb7c779904e140f1db3c49a1`, exact message
   `fix: remediate Phase 10 live deployment blockers`
-- Residual risks: every unchecked live-deployment item above remains a blocker; the local code-only
-  readiness segment and account-level read-only prerequisites are complete
+- Residual risks: `solo_portfolio` is not separation of duties; retained audit/bootstrap controls and
+  the USD 10 Budget intentionally remain, while the disposable demo has zero live resource residuals
