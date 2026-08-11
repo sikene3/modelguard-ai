@@ -26,6 +26,7 @@ class PlanEvidenceError(RuntimeError):
 
 AWS_PROVIDER = "registry.terraform.io/hashicorp/aws"
 TERRAFORM_PROVIDER = "terraform.io/builtin/terraform"
+AUDIT_BUCKET_POLICY_ADDRESS = 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
 DEPOSED_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REQUIRED_TAGGED_BASES = frozenset(
     {
@@ -855,6 +856,104 @@ def _validate_alb_prerequisite_recovery_update(
         raise PlanEvidenceError("plan_recovery_alb_desired_state_invalid")
 
 
+def _parse_bucket_policy(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str) or not value or len(value) > 1024 * 1024:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+    try:
+        parsed = json.loads(
+            value,
+            object_pairs_hook=_strict_plan_pairs,
+            parse_constant=_reject_plan_constant,
+        )
+    except json.JSONDecodeError as error:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid") from error
+    if not isinstance(parsed, dict) or set(parsed) != {"Statement", "Version"}:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+    if parsed.get("Version") != "2012-10-17":
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+    return parsed
+
+
+def _policy_statements_by_sid(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw_statements = policy.get("Statement")
+    if not isinstance(raw_statements, list) or not raw_statements:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+    statements: dict[str, dict[str, Any]] = {}
+    for statement in raw_statements:
+        if not isinstance(statement, dict):
+            raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        sid = statement.get("Sid")
+        if (
+            not isinstance(sid, str)
+            or re.fullmatch(r"[A-Za-z0-9]{1,128}", sid) is None
+            or sid in statements
+        ):
+            raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        statements[sid] = statement
+    return statements
+
+
+def _validate_audit_bucket_policy_prerequisite_update(
+    desired_change: dict[str, Any], manifest: PlanManifest
+) -> None:
+    desired_before = desired_change.get("before")
+    desired_after = desired_change.get("after")
+    if not isinstance(desired_before, dict) or not isinstance(desired_after, dict):
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+
+    normalized_after = dict(desired_after)
+    normalized_after["policy"] = desired_before.get("policy")
+    if normalized_after != desired_before:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_scope_invalid")
+
+    before_policy = _parse_bucket_policy(desired_before.get("policy"))
+    after_policy = _parse_bucket_policy(desired_after.get("policy"))
+    before_statements = _policy_statements_by_sid(before_policy)
+    after_statements = _policy_statements_by_sid(after_policy)
+    if set(before_statements) != set(after_statements):
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_scope_invalid")
+
+    sid = "AllowAlbLogDelivery"
+    before_statement = before_statements.get(sid)
+    after_statement = after_statements.get(sid)
+    if before_statement is None or after_statement is None:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+    if {key: value for key, value in before_statements.items() if key != sid} != {
+        key: value for key, value in after_statements.items() if key != sid
+    }:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_scope_invalid")
+
+    audit_bucket = (
+        f"{manifest.project}-{manifest.environment}-{manifest.account_id}-{manifest.region}-audit"
+    )
+    resource = f"arn:aws:s3:::{audit_bucket}/alb/AWSLogs/{manifest.account_id}/*"
+    source_prefix = (
+        f"arn:aws:elasticloadbalancing:{manifest.region}:{manifest.account_id}:loadbalancer"
+    )
+    common = {
+        "Action": "s3:PutObject",
+        "Effect": "Allow",
+        "Principal": {"Service": "logdelivery.elasticloadbalancing.amazonaws.com"},
+        "Resource": resource,
+        "Sid": sid,
+    }
+    expected_before = {
+        **common,
+        "Condition": {
+            "ArnLike": {
+                "aws:SourceArn": f"{source_prefix}/app/{manifest.project}-{manifest.environment}/*"
+            },
+            "StringEquals": {"aws:SourceAccount": manifest.account_id},
+        },
+    }
+    expected_after = {
+        **common,
+        "Condition": {"ArnLike": {"aws:SourceArn": f"{source_prefix}/*"}},
+    }
+    if before_statement != expected_before or after_statement != expected_after:
+        raise PlanEvidenceError("plan_recovery_alb_log_policy_transition_invalid")
+
+
 def _validate_prerequisite_recovery_drift(
     plan: dict[str, Any],
     manifest: PlanManifest,
@@ -865,26 +964,38 @@ def _validate_prerequisite_recovery_drift(
     raw_drift = plan.get("resource_drift", [])
     if not isinstance(raw_drift, list):
         raise PlanEvidenceError("plan_resource_drift_present")
-    if not raw_drift:
-        return [], frozenset()
-
     changes_by_address: dict[str, dict[str, Any]] = {}
     managed_actions: list[tuple[str, ...]] = []
+    recovery_identity_invalid = False
     for raw_change in raw_changes:
         if not isinstance(raw_change, dict):
             raise PlanEvidenceError("plan_resource_change_not_object")
         address = _safe_identifier(raw_change.get("address"), field="address")
         if address in changes_by_address or "deposed" in raw_change:
-            raise PlanEvidenceError("plan_recovery_drift_change_identity_invalid")
+            recovery_identity_invalid = True
+            continue
         changes_by_address[address] = raw_change
         change = raw_change.get("change")
         if raw_change.get("mode") == "managed" and isinstance(change, dict):
             managed_actions.append(tuple(_safe_actions(change.get("actions"))))
+    drift: list[dict[str, Any]] = []
+    recovery_updates: set[str] = set()
+    audit_policy_resource = changes_by_address.get(AUDIT_BUCKET_POLICY_ADDRESS)
+    if audit_policy_resource is not None:
+        audit_policy_change = audit_policy_resource.get("change")
+        if not isinstance(audit_policy_change, dict):
+            raise PlanEvidenceError("plan_recovery_alb_log_policy_invalid")
+        audit_policy_actions = _safe_actions(audit_policy_change.get("actions"))
+        if audit_policy_actions == ["update"]:
+            _validate_audit_bucket_policy_prerequisite_update(audit_policy_change, manifest)
+            recovery_updates.add(AUDIT_BUCKET_POLICY_ADDRESS)
+    if not raw_drift and not recovery_updates:
+        return [], frozenset()
+    if recovery_identity_invalid:
+        raise PlanEvidenceError("plan_recovery_drift_change_identity_invalid")
     if ("create",) not in managed_actions or ("no-op",) not in managed_actions:
         raise PlanEvidenceError("plan_recovery_drift_stage_shape_invalid")
 
-    drift: list[dict[str, Any]] = []
-    recovery_updates: set[str] = set()
     seen: set[str] = set()
     allowed = _allowed_resource_addresses(manifest, mode="managed")
     for raw_change in raw_drift:
@@ -1084,6 +1195,8 @@ def summarize_plan(
         attestations["destroy_owned_drift_boundary_verified"] = True
     elif drift_changes:
         attestations["prerequisite_owned_recovery_drift_verified"] = True
+    if AUDIT_BUCKET_POLICY_ADDRESS in prerequisite_recovery_updates:
+        attestations["prerequisite_alb_log_policy_correction_verified"] = True
     masked_account = f"********{manifest.account_id[-4:]}"
     return {
         "schema_version": "modelguard.redacted-terraform-plan.v1",

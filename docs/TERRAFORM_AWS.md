@@ -310,8 +310,13 @@ managed `no-op` action in that same plan. The only bounded completion update is 
 an interrupted create: the live ALB must still have disabled access logging, invalid-header dropping,
 and the provider-default defensive desync mode. The plan changes only those fields to the exact
 ModelGuard audit bucket and `alb` prefix, enabled invalid-header dropping, and `strictest` mode. The
-recovery plan must also contain both existing `no-op` resources and remaining `create` actions. Every
-other configuration-changing drift, unrelated
+same recovery may contain one exact audit-bucket policy correction for ALB log delivery. That
+statement retains the service principal, `s3:PutObject` action, account-bearing object prefix, and
+exact account and Region in `aws:SourceArn`; it removes the unsupported `aws:SourceAccount`
+condition and uses AWS's documented `loadbalancer/*` SourceArn shape. The evidence guard compares
+the complete before/after policy and rejects any other statement, principal, action, resource,
+account, Region, or condition change. The recovery plan must also contain both existing `no-op`
+resources and remaining `create` actions. Every other configuration-changing drift, unrelated
 resource, replacement, deletion, import, deposed instance, activation drift, or drift without an
 exact desired-state match remains fail-closed.
 

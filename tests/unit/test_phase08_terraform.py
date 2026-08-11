@@ -1810,6 +1810,31 @@ def test_network_storage_runtime_and_destroy_contract_are_static_and_explicit(
     assert "data.aws_region.current.name" not in network
 
 
+def test_alb_log_delivery_policy_matches_the_supported_least_privilege_contract(
+    repository_root: Path,
+) -> None:
+    data_plane = _read(repository_root, "infrastructure/modules/data_plane/main.tf")
+    variables = _read(repository_root, "infrastructure/modules/data_plane/variables.tf")
+    environment = _read(repository_root, "infrastructure/environments/demo/data.tf")
+    statement = data_plane.split('sid    = "AllowAlbLogDelivery"', maxsplit=1)[1].split(
+        'dynamic "statement"', maxsplit=1
+    )[0]
+
+    assert 'identifiers = ["logdelivery.elasticloadbalancing.amazonaws.com"]' in statement
+    assert 'actions = ["s3:PutObject"]' in statement
+    assert (
+        '"${local.audit_bucket_arn}/${var.alb_log_prefix}/AWSLogs/${var.account_id}/*"' in statement
+    )
+    assert 'variable = "aws:SourceAccount"' not in statement
+    assert 'variable = "aws:SourceArn"' in statement
+    assert (
+        '"arn:${data.aws_partition.current.partition}:elasticloadbalancing:'
+        '${var.region}:${var.account_id}:loadbalancer/*"' in statement
+    )
+    assert "alb_name" not in variables
+    assert "alb_name" not in environment
+
+
 def test_operator_scripts_refuse_without_explicit_confirmation(repository_root: Path) -> None:
     for relative in ("scripts/safe_apply.sh", "scripts/safe_destroy.sh"):
         result = subprocess.run(
