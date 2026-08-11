@@ -1854,6 +1854,44 @@ def test_plan_summary_proves_stage_runtime_alarm_and_image_contracts() -> None:
     assert all(isinstance(value, bool) for value in summary["contract_attestations"].values())
 
 
+def test_plan_summary_accepts_provider_null_for_empty_prerequisite_alarm_actions() -> None:
+    manifest = _plan_manifest()
+    plan = _show_plan(manifest)
+    for change in plan["resource_changes"]:
+        if change["type"] == "aws_cloudwatch_metric_alarm":
+            change["change"]["after"].update(
+                {
+                    "alarm_actions": None,
+                    "insufficient_data_actions": None,
+                    "ok_actions": None,
+                }
+            )
+
+    summary = _summarize(plan, manifest)
+
+    assert summary["contract_attestations"]["alarm_action_boundary_verified"] is True
+
+
+def test_plan_summary_accepts_provider_null_only_for_empty_activation_alarm_actions() -> None:
+    manifest = _plan_manifest(stage="activation")
+    plan = _show_plan(manifest)
+    for change in plan["resource_changes"]:
+        if change["type"] == "aws_cloudwatch_metric_alarm":
+            change["change"]["after"]["insufficient_data_actions"] = None
+
+    summary = _summarize(plan, manifest)
+    assert summary["contract_attestations"]["alarm_action_boundary_verified"] is True
+
+    required_action = next(
+        change
+        for change in plan["resource_changes"]
+        if change["address"] == "aws_cloudwatch_metric_alarm.alb_api_5xx"
+    )
+    required_action["change"]["after"]["alarm_actions"] = None
+    with pytest.raises(PlanEvidenceError, match="alarm_action_boundary_mismatch"):
+        _summarize(plan, manifest)
+
+
 @pytest.mark.parametrize(
     ("address", "resource_type"),
     [
