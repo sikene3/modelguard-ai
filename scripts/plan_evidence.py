@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -28,6 +29,8 @@ AWS_PROVIDER = "registry.terraform.io/hashicorp/aws"
 TERRAFORM_PROVIDER = "terraform.io/builtin/terraform"
 AUDIT_BUCKET_POLICY_ADDRESS = 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
 SCHEDULER_ROLE_ADDRESS = "aws_iam_role.scheduler"
+SCHEDULER_POLICY_ADDRESS = "aws_iam_role_policy.scheduler"
+ALB_HTTP_INGRESS_ADDRESS = "module.network.aws_vpc_security_group_ingress_rule.alb_http"
 DEPOSED_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REQUIRED_TAGGED_BASES = frozenset(
     {
@@ -125,6 +128,7 @@ ACTIVATION_UPDATE_ADDRESSES = frozenset(
     {
         *ECS_SERVICE_ADDRESSES,
         *ALARM_ADDRESSES,
+        ALB_HTTP_INGRESS_ADDRESS,
         "aws_iam_role_policy.scheduler",
         "aws_scheduler_schedule.monitor",
         "terraform_data.deployment_guard",
@@ -558,6 +562,98 @@ def _parse_container_definitions(value: Any) -> list[Any]:
     return parsed
 
 
+def _canonical_ipv4_host_cidr(value: Any) -> str:
+    if not isinstance(value, str):
+        raise PlanEvidenceError("plan_activation_cidr_invalid")
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError as error:
+        raise PlanEvidenceError("plan_activation_cidr_invalid") from error
+    if network.version != 4 or network.prefixlen != 32 or str(network) != value:
+        raise PlanEvidenceError("plan_activation_cidr_invalid")
+    return value
+
+
+def _normalized_api_container(container: dict[str, Any], *, cidr: str) -> dict[str, Any]:
+    normalized = dict(container)
+    environment = normalized.get("environment")
+    if not isinstance(environment, list):
+        raise PlanEvidenceError("plan_activation_cidr_api_environment_invalid")
+    normalized_environment: list[dict[str, Any]] = []
+    cidr_entries = 0
+    for item in environment:
+        if not isinstance(item, dict) or set(item) != {"name", "value"}:
+            raise PlanEvidenceError("plan_activation_cidr_api_environment_invalid")
+        normalized_item = dict(item)
+        if item.get("name") == "ALB_ALLOWED_CIDR":
+            cidr_entries += 1
+            if _canonical_ipv4_host_cidr(item.get("value")) != cidr:
+                raise PlanEvidenceError("plan_activation_cidr_api_mismatch")
+            normalized_item["value"] = "<reviewed-cidr>"
+        normalized_environment.append(normalized_item)
+    if cidr_entries != 1:
+        raise PlanEvidenceError("plan_activation_cidr_api_environment_invalid")
+    normalized["environment"] = normalized_environment
+    for optional_collection in ("systemControls", "volumesFrom"):
+        value = normalized.get(optional_collection)
+        if value is not None and value != []:
+            raise PlanEvidenceError("plan_activation_cidr_api_container_scope_invalid")
+        normalized[optional_collection] = []
+    return normalized
+
+
+def _validate_activation_cidr_rotation(changes: dict[str, dict[str, Any]]) -> bool:
+    ingress_change = changes.get(ALB_HTTP_INGRESS_ADDRESS)
+    if ingress_change is None or _safe_actions(ingress_change.get("actions")) == ["no-op"]:
+        return False
+    if _safe_actions(ingress_change.get("actions")) != ["update"]:
+        raise PlanEvidenceError("plan_activation_cidr_action_invalid")
+    before = ingress_change.get("before")
+    after = ingress_change.get("after")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise PlanEvidenceError("plan_activation_cidr_values_invalid")
+    before_cidr = _canonical_ipv4_host_cidr(before.get("cidr_ipv4"))
+    after_cidr = _canonical_ipv4_host_cidr(after.get("cidr_ipv4"))
+    if before_cidr == after_cidr:
+        raise PlanEvidenceError("plan_activation_cidr_unchanged")
+    normalized_ingress_before = dict(before)
+    normalized_ingress_before["cidr_ipv4"] = after_cidr
+    if normalized_ingress_before != after:
+        raise PlanEvidenceError("plan_activation_cidr_ingress_scope_invalid")
+
+    task_change = changes.get("module.api_service.aws_ecs_task_definition.this")
+    service_change = changes.get("module.api_service.aws_ecs_service.this")
+    if (
+        not isinstance(task_change, dict)
+        or tuple(_safe_actions(task_change.get("actions")))
+        not in {
+            ("create", "delete"),
+            ("delete", "create"),
+        }
+        or not isinstance(service_change, dict)
+        or _safe_actions(service_change.get("actions")) != ["update"]
+    ):
+        raise PlanEvidenceError("plan_activation_cidr_runtime_actions_invalid")
+    task_before = task_change.get("before")
+    task_after = task_change.get("after")
+    if not isinstance(task_before, dict) or not isinstance(task_after, dict):
+        raise PlanEvidenceError("plan_activation_cidr_task_values_invalid")
+    before_definitions = _parse_container_definitions(task_before.get("container_definitions"))
+    after_definitions = _parse_container_definitions(task_after.get("container_definitions"))
+    if (
+        len(before_definitions) != 1
+        or len(after_definitions) != 1
+        or not isinstance(before_definitions[0], dict)
+        or not isinstance(after_definitions[0], dict)
+    ):
+        raise PlanEvidenceError("plan_activation_cidr_api_container_scope_invalid")
+    normalized_before = _normalized_api_container(before_definitions[0], cidr=before_cidr)
+    normalized_after = _normalized_api_container(after_definitions[0], cidr=after_cidr)
+    if normalized_before != normalized_after:
+        raise PlanEvidenceError("plan_activation_cidr_api_container_scope_invalid")
+    return True
+
+
 def _validate_stage_contract(
     changes: dict[str, dict[str, Any]], manifest: PlanManifest
 ) -> dict[str, bool]:
@@ -676,6 +772,8 @@ def _validate_stage_contract(
             ):
                 raise PlanEvidenceError("plan_task_image_identity_mismatch")
         attestations["immutable_task_image_digests_verified"] = True
+        if _validate_activation_cidr_rotation(changes):
+            attestations["activation_exact_cidr_rotation_verified"] = True
     return attestations
 
 
@@ -749,7 +847,7 @@ def write_evidence_file(path: Path, payload: str) -> None:
         raise PlanEvidenceError("evidence_output_mode_invalid")
 
 
-def _validate_plan_status(plan: dict[str, Any], *, stage: str) -> None:
+def _validate_plan_status(plan: dict[str, Any]) -> None:
     if plan.get("errored", False) is not False:
         raise PlanEvidenceError("plan_errored")
     if "applyable" in plan and plan["applyable"] is not True:
@@ -757,7 +855,7 @@ def _validate_plan_status(plan: dict[str, Any], *, stage: str) -> None:
     if "complete" in plan and plan["complete"] is not True:
         raise PlanEvidenceError("plan_incomplete")
     drift = plan.get("resource_drift", [])
-    if not isinstance(drift, list) or (stage not in {"prerequisites", "destroy"} and drift):
+    if not isinstance(drift, list):
         raise PlanEvidenceError("plan_resource_drift_present")
 
 
@@ -873,6 +971,221 @@ def _parse_policy(value: Any, *, reason: str) -> dict[str, Any]:
     if parsed.get("Version") != "2012-10-17":
         raise PlanEvidenceError(reason)
     return parsed
+
+
+def _validate_scheduler_inline_policy_normalization(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    desired_policy_change: dict[str, Any],
+    manifest: PlanManifest,
+) -> None:
+    """Accept only the provider refresh to the exact current monitor revision policy."""
+
+    before_without_policy = dict(before)
+    after_without_policy = dict(after)
+    before_inline = before_without_policy.pop("inline_policy", None)
+    after_inline = after_without_policy.pop("inline_policy", None)
+    if before_without_policy != after_without_policy:
+        raise PlanEvidenceError("plan_activation_scheduler_drift_scope_invalid")
+    if (
+        not isinstance(before_inline, list)
+        or not isinstance(after_inline, list)
+        or len(before_inline) != 1
+        or len(after_inline) != 1
+        or not isinstance(before_inline[0], dict)
+        or not isinstance(after_inline[0], dict)
+        or set(before_inline[0]) != {"name", "policy"}
+        or set(after_inline[0]) != {"name", "policy"}
+        or before_inline[0].get("name") != after_inline[0].get("name")
+    ):
+        raise PlanEvidenceError("plan_activation_scheduler_drift_scope_invalid")
+    before_policy = _parse_policy(
+        before_inline[0].get("policy"), reason="plan_activation_scheduler_policy_invalid"
+    )
+    after_policy = _parse_policy(
+        after_inline[0].get("policy"), reason="plan_activation_scheduler_policy_invalid"
+    )
+    desired_before = desired_policy_change.get("before")
+    desired_after = desired_policy_change.get("after")
+    if (
+        _safe_actions(desired_policy_change.get("actions")) != ["no-op"]
+        or not isinstance(desired_before, dict)
+        or not isinstance(desired_after, dict)
+        or desired_before != desired_after
+        or desired_after.get("name") != "run-exact-monitor-task"
+        or before_inline[0].get("name") != desired_after.get("name")
+        or after_inline[0].get("name") != desired_after.get("name")
+    ):
+        raise PlanEvidenceError("plan_activation_scheduler_desired_policy_invalid")
+    desired_policy = _parse_policy(
+        desired_after.get("policy"), reason="plan_activation_scheduler_desired_policy_invalid"
+    )
+    if after_policy != desired_policy:
+        raise PlanEvidenceError("plan_activation_scheduler_policy_not_desired")
+
+    before_statements = before_policy.get("Statement")
+    after_statements = after_policy.get("Statement")
+    if (
+        not isinstance(before_statements, list)
+        or not isinstance(after_statements, list)
+        or len(before_statements) != 2
+        or len(after_statements) != 2
+        or not all(isinstance(item, dict) for item in before_statements + after_statements)
+    ):
+        raise PlanEvidenceError("plan_activation_scheduler_policy_invalid")
+    before_monitor_arn = before_statements[0].get("Resource")
+    after_monitor_arn = after_statements[0].get("Resource")
+    monitor_pattern = re.compile(
+        rf"^arn:aws:ecs:{re.escape(manifest.region)}:{re.escape(manifest.account_id)}:"
+        rf"task-definition/{re.escape(manifest.project)}-{re.escape(manifest.environment)}-"
+        r"monitor:[1-9][0-9]*$"
+    )
+    if (
+        not isinstance(before_monitor_arn, str)
+        or not isinstance(after_monitor_arn, str)
+        or monitor_pattern.fullmatch(before_monitor_arn) is None
+        or monitor_pattern.fullmatch(after_monitor_arn) is None
+    ):
+        raise PlanEvidenceError("plan_activation_scheduler_task_revision_invalid")
+    expected_cluster = (
+        f"arn:aws:ecs:{manifest.region}:{manifest.account_id}:"
+        f"cluster/{manifest.project}-{manifest.environment}"
+    )
+    expected_role_prefix = (
+        f"arn:aws:iam::{manifest.account_id}:role/{manifest.project}/{manifest.environment}/"
+        f"{manifest.project}-{manifest.environment}"
+    )
+
+    def expected_policy(task_definition_arn: str) -> dict[str, Any]:
+        return {
+            "Statement": [
+                {
+                    "Action": "ecs:RunTask",
+                    "Condition": {"ArnEquals": {"ecs:cluster": expected_cluster}},
+                    "Effect": "Allow",
+                    "Resource": task_definition_arn,
+                    "Sid": "RunExactMonitorTask",
+                },
+                {
+                    "Action": "iam:PassRole",
+                    "Condition": {
+                        "StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}
+                    },
+                    "Effect": "Allow",
+                    "Resource": sorted(
+                        [
+                            f"{expected_role_prefix}-ecs-execution",
+                            f"{expected_role_prefix}-monitor",
+                        ]
+                    ),
+                    "Sid": "PassOnlyMonitorTaskRolesToEcs",
+                },
+            ],
+            "Version": "2012-10-17",
+        }
+
+    def normalized_pass_role_resources(policy: dict[str, Any]) -> dict[str, Any]:
+        statements = policy.get("Statement")
+        if not isinstance(statements, list) or len(statements) != 2:
+            raise PlanEvidenceError("plan_activation_scheduler_policy_scope_invalid")
+        resources = statements[1].get("Resource")
+        if (
+            not isinstance(resources, list)
+            or len(resources) != 2
+            or not all(isinstance(item, str) for item in resources)
+            or len(set(resources)) != 2
+        ):
+            raise PlanEvidenceError("plan_activation_scheduler_policy_scope_invalid")
+        normalized_statements = [dict(item) for item in statements]
+        normalized_statements[1]["Resource"] = sorted(resources)
+        return {**policy, "Statement": normalized_statements}
+
+    if normalized_pass_role_resources(before_policy) != expected_policy(
+        before_monitor_arn
+    ) or normalized_pass_role_resources(after_policy) != expected_policy(after_monitor_arn):
+        raise PlanEvidenceError("plan_activation_scheduler_policy_scope_invalid")
+
+
+def _validate_activation_provider_normalization_drift(
+    plan: dict[str, Any],
+    manifest: PlanManifest,
+    raw_changes: list[Any],
+) -> list[dict[str, Any]]:
+    """Allow one exact no-op Scheduler policy JSON normalization during activation."""
+
+    raw_drift = plan.get("resource_drift", [])
+    if not isinstance(raw_drift, list):
+        raise PlanEvidenceError("plan_resource_drift_present")
+    if not raw_drift:
+        return []
+    if len(raw_drift) != 1 or not isinstance(raw_drift[0], dict):
+        raise PlanEvidenceError("plan_activation_drift_count_invalid")
+    drift_resource = raw_drift[0]
+    if (
+        drift_resource.get("address") != SCHEDULER_ROLE_ADDRESS
+        or drift_resource.get("mode") != "managed"
+        or drift_resource.get("type") != "aws_iam_role"
+        or drift_resource.get("provider_name") != AWS_PROVIDER
+        or "deposed" in drift_resource
+    ):
+        raise PlanEvidenceError("plan_activation_drift_identity_invalid")
+    drift_change = drift_resource.get("change")
+    if not isinstance(drift_change, dict) or _safe_actions(drift_change.get("actions")) != [
+        "update"
+    ]:
+        raise PlanEvidenceError("plan_activation_drift_action_invalid")
+    before = drift_change.get("before")
+    after = drift_change.get("after")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise PlanEvidenceError("plan_activation_drift_values_invalid")
+
+    desired_resources = [
+        item
+        for item in raw_changes
+        if isinstance(item, dict) and item.get("address") == SCHEDULER_ROLE_ADDRESS
+    ]
+    if len(desired_resources) != 1:
+        raise PlanEvidenceError("plan_activation_drift_desired_resource_invalid")
+    desired_resource = desired_resources[0]
+    desired_change = desired_resource.get("change")
+    if (
+        desired_resource.get("mode") != "managed"
+        or desired_resource.get("type") != "aws_iam_role"
+        or desired_resource.get("provider_name") != AWS_PROVIDER
+        or "deposed" in desired_resource
+        or not isinstance(desired_change, dict)
+        or _safe_actions(desired_change.get("actions")) != ["no-op"]
+        or desired_change.get("before") != after
+        or desired_change.get("after") != after
+    ):
+        raise PlanEvidenceError("plan_activation_drift_not_desired_noop")
+    desired_policy_resources = [
+        item
+        for item in raw_changes
+        if isinstance(item, dict) and item.get("address") == SCHEDULER_POLICY_ADDRESS
+    ]
+    if len(desired_policy_resources) != 1:
+        raise PlanEvidenceError("plan_activation_scheduler_desired_policy_invalid")
+    desired_policy_resource = desired_policy_resources[0]
+    desired_policy_change = desired_policy_resource.get("change")
+    if (
+        desired_policy_resource.get("mode") != "managed"
+        or desired_policy_resource.get("type") != "aws_iam_role_policy"
+        or desired_policy_resource.get("provider_name") != AWS_PROVIDER
+        or "deposed" in desired_policy_resource
+        or not isinstance(desired_policy_change, dict)
+    ):
+        raise PlanEvidenceError("plan_activation_scheduler_desired_policy_invalid")
+    _validate_scheduler_inline_policy_normalization(before, after, desired_policy_change, manifest)
+    _validate_tags(drift_change, manifest)
+    return [
+        {
+            "address": SCHEDULER_ROLE_ADDRESS,
+            "actions": ["update"],
+            "provider": AWS_PROVIDER,
+            "resource_type": "aws_iam_role",
+        }
+    ]
 
 
 def _policy_statements_by_sid(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1161,7 +1474,7 @@ def summarize_plan(
         run_attempt=run_attempt,
         workflow_ref=workflow_ref,
     )
-    _validate_plan_status(plan, stage=manifest.stage)
+    _validate_plan_status(plan)
     raw_changes = plan.get("resource_changes", [])
     if not isinstance(raw_changes, list):
         raise PlanEvidenceError("plan_resource_changes_not_array")
@@ -1172,6 +1485,11 @@ def summarize_plan(
         drift_changes, prerequisite_recovery_updates = _validate_prerequisite_recovery_drift(
             plan, manifest, raw_changes
         )
+    elif manifest.stage == "activation":
+        drift_changes = _validate_activation_provider_normalization_drift(
+            plan, manifest, raw_changes
+        )
+        prerequisite_recovery_updates = frozenset()
     else:
         drift_changes = []
         prerequisite_recovery_updates = frozenset()
@@ -1273,8 +1591,10 @@ def summarize_plan(
     if manifest.stage == "destroy":
         attestations["deposed_managed_deletes_verified"] = True
         attestations["destroy_owned_drift_boundary_verified"] = True
-    elif drift_changes:
+    elif manifest.stage == "prerequisites" and drift_changes:
         attestations["prerequisite_owned_recovery_drift_verified"] = True
+    elif manifest.stage == "activation" and drift_changes:
+        attestations["activation_provider_normalization_drift_verified"] = True
     if AUDIT_BUCKET_POLICY_ADDRESS in prerequisite_recovery_updates:
         attestations["prerequisite_alb_log_policy_correction_verified"] = True
     if SCHEDULER_ROLE_ADDRESS in prerequisite_recovery_updates:

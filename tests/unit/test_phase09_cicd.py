@@ -1667,8 +1667,248 @@ def test_destroy_allows_only_exact_owned_tagged_drift_and_never_emits_values() -
     activation = _plan_manifest(stage="activation")
     forbidden = _show_plan(activation)
     forbidden["resource_drift"] = [_plan_change(activation, actions=["update"])]
-    with pytest.raises(PlanEvidenceError, match="resource_drift_present"):
+    with pytest.raises(PlanEvidenceError, match="activation_drift_identity_invalid"):
         _summarize(forbidden, activation)
+
+
+def test_activation_allows_only_exact_scheduler_policy_revision_normalization() -> None:
+    manifest = _plan_manifest(stage="activation")
+    cluster = (
+        f"arn:aws:ecs:{manifest.region}:{manifest.account_id}:"
+        f"cluster/{manifest.project}-{manifest.environment}"
+    )
+    role_prefix = (
+        f"arn:aws:iam::{manifest.account_id}:role/{manifest.project}/{manifest.environment}/"
+        f"{manifest.project}-{manifest.environment}"
+    )
+
+    def scheduler_policy(revision: int) -> dict[str, Any]:
+        return {
+            "Statement": [
+                {
+                    "Action": "ecs:RunTask",
+                    "Condition": {"ArnEquals": {"ecs:cluster": cluster}},
+                    "Effect": "Allow",
+                    "Resource": (
+                        f"arn:aws:ecs:{manifest.region}:{manifest.account_id}:task-definition/"
+                        f"{manifest.project}-{manifest.environment}-monitor:{revision}"
+                    ),
+                    "Sid": "RunExactMonitorTask",
+                },
+                {
+                    "Action": "iam:PassRole",
+                    "Condition": {
+                        "StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}
+                    },
+                    "Effect": "Allow",
+                    "Resource": [
+                        f"{role_prefix}-ecs-execution",
+                        f"{role_prefix}-monitor",
+                    ],
+                    "Sid": "PassOnlyMonitorTaskRolesToEcs",
+                },
+            ],
+            "Version": "2012-10-17",
+        }
+
+    policy_before = json.dumps(scheduler_policy(12), separators=(",", ":"))
+    policy_after = json.dumps(scheduler_policy(13), sort_keys=True, separators=(",", ":"))
+    common = {
+        "description": "private-value-must-not-leak",
+        "name": "modelguard-ai-demo-scheduler",
+        "tags_all": _required_plan_tags(manifest),
+    }
+    before = {
+        **common,
+        "inline_policy": [{"name": "run-exact-monitor-task", "policy": policy_before}],
+    }
+    after = {
+        **common,
+        "inline_policy": [{"name": "run-exact-monitor-task", "policy": policy_after}],
+    }
+    desired = _plan_change(
+        manifest,
+        address="aws_iam_role.scheduler",
+        resource_type="aws_iam_role",
+        actions=["no-op"],
+    )
+    desired["change"]["before"] = after
+    desired["change"]["after"] = after
+    drift = _plan_change(
+        manifest,
+        address="aws_iam_role.scheduler",
+        resource_type="aws_iam_role",
+        actions=["update"],
+    )
+    drift["change"]["before"] = before
+    drift["change"]["after"] = after
+    desired_policy = _plan_change(
+        manifest,
+        address="aws_iam_role_policy.scheduler",
+        resource_type="aws_iam_role_policy",
+        actions=["no-op"],
+    )
+    desired_policy["change"]["before"] = {
+        "name": "run-exact-monitor-task",
+        "policy": policy_after,
+    }
+    desired_policy["change"]["after"] = desired_policy["change"]["before"]
+    plan = _show_plan(manifest, desired, desired_policy)
+    plan["resource_drift"] = [drift]
+
+    summary = _summarize(plan, manifest)
+    rendered = json.dumps(summary) + render_markdown(summary)
+    assert summary["drift_change_count"] == 1
+    assert (
+        summary["contract_attestations"]["activation_provider_normalization_drift_verified"] is True
+    )
+    assert summary["drift_changes"] == [
+        {
+            "address": "aws_iam_role.scheduler",
+            "actions": ["update"],
+            "provider": "registry.terraform.io/hashicorp/aws",
+            "resource_type": "aws_iam_role",
+        }
+    ]
+    assert "private-value-must-not-leak" not in rendered
+
+    changed_policy = json.loads(json.dumps(plan))
+    changed_policy_value = scheduler_policy(13)
+    changed_policy_value["Statement"][0]["Action"] = "ecs:*"
+    changed_policy_json = json.dumps(changed_policy_value, sort_keys=True)
+    changed_policy["resource_drift"][0]["change"]["after"]["inline_policy"][0]["policy"] = (
+        changed_policy_json
+    )
+    changed_policy_desired = next(
+        item
+        for item in changed_policy["resource_changes"]
+        if item["address"] == "aws_iam_role.scheduler"
+    )
+    changed_policy_desired["change"]["before"] = changed_policy["resource_drift"][0]["change"][
+        "after"
+    ]
+    changed_policy_desired["change"]["after"] = changed_policy["resource_drift"][0]["change"][
+        "after"
+    ]
+    changed_managed_policy = next(
+        item
+        for item in changed_policy["resource_changes"]
+        if item["address"] == "aws_iam_role_policy.scheduler"
+    )
+    changed_managed_policy["change"]["before"]["policy"] = changed_policy_json
+    changed_managed_policy["change"]["after"]["policy"] = changed_policy_json
+    with pytest.raises(PlanEvidenceError, match="scheduler_policy_scope_invalid"):
+        _summarize(changed_policy, manifest)
+
+    changed_scope = json.loads(json.dumps(plan))
+    changed_scope["resource_drift"][0]["change"]["after"]["description"] = "changed"
+    changed_scope["resource_changes"] = [
+        item
+        for item in changed_scope["resource_changes"]
+        if item["address"] != "aws_iam_role.scheduler"
+    ]
+    changed_desired = json.loads(json.dumps(desired))
+    changed_desired["change"]["before"] = changed_scope["resource_drift"][0]["change"]["after"]
+    changed_desired["change"]["after"] = changed_scope["resource_drift"][0]["change"]["after"]
+    changed_scope["resource_changes"].append(changed_desired)
+    with pytest.raises(PlanEvidenceError, match="scheduler_drift_scope_invalid"):
+        _summarize(changed_scope, manifest)
+
+    desired_update = json.loads(json.dumps(plan))
+    next(
+        item
+        for item in desired_update["resource_changes"]
+        if item["address"] == "aws_iam_role.scheduler"
+    )["change"]["actions"] = ["update"]
+    with pytest.raises(PlanEvidenceError, match="activation_drift_not_desired_noop"):
+        _summarize(desired_update, manifest)
+
+
+def test_activation_cidr_rotation_is_exact_and_bound_to_the_api_runtime() -> None:
+    manifest = _plan_manifest(stage="activation")
+    plan = _show_plan(manifest)
+    task = next(
+        item
+        for item in plan["resource_changes"]
+        if item["address"] == "module.api_service.aws_ecs_task_definition.this"
+    )
+    after_container = json.loads(task["change"]["after"]["container_definitions"])[0]
+    before_container = {
+        **after_container,
+        "environment": [
+            {"name": "ALB_ALLOWED_CIDR", "value": "192.0.2.10/32"},
+            {"name": "APP_ENV", "value": "aws"},
+        ],
+        "systemControls": [],
+        "volumesFrom": [],
+    }
+    after_container = {
+        **after_container,
+        "environment": [
+            {"name": "ALB_ALLOWED_CIDR", "value": "192.0.2.11/32"},
+            {"name": "APP_ENV", "value": "aws"},
+        ],
+    }
+    task["change"]["before"] = {
+        "container_definitions": json.dumps([before_container]),
+        "tags_all": _required_plan_tags(manifest),
+    }
+    task["change"]["after"]["container_definitions"] = json.dumps([after_container])
+    ingress = _plan_change(
+        manifest,
+        address="module.network.aws_vpc_security_group_ingress_rule.alb_http",
+        resource_type="aws_vpc_security_group_ingress_rule",
+        actions=["update"],
+    )
+    ingress["change"]["before"] = {
+        "cidr_ipv4": "192.0.2.10/32",
+        "description": "restricted client",
+        "tags_all": _required_plan_tags(manifest),
+    }
+    ingress["change"]["after"] = {
+        **ingress["change"]["before"],
+        "cidr_ipv4": "192.0.2.11/32",
+    }
+    plan["resource_changes"].append(ingress)
+
+    summary = _summarize(plan, manifest)
+    rendered = json.dumps(summary) + render_markdown(summary)
+    assert summary["contract_attestations"]["activation_exact_cidr_rotation_verified"] is True
+    assert "192.0.2." not in rendered
+
+    world = json.loads(json.dumps(plan))
+    next(
+        item
+        for item in world["resource_changes"]
+        if item["address"] == "module.network.aws_vpc_security_group_ingress_rule.alb_http"
+    )["change"]["after"]["cidr_ipv4"] = "0.0.0.0/0"
+    with pytest.raises(PlanEvidenceError, match="activation_cidr_invalid"):
+        _summarize(world, manifest)
+
+    extra_ingress_change = json.loads(json.dumps(plan))
+    next(
+        item
+        for item in extra_ingress_change["resource_changes"]
+        if item["address"] == "module.network.aws_vpc_security_group_ingress_rule.alb_http"
+    )["change"]["after"]["from_port"] = 8000
+    with pytest.raises(PlanEvidenceError, match="activation_cidr_ingress_scope_invalid"):
+        _summarize(extra_ingress_change, manifest)
+
+    mismatched_runtime = json.loads(json.dumps(plan))
+    mismatched_task = next(
+        item
+        for item in mismatched_runtime["resource_changes"]
+        if item["address"] == "module.api_service.aws_ecs_task_definition.this"
+    )
+    mismatched_container = json.loads(mismatched_task["change"]["after"]["container_definitions"])
+    next(
+        item
+        for item in mismatched_container[0]["environment"]
+        if item["name"] == "ALB_ALLOWED_CIDR"
+    )["value"] = "192.0.2.12/32"
+    mismatched_task["change"]["after"]["container_definitions"] = json.dumps(mismatched_container)
+    with pytest.raises(PlanEvidenceError, match="activation_cidr_api_mismatch"):
+        _summarize(mismatched_runtime, manifest)
 
 
 def test_prerequisite_partial_recovery_accepts_only_owned_drift_at_desired_state() -> None:
