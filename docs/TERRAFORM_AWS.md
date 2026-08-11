@@ -303,6 +303,14 @@ Verification must run immediately before applying the same saved plan in Phase 1
 modified, more-than-24-hour-old, implausibly future-dated, wrong-commit, wrong-account, wrong-Region,
 wrong-backend, or wrong-stage plan is refused.
 
+If a prerequisite apply stops partway through, its single recovery plan may carry provider-state
+normalization records only when every drift address is an exact owned ModelGuard resource, uses the
+expected provider and tags, and has an identical desired state with a managed `no-op` action in that
+same plan. The recovery plan must also contain both existing `no-op` resources and remaining
+`create` actions. Configuration-changing drift, unrelated resources, replacements, deletions,
+imports, deposed instances, activation drift, or drift without an exact desired-state match remains
+fail-closed.
+
 In Phase 10 only, the manual operator path applies this exact file through `scripts/safe_apply.sh`.
 The script rechecks backend/account/Region/default workspace, renders and displays only the sealed
 action-only redacted evidence from a newly created mode-`0700` temporary directory, verifies the
