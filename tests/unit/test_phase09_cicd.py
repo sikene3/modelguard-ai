@@ -1692,7 +1692,7 @@ def test_prerequisite_partial_recovery_accepts_only_owned_drift_at_desired_state
     summary = _summarize(plan, manifest)
     rendered = json.dumps(summary) + render_markdown(summary)
     assert summary["drift_change_count"] == 1
-    assert summary["contract_attestations"]["prerequisite_owned_noop_drift_verified"] is True
+    assert summary["contract_attestations"]["prerequisite_owned_recovery_drift_verified"] is True
     assert summary["drift_changes"] == [
         {
             "address": "aws_ecs_cluster.this",
@@ -1740,6 +1740,84 @@ def test_prerequisite_partial_recovery_accepts_only_owned_drift_at_desired_state
     no_partial_apply["resource_drift"] = [drift]
     with pytest.raises(PlanEvidenceError, match="stage_shape_invalid"):
         _summarize(no_partial_apply, manifest)
+
+
+def test_prerequisite_partial_recovery_allows_only_exact_interrupted_alb_update() -> None:
+    manifest = _plan_manifest()
+    expected_bucket = (
+        f"{manifest.project}-{manifest.environment}-{manifest.account_id}-{manifest.region}-audit"
+    )
+    live = {
+        "access_logs": [{"bucket": "", "enabled": False, "prefix": ""}],
+        "desync_mitigation_mode": "defensive",
+        "drop_invalid_header_fields": False,
+        "tags_all": _required_plan_tags(manifest),
+    }
+    desired = {
+        **live,
+        "access_logs": [{"bucket": expected_bucket, "enabled": True, "prefix": "alb"}],
+        "desync_mitigation_mode": "strictest",
+        "drop_invalid_header_fields": True,
+    }
+    alb_update = _plan_change(
+        manifest,
+        address="aws_lb.this",
+        resource_type="aws_lb",
+        actions=["update"],
+    )
+    alb_update["change"]["before"] = live
+    alb_update["change"]["after"] = desired
+    existing = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["no-op"],
+    )
+    drift = _plan_change(
+        manifest,
+        address="aws_lb.this",
+        resource_type="aws_lb",
+        actions=["update"],
+    )
+    drift["change"]["before"] = {"private": "must-not-leak"}
+    drift["change"]["after"] = live
+    plan = _show_plan(manifest, existing, alb_update)
+    plan["resource_drift"] = [drift]
+
+    summary = _summarize(plan, manifest)
+    assert summary["action_counts"]["update"] == 1
+    assert summary["contract_attestations"]["prerequisite_owned_recovery_drift_verified"] is True
+    assert "must-not-leak" not in json.dumps(summary) + render_markdown(summary)
+
+    wrong_field = json.loads(json.dumps(plan))
+    wrong_alb = next(
+        change for change in wrong_field["resource_changes"] if change["address"] == "aws_lb.this"
+    )
+    wrong_alb["change"]["after"]["idle_timeout"] = 120
+    with pytest.raises(PlanEvidenceError, match="alb_update_scope_invalid"):
+        _summarize(wrong_field, manifest)
+
+    wrong_bucket = json.loads(json.dumps(plan))
+    wrong_alb = next(
+        change for change in wrong_bucket["resource_changes"] if change["address"] == "aws_lb.this"
+    )
+    wrong_alb["change"]["after"]["access_logs"][0]["bucket"] = "unrelated-bucket"
+    with pytest.raises(PlanEvidenceError, match="alb_desired_state_invalid"):
+        _summarize(wrong_bucket, manifest)
+
+    missing_hardening = json.loads(json.dumps(plan))
+    wrong_alb = next(
+        change
+        for change in missing_hardening["resource_changes"]
+        if change["address"] == "aws_lb.this"
+    )
+    wrong_alb["change"]["after"]["drop_invalid_header_fields"] = False
+    with pytest.raises(PlanEvidenceError, match="alb_desired_state_invalid"):
+        _summarize(missing_hardening, manifest)
+
+    missing_drift = _show_plan(manifest, existing, alb_update)
+    with pytest.raises(PlanEvidenceError, match="prerequisite_action_forbidden"):
+        _summarize(missing_drift, manifest)
 
 
 def test_destroy_governance_is_bound_when_guard_state_exists_and_absence_is_recoverable() -> None:

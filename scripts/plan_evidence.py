@@ -399,6 +399,7 @@ def _validate_actions(
     stage: str,
     mode: str,
     address: str,
+    prerequisite_recovery_updates: frozenset[str] = frozenset(),
 ) -> None:
     action_tuple = tuple(actions)
     if mode == "data":
@@ -410,6 +411,8 @@ def _validate_actions(
             raise PlanEvidenceError("plan_destroy_action_forbidden")
         return
     if stage == "prerequisites":
+        if action_tuple == ("update",) and address in prerequisite_recovery_updates:
+            return
         if action_tuple not in {("create",), ("no-op",)}:
             if "delete" in action_tuple:
                 raise PlanEvidenceError("plan_non_destroy_delete_forbidden")
@@ -810,18 +813,60 @@ def _validate_destroy_drift(plan: dict[str, Any], manifest: PlanManifest) -> lis
     return sorted(drift, key=lambda item: item["address"])
 
 
+def _validate_alb_prerequisite_recovery_update(
+    drift_change: dict[str, Any],
+    desired_change: dict[str, Any],
+    manifest: PlanManifest,
+) -> None:
+    drift_after = drift_change.get("after")
+    desired_before = desired_change.get("before")
+    desired_after = desired_change.get("after")
+    if (
+        not isinstance(drift_after, dict)
+        or not isinstance(desired_before, dict)
+        or not isinstance(desired_after, dict)
+        or drift_after != desired_before
+    ):
+        raise PlanEvidenceError("plan_recovery_drift_live_state_mismatch")
+
+    normalized_before = dict(desired_after)
+    normalized_before["access_logs"] = desired_before.get("access_logs")
+    normalized_before["desync_mitigation_mode"] = desired_before.get("desync_mitigation_mode")
+    normalized_before["drop_invalid_header_fields"] = desired_before.get(
+        "drop_invalid_header_fields"
+    )
+    if normalized_before != desired_before:
+        raise PlanEvidenceError("plan_recovery_alb_update_scope_invalid")
+    if (
+        desired_before.get("access_logs") != [{"bucket": "", "enabled": False, "prefix": ""}]
+        or desired_before.get("desync_mitigation_mode") != "defensive"
+        or desired_before.get("drop_invalid_header_fields") is not False
+    ):
+        raise PlanEvidenceError("plan_recovery_alb_live_state_invalid")
+    expected_bucket = (
+        f"{manifest.project}-{manifest.environment}-{manifest.account_id}-{manifest.region}-audit"
+    )
+    if (
+        desired_after.get("access_logs")
+        != [{"bucket": expected_bucket, "enabled": True, "prefix": "alb"}]
+        or desired_after.get("desync_mitigation_mode") != "strictest"
+        or desired_after.get("drop_invalid_header_fields") is not True
+    ):
+        raise PlanEvidenceError("plan_recovery_alb_desired_state_invalid")
+
+
 def _validate_prerequisite_recovery_drift(
     plan: dict[str, Any],
     manifest: PlanManifest,
     raw_changes: list[Any],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], frozenset[str]]:
     """Allow only owned drift already equal to desired state during partial-apply recovery."""
 
     raw_drift = plan.get("resource_drift", [])
     if not isinstance(raw_drift, list):
         raise PlanEvidenceError("plan_resource_drift_present")
     if not raw_drift:
-        return []
+        return [], frozenset()
 
     changes_by_address: dict[str, dict[str, Any]] = {}
     managed_actions: list[tuple[str, ...]] = []
@@ -839,6 +884,7 @@ def _validate_prerequisite_recovery_drift(
         raise PlanEvidenceError("plan_recovery_drift_stage_shape_invalid")
 
     drift: list[dict[str, Any]] = []
+    recovery_updates: set[str] = set()
     seen: set[str] = set()
     allowed = _allowed_resource_addresses(manifest, mode="managed")
     for raw_change in raw_drift:
@@ -878,18 +924,23 @@ def _validate_prerequisite_recovery_drift(
         ):
             raise PlanEvidenceError("plan_recovery_drift_desired_resource_mismatch")
         desired_change = desired_resource.get("change")
-        if not isinstance(desired_change, dict) or _safe_actions(desired_change.get("actions")) != [
-            "no-op"
-        ]:
+        if not isinstance(desired_change, dict):
+            raise PlanEvidenceError("plan_recovery_drift_desired_change_invalid")
+        desired_actions = _safe_actions(desired_change.get("actions"))
+        if desired_actions == ["no-op"]:
+            drift_after = drift_change.get("after")
+            desired_after = desired_change.get("after")
+            if (
+                not isinstance(drift_after, dict)
+                or not isinstance(desired_after, dict)
+                or drift_after != desired_after
+            ):
+                raise PlanEvidenceError("plan_recovery_drift_desired_state_mismatch")
+        elif desired_actions == ["update"] and address == "aws_lb.this":
+            _validate_alb_prerequisite_recovery_update(drift_change, desired_change, manifest)
+            recovery_updates.add(address)
+        else:
             raise PlanEvidenceError("plan_recovery_drift_desired_action_not_noop")
-        drift_after = drift_change.get("after")
-        desired_after = desired_change.get("after")
-        if (
-            not isinstance(drift_after, dict)
-            or not isinstance(desired_after, dict)
-            or drift_after != desired_after
-        ):
-            raise PlanEvidenceError("plan_recovery_drift_desired_state_mismatch")
         _validate_tags(drift_change, manifest)
         drift.append(
             {
@@ -899,7 +950,7 @@ def _validate_prerequisite_recovery_drift(
                 "resource_type": resource_type,
             }
         )
-    return sorted(drift, key=lambda item: item["address"])
+    return sorted(drift, key=lambda item: item["address"]), frozenset(recovery_updates)
 
 
 def summarize_plan(
@@ -925,10 +976,14 @@ def summarize_plan(
         raise PlanEvidenceError("plan_resource_changes_not_array")
     if manifest.stage == "destroy":
         drift_changes = _validate_destroy_drift(plan, manifest)
+        prerequisite_recovery_updates: frozenset[str] = frozenset()
     elif manifest.stage == "prerequisites":
-        drift_changes = _validate_prerequisite_recovery_drift(plan, manifest, raw_changes)
+        drift_changes, prerequisite_recovery_updates = _validate_prerequisite_recovery_drift(
+            plan, manifest, raw_changes
+        )
     else:
         drift_changes = []
+        prerequisite_recovery_updates = frozenset()
     changes: list[dict[str, Any]] = []
     changes_by_address: dict[str, dict[str, Any]] = {}
     seen_resource_instances: set[tuple[str, str | None]] = set()
@@ -971,7 +1026,13 @@ def summarize_plan(
         if provider != expected_provider:
             raise PlanEvidenceError("plan_resource_provider_mismatch")
         actions = _safe_actions(change.get("actions"))
-        _validate_actions(actions, stage=manifest.stage, mode=mode, address=address)
+        _validate_actions(
+            actions,
+            stage=manifest.stage,
+            mode=mode,
+            address=address,
+            prerequisite_recovery_updates=prerequisite_recovery_updates,
+        )
         if mode == "managed":
             managed_change_count += 1
             if deposed is not None:
@@ -1022,7 +1083,7 @@ def summarize_plan(
         attestations["deposed_managed_deletes_verified"] = True
         attestations["destroy_owned_drift_boundary_verified"] = True
     elif drift_changes:
-        attestations["prerequisite_owned_noop_drift_verified"] = True
+        attestations["prerequisite_owned_recovery_drift_verified"] = True
     masked_account = f"********{manifest.account_id[-4:]}"
     return {
         "schema_version": "modelguard.redacted-terraform-plan.v1",
