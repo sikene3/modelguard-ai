@@ -327,6 +327,27 @@ refused. Every other configuration-changing drift, unrelated
 resource, replacement, deletion, import, deposed instance, activation drift, or drift without an
 exact desired-state match remains fail-closed.
 
+An activation maintenance plan may report one provider-only normalization for
+`aws_iam_role.scheduler`: the AWS provider can serialize the existing inline-policy JSON in a
+different key order and advance its computed copy from the prior monitor task-definition revision
+to the already-applied current revision. The review guard accepts that record only when it is the
+sole drift entry; both the managed Scheduler role and separately managed Scheduler policy are exact
+no-ops at the refreshed state; every non-policy field and required ownership tag is unchanged; and
+strict parsing proves both policies retain the exact cluster, execution/monitor roles, conditions,
+actions, and task-definition family in the bound account and Region. Any other changed statement,
+principal, action, resource, condition, role field, additional drift entry, or non-no-op desired
+action remains refused. The redacted evidence records only the address, provider, resource type,
+and normalization attestation.
+
+The same activation maintenance boundary supports one exact restricted-client CIDR rotation. Both
+the previous and replacement values must be canonical IPv4 `/32` networks; the ALB HTTP ingress
+rule may change only `cidr_ipv4`; and the API task-definition replacement must change only the
+matching `ALB_ALLOWED_CIDR` environment value apart from provider-empty optional collections. The
+API service must update to that exact replacement task. Any world CIDR, additional ingress field,
+unrelated container change, mismatched runtime CIDR, or broader resource action is refused. Review
+evidence emits only a boolean CIDR-rotation attestation; the values remain confined to the sealed
+private inputs and raw plan.
+
 In Phase 10 only, the manual operator path applies this exact file through `scripts/safe_apply.sh`.
 The script rechecks backend/account/Region/default workspace, renders and displays only the sealed
 action-only redacted evidence from a newly created mode-`0700` temporary directory, verifies the
