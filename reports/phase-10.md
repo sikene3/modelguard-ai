@@ -681,3 +681,21 @@ Raw receipts are checksum-sealed below the two encrypted roots. Public documenta
 masked identity, bounded counts, source commits, and approved plan/artifact hashes. The repository
 remains Public and protected; `solo_portfolio` is explicitly not separation of duties. Phase 11 is
 `not_started`.
+
+### Final local closure gates
+
+Clean closure candidate `49a6290908078b0e4e4a9a9640b6dab7ef371304` regenerated the canonical
+seven-file bundle with manifest SHA-256
+`03e7f0abea3101b585802831717bf2aea063f448dfab20bef8a4036a588de65f` and exact clean Git
+provenance. Its single `make release-gates` run passed 582 tests at 83.51 percent coverage, Ruff,
+strict Mypy, Bandit, hashed `pip-audit` with no known vulnerabilities, the basic secret check,
+actionlint, ShellCheck, Checkov, full-history/worktree Gitleaks policy, and Trivy. Terraform format
+and all three backend-disabled configuration validations passed against the locked provider.
+
+The post-gate publication closure scan found one validator-only case: an exact synthetic
+GitHub-noreply-shaped fixture in historical test blobs. No raw address or private value was emitted.
+The correction recognizes only that fixture's SHA-256 when every exposing path is under `tests/`;
+arbitrary, altered, or non-test identities still fail. Its focused final gate passed 27 tests plus
+Ruff, strict Mypy, Bandit, and whitespace validation. The sealed closure audit and protected CI
+checks are retained as merge-boundary evidence because a commit cannot truthfully embed its own
+final identity or future check-run result.

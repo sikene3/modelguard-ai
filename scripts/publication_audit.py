@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 # security-suppression:
@@ -24,6 +25,9 @@ PUBLICATION_EXAMPLE_DOMAINS = frozenset(
     {b"example.com", b"example.net", b"example.org", b"example.invalid"}
 )
 PUBLICATION_RESERVED_TEST_SUFFIXES = (b".invalid", b".test")
+PUBLICATION_EXACT_SYNTHETIC_TEST_EMAIL_SHA256S = frozenset(
+    {"6dcda26c226c13dfcddc8ea184dd7123e401dda2fee64b611e9c3fc205132b1e"}
+)
 PUBLICATION_PRIVATE_KEY_BEGIN_BOUNDARY = re.compile(
     rb"(?i)(?<!-)-{4,}[ \t]*BEGIN[ \t]+"
     rb"(?:[A-Z0-9][A-Z0-9_-]{0,31}[ \t]+){0,4}"
@@ -35,6 +39,7 @@ PUBLICATION_PRIVATE_KEY_BEGIN_BOUNDARY = re.compile(
 PublicationEmailClassification = Literal[
     "verified_github_noreply",
     "synthetic_example_domain",
+    "synthetic_exact_test_identity",
     "synthetic_reserved_test_domain",
 ]
 
@@ -86,6 +91,11 @@ def classify_publication_email_match(
     normalized = value.lower()
     if normalized == expected_noreply.lower():
         return "verified_github_noreply"
+    if (
+        _is_tests_only_blob(blob_paths)
+        and hashlib.sha256(normalized).hexdigest() in PUBLICATION_EXACT_SYNTHETIC_TEST_EMAIL_SHA256S
+    ):
+        return "synthetic_exact_test_identity"
     domain = normalized.rsplit(b"@", 1)[1]
     if domain in PUBLICATION_EXAMPLE_DOMAINS:
         return "synthetic_example_domain"

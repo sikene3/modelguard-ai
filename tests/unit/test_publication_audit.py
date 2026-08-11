@@ -9,6 +9,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts.publication_audit import (
     PARTIAL_CLONE_PROMISOR_PATTERN,
+    PUBLICATION_EMAIL_PATTERN,
+    PUBLICATION_EXACT_SYNTHETIC_TEST_EMAIL_SHA256S,
     GitConfigMatch,
     PublicationAuditGitError,
     PublicationAuditRefusal,
@@ -151,6 +153,42 @@ def test_only_exact_verified_noreply_identity_passes() -> None:
             expected_noreply=VERIFIED_NOREPLY,
             blob_paths=("tests/unit/test_fixture.py",),
         )
+
+
+def test_exact_known_synthetic_noreply_fixture_is_test_scoped() -> None:
+    fixture_source = Path("tests/unit/test_phase09_cicd.py").read_bytes()
+    candidates = [
+        match.group(1)
+        for match in PUBLICATION_EMAIL_PATTERN.finditer(fixture_source)
+        if match.group(1).lower().endswith(b"@users.noreply.github.com")
+    ]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert (
+        classify_publication_email_match(
+            candidate,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_phase09_cicd.py",),
+        )
+        == "synthetic_exact_test_identity"
+    )
+
+    with pytest.raises(PublicationAuditRefusal, match="privacy_history_blob_email_present"):
+        classify_publication_email_match(
+            candidate,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("docs/example.md",),
+        )
+    with pytest.raises(PublicationAuditRefusal, match="privacy_history_blob_email_present"):
+        classify_publication_email_match(
+            b"x" + candidate,
+            expected_noreply=VERIFIED_NOREPLY,
+            blob_paths=("tests/unit/test_phase09_cicd.py",),
+        )
+
+
+def test_exact_synthetic_fixture_allowlist_contains_only_one_digest() -> None:
+    assert len(PUBLICATION_EXACT_SYNTHETIC_TEST_EMAIL_SHA256S) == 1
 
 
 def test_existing_exact_example_domain_allowance_is_preserved() -> None:
