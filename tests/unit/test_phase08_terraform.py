@@ -624,6 +624,33 @@ def test_ecs_services_wait_for_alb_target_group_association(repository_root: Pat
     assert "aws_lb_listener.https" in dashboard_service
 
 
+def test_aws_bundle_hydration_uses_the_existing_non_root_writable_scratch_mount(
+    repository_root: Path,
+) -> None:
+    ecs = _read(repository_root, "infrastructure/environments/demo/ecs.tf")
+    ecs_module = _read(repository_root, "infrastructure/modules/ecs_service/main.tf")
+
+    api_service = ecs.split('module "api_service" {', maxsplit=1)[1].split(
+        'module "dashboard_service" {', maxsplit=1
+    )[0]
+    monitor_task = ecs.split('resource "aws_ecs_task_definition" "monitor" {', maxsplit=1)[1]
+
+    assert ecs.count('MODEL_BUNDLE_PATH          = "/tmp/model-bundle"') == 2
+    assert 'MODEL_BUNDLE_PATH                 = "/tmp/model-bundle"' in ecs
+    assert "/runtime/model-bundle" not in ecs
+    assert 'writable_mount_path = "/runtime"' not in api_service
+    assert 'name = "runtime"' not in monitor_task
+    assert 'containerPath = "/runtime"' not in monitor_task
+    assert 'name = "scratch"' in monitor_task
+    assert 'containerPath = "/tmp"' in monitor_task
+    assert 'user                   = "10001:10001"' in monitor_task
+    assert "readonlyRootFilesystem = true" in monitor_task
+    assert 'sourceVolume  = "scratch"' in ecs_module
+    assert 'containerPath = "/tmp"' in ecs_module
+    assert 'user                   = "10001:10001"' in ecs_module
+    assert "readonlyRootFilesystem = true" in ecs_module
+
+
 def test_alarm_matrix_has_a_real_native_or_emf_source_and_correct_missing_policy(
     repository_root: Path,
 ) -> None:
