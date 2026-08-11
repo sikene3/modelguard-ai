@@ -36,6 +36,7 @@ RUN apk add --no-cache libgomp libstdc++ \
     && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} +
 COPY --from=dependencies --chown=10001:10001 /build/.venv /app/.venv
 COPY --chown=10001:10001 src /app/src
+VOLUME ["/runtime"]
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \

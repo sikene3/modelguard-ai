@@ -624,23 +624,32 @@ def test_ecs_services_wait_for_alb_target_group_association(repository_root: Pat
     assert "aws_lb_listener.https" in dashboard_service
 
 
-def test_aws_bundle_hydration_uses_the_existing_non_root_writable_scratch_mount(
+def test_aws_bundle_hydration_uses_an_image_owned_non_root_runtime_mount(
     repository_root: Path,
 ) -> None:
     ecs = _read(repository_root, "infrastructure/environments/demo/ecs.tf")
     ecs_module = _read(repository_root, "infrastructure/modules/ecs_service/main.tf")
+    api_dockerfile = _read(repository_root, "docker/api.Dockerfile")
+    monitor_dockerfile = _read(repository_root, "docker/monitor.Dockerfile")
 
     api_service = ecs.split('module "api_service" {', maxsplit=1)[1].split(
         'module "dashboard_service" {', maxsplit=1
     )[0]
     monitor_task = ecs.split('resource "aws_ecs_task_definition" "monitor" {', maxsplit=1)[1]
 
-    assert ecs.count('MODEL_BUNDLE_PATH          = "/tmp/model-bundle"') == 2
-    assert 'MODEL_BUNDLE_PATH                 = "/tmp/model-bundle"' in ecs
-    assert "/runtime/model-bundle" not in ecs
-    assert 'writable_mount_path = "/runtime"' not in api_service
-    assert 'name = "runtime"' not in monitor_task
-    assert 'containerPath = "/runtime"' not in monitor_task
+    assert ecs.count('MODEL_BUNDLE_PATH          = "/runtime/model-bundle"') == 2
+    assert 'MODEL_BUNDLE_PATH                 = "/runtime/model-bundle"' in ecs
+    assert 'writable_mount_path = "/runtime"' in api_service
+    assert 'name = "runtime"' in monitor_task
+    assert 'containerPath = "/runtime"' in monitor_task
+    assert 'VOLUME ["/runtime"]' in api_dockerfile
+    assert 'VOLUME ["/runtime"]' in monitor_dockerfile
+    assert "install -d -o modelguard -g modelguard -m 0750 /model /runtime" in api_dockerfile
+    assert "install -d -o modelguard -g modelguard -m 0750 /model /runtime" in monitor_dockerfile
+    assert api_dockerfile.index('VOLUME ["/runtime"]') < api_dockerfile.index("USER 10001:10001")
+    assert monitor_dockerfile.index('VOLUME ["/runtime"]') < monitor_dockerfile.index(
+        "USER 10001:10001"
+    )
     assert 'name = "scratch"' in monitor_task
     assert 'containerPath = "/tmp"' in monitor_task
     assert 'user                   = "10001:10001"' in monitor_task

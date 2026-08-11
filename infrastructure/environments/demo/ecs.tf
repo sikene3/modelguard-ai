@@ -19,7 +19,7 @@ locals {
     RUNTIME_COMPONENT                 = "api"
     HOME                              = "/tmp"
     LOG_LEVEL                         = "INFO"
-    MODEL_BUNDLE_PATH                 = "/tmp/model-bundle"
+    MODEL_BUNDLE_PATH                 = "/runtime/model-bundle"
     ACTIVE_MODEL_VERSION              = local.active_model_version
     MODEL_BUNDLE_TRUSTED_ORIGIN       = "true"
     API_ACCESS_MODE                   = var.api_access_mode
@@ -99,13 +99,14 @@ module "api_service" {
     "-c",
     "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2); raise SystemExit(0 if r.status == 200 else 1)",
   ]
-  log_group_name     = aws_cloudwatch_log_group.application["api"].name
-  region             = var.aws_region
-  desired_count      = local.runtime_desired_count
-  private_subnet_ids = module.network.private_subnet_ids
-  security_group_id  = module.network.api_security_group_id
-  target_group_arn   = aws_lb_target_group.api.arn
-  tags               = local.common_tags
+  log_group_name      = aws_cloudwatch_log_group.application["api"].name
+  region              = var.aws_region
+  desired_count       = local.runtime_desired_count
+  private_subnet_ids  = module.network.private_subnet_ids
+  security_group_id   = module.network.api_security_group_id
+  target_group_arn    = aws_lb_target_group.api.arn
+  tags                = local.common_tags
+  writable_mount_path = "/runtime"
 
   depends_on = [
     aws_iam_role_policy.ecs_execution,
@@ -157,7 +158,7 @@ locals {
       HOME                       = "/tmp"
       LOG_LEVEL                  = "INFO"
       EVENT_SINK                 = "disabled"
-      MODEL_BUNDLE_PATH          = "/tmp/model-bundle"
+      MODEL_BUNDLE_PATH          = "/runtime/model-bundle"
       ACTIVE_MODEL_VERSION       = local.active_model_version
       ACTIVE_MODEL_SSM_PARAMETER = aws_ssm_parameter.active_model.name
       AWS_REGION                 = var.aws_region
@@ -175,7 +176,7 @@ locals {
         HOME                       = "/tmp"
         LOG_LEVEL                  = "INFO"
         EVENT_SINK                 = "disabled"
-        MODEL_BUNDLE_PATH          = "/tmp/model-bundle"
+        MODEL_BUNDLE_PATH          = "/runtime/model-bundle"
         ACTIVE_MODEL_VERSION       = local.active_model_version
         ACTIVE_MODEL_SSM_PARAMETER = aws_ssm_parameter.active_model.name
         AWS_REGION                 = var.aws_region
@@ -208,6 +209,10 @@ resource "aws_ecs_task_definition" "monitor" {
     name = "scratch"
   }
 
+  volume {
+    name = "runtime"
+  }
+
   container_definitions = jsonencode([
     {
       name                   = "monitor"
@@ -227,6 +232,11 @@ resource "aws_ecs_task_definition" "monitor" {
         {
           sourceVolume  = "scratch"
           containerPath = "/tmp"
+          readOnly      = false
+        },
+        {
+          sourceVolume  = "runtime"
+          containerPath = "/runtime"
           readOnly      = false
         },
       ]

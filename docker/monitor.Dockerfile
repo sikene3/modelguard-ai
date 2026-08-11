@@ -37,6 +37,7 @@ RUN apk add --no-cache libgomp libstdc++ \
 COPY --from=dependencies --chown=10001:10001 /build/.venv /app/.venv
 COPY --chown=10001:10001 src /app/src
 COPY --chown=10001:10001 configs/phase-05-monitoring.json /app/configs/phase-05-monitoring.json
+VOLUME ["/runtime"]
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=2 \
     CMD ["python", "-c", "import os; import modelguard.monitoring.cli; raise SystemExit(0 if os.geteuid() != 0 else 1)"]
