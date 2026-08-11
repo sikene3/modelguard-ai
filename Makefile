@@ -24,8 +24,15 @@ LOAD_REQUESTS ?= 100
 LOAD_CONCURRENCY ?= 4
 DASHBOARD_HOST ?= 127.0.0.1
 DASHBOARD_PORT ?= 8501
+PHASE11_RUN_ID ?=
+PHASE11_ANCHOR ?=
+PHASE11_EVIDENCE_ROOT ?= artifacts/phase-11-evidence
+PHASE11_FIRST_SUMMARY ?=
+PHASE11_SECOND_SUMMARY ?=
+PHASE11_REPEATABILITY_OUTPUT ?= $(PHASE11_EVIDENCE_ROOT)/local-repeatability.json
+PHASE11_TEARDOWN_SUMMARY ?=
 
-.PHONY: help setup format lint typecheck test security security-tools-bootstrap security-tools-check security-scan release-gates generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local scan-images shell-check verify clean
+.PHONY: help setup format lint typecheck test security security-tools-bootstrap security-tools-check security-scan release-gates generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local phase11-demo-local phase11-compare-local phase11-verify-teardown scan-images shell-check verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -53,6 +60,9 @@ help:
 	@echo "  make smoke-local  Prove API/event/monitor/dashboard container integration"
 	@echo "  make demo-local   Prove the containerized Healthy -> Drifted flow"
 	@echo "  make e2e-local    Prove insufficient/corrupt-bundle/sink-outage scenarios"
+	@echo "  make phase11-demo-local  Run one explicit-window Phase 11 evidence cycle"
+	@echo "  make phase11-compare-local  Compare two completed Phase 11 local cycles"
+	@echo "  make phase11-verify-teardown  Recheck one Phase 11 local closure summary"
 	@echo "  make scan-images  Scan images and enforce bounded Trivy exceptions"
 	@echo "  make shell-check  Run Bash syntax and the verified repository-local ShellCheck"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
@@ -86,7 +96,8 @@ typecheck:
 		scripts/model_bundle_publisher.py \
 		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
-		scripts/deployment_record.py
+		scripts/deployment_record.py \
+		scripts/phase11_demo.py
 
 test:
 	$(UV_RUN) pytest -q
@@ -110,7 +121,8 @@ security:
 		scripts/model_bundle_publisher.py \
 		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
-		scripts/deployment_record.py
+		scripts/deployment_record.py \
+		scripts/phase11_demo.py
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))
 	$(UV) export --quiet --all-groups --frozen --no-emit-project \
 		--output-file $(PIP_AUDIT_REQUIREMENTS)
@@ -196,6 +208,25 @@ demo-local:
 
 e2e-local:
 	./scripts/e2e_local.sh
+
+phase11-demo-local:
+	@test -n "$(PHASE11_RUN_ID)" || { echo "PHASE11_RUN_ID is required." >&2; exit 2; }
+	@test -n "$(PHASE11_ANCHOR)" || { echo "PHASE11_ANCHOR is required (UTC ...Z)." >&2; exit 2; }
+	$(UV_RUN) python scripts/phase11_demo.py run-local \
+		--run-id "$(PHASE11_RUN_ID)" --anchor "$(PHASE11_ANCHOR)" \
+		--evidence-root "$(PHASE11_EVIDENCE_ROOT)"
+
+phase11-compare-local:
+	@test -n "$(PHASE11_FIRST_SUMMARY)" || { echo "PHASE11_FIRST_SUMMARY is required." >&2; exit 2; }
+	@test -n "$(PHASE11_SECOND_SUMMARY)" || { echo "PHASE11_SECOND_SUMMARY is required." >&2; exit 2; }
+	$(UV_RUN) python scripts/phase11_demo.py compare-local-runs \
+		--first "$(PHASE11_FIRST_SUMMARY)" --second "$(PHASE11_SECOND_SUMMARY)" \
+		--output "$(PHASE11_REPEATABILITY_OUTPUT)"
+
+phase11-verify-teardown:
+	@test -n "$(PHASE11_TEARDOWN_SUMMARY)" || { echo "PHASE11_TEARDOWN_SUMMARY is required." >&2; exit 2; }
+	$(UV_RUN) python scripts/phase11_demo.py verify-local-teardown \
+		--summary "$(PHASE11_TEARDOWN_SUMMARY)"
 
 scan-images:
 	./scripts/scan_local_images.sh

@@ -22,7 +22,15 @@ promotion and rollback. Phase 10 is closed: retained audit/bootstrap controls we
 encrypted state recovery, immutable images and model `1.0.3` were published, the restricted live
 demo passed API/dashboard/Firehose/monitoring evidence checks, and the exact saved destroy plan left
 zero disposable demo resources. The USD 10 Budget and retained audit/bootstrap controls remain by
-design; Phase 11 has not started. See
+design.
+
+Phase 11 is complete for that deployed-state boundary. Two fixed-anchor local runs proved separate
+healthy and drifted windows, explicit accepted-sample headroom, four independent monitoring states,
+immutable JSON/HTML incidents, the dashboard transition, insufficient-data and event-sink-outage
+semantics, an independent validated local model promotion, deterministic repeatability, and clean
+teardown. Performance remains unknown because labels were intentionally absent. AWS execution was
+correctly not run because the Phase 10 demo had already been destroyed. See
+[`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md), `reports/phase-11.md`,
 [`docs/CICD_SECURITY.md`](docs/CICD_SECURITY.md),
 [`docs/TERRAFORM_AWS.md`](docs/TERRAFORM_AWS.md), and `reports/phase-10.md`.
 
@@ -69,6 +77,9 @@ make docker-build # build the three provenance-labeled local images
 make smoke-local  # verify container health, prediction, events, report, and dashboard
 make demo-local   # run the repeatable Healthy -> Drifted container flow
 make e2e-local    # exercise insufficient data, corrupt bundle, and sink outage
+make phase11-demo-local      # run one explicit-window monitoring/recovery evidence cycle
+make phase11-compare-local   # prove two fixed-anchor local cycles match
+make phase11-verify-teardown # recheck one cycle left no runtime active
 make scan-images  # scan exact local image IDs for HIGH/CRITICAL findings
 make verify       # quality/security gates plus verification of the generated bundle
 ```
@@ -220,6 +231,19 @@ The full math, classification/state precedence, label contract, report identity 
 conditional alert semantics, and AWS injected boundaries are documented in
 [docs/MONITORING_CONTRACT.md](docs/MONITORING_CONTRACT.md). The portable report schema is
 [contracts/monitoring-report-v1.schema.json](contracts/monitoring-report-v1.schema.json).
+
+### Phase 11 explicit-window evidence demo
+
+Phase 11 wraps the real fixture and monitor CLIs in one create-only evidence namespace. It records a
+1,000-row baseline window with `+500` accepted-sample headroom, a separate adjacent 1,000-row shifted
+window, an isolated 50-row insufficient-data window, dashboard transition evidence, immutable JSON
+and HTML reports, the unconfigured local alert marker, and a controlled event-sink outage. It then
+runs a separate local-only validated model-promotion/readiness exercise without claiming that the
+candidate is more accurate or that promotion remedies drift.
+
+Run it twice with the same explicit fresh anchor, compare the deterministic projection, and verify
+closure. Exact commands, expected output, evidence paths, breached metrics, screenshot boundaries,
+and the conditional AWS rule are in [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md).
 
 ## Read-only operations dashboard
 

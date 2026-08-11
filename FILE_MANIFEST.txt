@@ -69,6 +69,7 @@ docs/AWS_RUNTIME_CONTRACTS.md
 docs/CICD_SECURITY.md
 docs/CONTAINER_LOCAL_DEMO.md
 docs/DASHBOARD_CONTRACT.md
+docs/DEMO_RUNBOOK.md
 docs/DEPLOYMENT_GOVERNANCE.md
 docs/MONITORING_CONTRACT.md
 docs/PREDICTION_EVENT_CONTRACT.md
@@ -155,6 +156,9 @@ reports/evidence/phase-06/README.md
 reports/evidence/phase-06/degraded-dashboard.png
 reports/evidence/phase-06/healthy-dashboard.png
 reports/evidence/phase-10/README.md
+reports/evidence/phase-11/README.md
+reports/evidence/phase-11/degraded-dashboard-evidence.png
+reports/evidence/phase-11/healthy-dashboard-evidence.png
 reports/phase-00-architecture-review.md
 reports/phase-01.md
 reports/phase-02.md
@@ -167,6 +171,7 @@ reports/phase-08.md
 reports/phase-09-1.md
 reports/phase-09.md
 reports/phase-10.md
+reports/phase-11.md
 scripts/__init__.py
 scripts/aws_readiness_preflight.py
 scripts/bootstrap_repo.sh
@@ -189,6 +194,7 @@ scripts/load_test_api.py
 scripts/local_compose_lib.sh
 scripts/model_bundle_publisher.py
 scripts/notification_enrollment.py
+scripts/phase11_demo.py
 scripts/plan_evidence.py
 scripts/publication_audit.py
 scripts/release_manifest.py
@@ -314,6 +320,7 @@ tests/unit/test_phase10_governance.py
 tests/unit/test_phase10_model_publisher.py
 tests/unit/test_phase10_prerequisites.py
 tests/unit/test_phase10_runtime_readiness.py
+tests/unit/test_phase11_demo.py
 tests/unit/test_prediction_events_phase04.py
 tests/unit/test_publication_audit.py
 tests/unit/test_settings.py

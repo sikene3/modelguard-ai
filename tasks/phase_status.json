@@ -59,12 +59,22 @@
     "live_deployment_executed": true,
     "live_deployment_destroyed": true,
     "disposable_demo_resource_residuals": 0,
-    "phase_11_started": false
+    "phase_11_started": true
   },
   "phase_11": {
-    "status": "not_started",
-    "commit": null,
-    "report": null
+    "status": "completed",
+    "commit": "recorded-by-final-phase-11-git-commit",
+    "report": "reports/phase-11.md",
+    "canonical_local_runs_executed": 2,
+    "local_run_ids": [
+      "phase11-final-local-03",
+      "phase11-final-local-04"
+    ],
+    "repeatability_status": "passed",
+    "aws_execution": "not_run_environment_destroyed",
+    "aws_mutations": 0,
+    "local_teardown_verified": true,
+    "deliberately_broken_deployment_active": false
   },
   "phase_12": {
     "status": "not_started",
