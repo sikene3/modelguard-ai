@@ -1664,11 +1664,82 @@ def test_destroy_allows_only_exact_owned_tagged_drift_and_never_emits_values() -
     with pytest.raises(PlanEvidenceError, match="drift_resource_not_allowlisted"):
         _summarize(unrelated, manifest)
 
-    prerequisite = _plan_manifest()
-    forbidden = _show_plan(prerequisite)
-    forbidden["resource_drift"] = [_plan_change(prerequisite, actions=["update"])]
+    activation = _plan_manifest(stage="activation")
+    forbidden = _show_plan(activation)
+    forbidden["resource_drift"] = [_plan_change(activation, actions=["update"])]
     with pytest.raises(PlanEvidenceError, match="resource_drift_present"):
-        _summarize(forbidden, prerequisite)
+        _summarize(forbidden, activation)
+
+
+def test_prerequisite_partial_recovery_accepts_only_owned_drift_at_desired_state() -> None:
+    manifest = _plan_manifest()
+    existing = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["no-op"],
+    )
+    drift = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["update"],
+    )
+    drift["change"]["before"] = {"private": "must-not-leak"}
+    plan = _show_plan(manifest, existing)
+    plan["resource_drift"] = [drift]
+
+    summary = _summarize(plan, manifest)
+    rendered = json.dumps(summary) + render_markdown(summary)
+    assert summary["drift_change_count"] == 1
+    assert summary["contract_attestations"]["prerequisite_owned_noop_drift_verified"] is True
+    assert summary["drift_changes"] == [
+        {
+            "address": "aws_ecs_cluster.this",
+            "actions": ["update"],
+            "provider": "registry.terraform.io/hashicorp/aws",
+            "resource_type": "aws_ecs_cluster",
+        }
+    ]
+    assert "must-not-leak" not in rendered
+
+    config_change = _show_plan(
+        manifest,
+        _plan_change(
+            manifest,
+            address="aws_ecs_cluster.this",
+            resource_type="aws_ecs_cluster",
+            actions=["create"],
+        ),
+        _plan_change(
+            manifest,
+            address="aws_sns_topic.alerts",
+            resource_type="aws_sns_topic",
+            actions=["no-op"],
+        ),
+    )
+    config_change["resource_drift"] = [drift]
+    with pytest.raises(PlanEvidenceError, match="desired_action_not_noop"):
+        _summarize(config_change, manifest)
+
+    mismatched = _show_plan(manifest, existing)
+    mismatched_drift = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["update"],
+    )
+    mismatched_drift["change"]["after"]["private"] = "different"
+    mismatched["resource_drift"] = [mismatched_drift]
+    with pytest.raises(PlanEvidenceError, match="desired_state_mismatch"):
+        _summarize(mismatched, manifest)
+
+    no_partial_apply = _show_plan(manifest, existing)
+    for change in no_partial_apply["resource_changes"]:
+        change["change"]["actions"] = ["no-op"]
+    no_partial_apply["resource_drift"] = [drift]
+    with pytest.raises(PlanEvidenceError, match="stage_shape_invalid"):
+        _summarize(no_partial_apply, manifest)
 
 
 def test_destroy_governance_is_bound_when_guard_state_exists_and_absence_is_recoverable() -> None:

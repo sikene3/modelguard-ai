@@ -752,7 +752,7 @@ def _validate_plan_status(plan: dict[str, Any], *, stage: str) -> None:
     if "complete" in plan and plan["complete"] is not True:
         raise PlanEvidenceError("plan_incomplete")
     drift = plan.get("resource_drift", [])
-    if not isinstance(drift, list) or (stage != "destroy" and drift):
+    if not isinstance(drift, list) or (stage not in {"prerequisites", "destroy"} and drift):
         raise PlanEvidenceError("plan_resource_drift_present")
 
 
@@ -810,6 +810,98 @@ def _validate_destroy_drift(plan: dict[str, Any], manifest: PlanManifest) -> lis
     return sorted(drift, key=lambda item: item["address"])
 
 
+def _validate_prerequisite_recovery_drift(
+    plan: dict[str, Any],
+    manifest: PlanManifest,
+    raw_changes: list[Any],
+) -> list[dict[str, Any]]:
+    """Allow only owned drift already equal to desired state during partial-apply recovery."""
+
+    raw_drift = plan.get("resource_drift", [])
+    if not isinstance(raw_drift, list):
+        raise PlanEvidenceError("plan_resource_drift_present")
+    if not raw_drift:
+        return []
+
+    changes_by_address: dict[str, dict[str, Any]] = {}
+    managed_actions: list[tuple[str, ...]] = []
+    for raw_change in raw_changes:
+        if not isinstance(raw_change, dict):
+            raise PlanEvidenceError("plan_resource_change_not_object")
+        address = _safe_identifier(raw_change.get("address"), field="address")
+        if address in changes_by_address or "deposed" in raw_change:
+            raise PlanEvidenceError("plan_recovery_drift_change_identity_invalid")
+        changes_by_address[address] = raw_change
+        change = raw_change.get("change")
+        if raw_change.get("mode") == "managed" and isinstance(change, dict):
+            managed_actions.append(tuple(_safe_actions(change.get("actions"))))
+    if ("create",) not in managed_actions or ("no-op",) not in managed_actions:
+        raise PlanEvidenceError("plan_recovery_drift_stage_shape_invalid")
+
+    drift: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    allowed = _allowed_resource_addresses(manifest, mode="managed")
+    for raw_change in raw_drift:
+        if not isinstance(raw_change, dict):
+            raise PlanEvidenceError("plan_drift_change_invalid")
+        address = _safe_identifier(raw_change.get("address"), field="drift_address")
+        if address in seen:
+            raise PlanEvidenceError("plan_drift_address_duplicate")
+        seen.add(address)
+        if raw_change.get("mode") != "managed" or "deposed" in raw_change:
+            raise PlanEvidenceError("plan_drift_mode_invalid")
+        resource_type = _safe_identifier(raw_change.get("type"), field="drift_resource_type")
+        if allowed.get(address) != resource_type:
+            if resource_type == "aws_budgets_budget" or resource_type.startswith("aws_budgets_"):
+                raise PlanEvidenceError("plan_budget_resource_forbidden")
+            raise PlanEvidenceError("plan_drift_resource_not_allowlisted")
+        provider = _safe_identifier(raw_change.get("provider_name"), field="drift_provider")
+        expected_provider = (
+            TERRAFORM_PROVIDER if resource_type == "terraform_data" else AWS_PROVIDER
+        )
+        if provider != expected_provider:
+            raise PlanEvidenceError("plan_drift_provider_mismatch")
+        if _instance_base(address) not in REQUIRED_TAGGED_BASES:
+            raise PlanEvidenceError("plan_drift_ownership_unverifiable")
+        drift_change = raw_change.get("change")
+        if not isinstance(drift_change, dict):
+            raise PlanEvidenceError("plan_drift_change_invalid")
+        actions = _safe_actions(drift_change.get("actions"))
+        if actions != ["update"]:
+            raise PlanEvidenceError("plan_recovery_drift_action_forbidden")
+        desired_resource = changes_by_address.get(address)
+        if (
+            not isinstance(desired_resource, dict)
+            or desired_resource.get("mode") != "managed"
+            or desired_resource.get("type") != resource_type
+            or desired_resource.get("provider_name") != provider
+        ):
+            raise PlanEvidenceError("plan_recovery_drift_desired_resource_mismatch")
+        desired_change = desired_resource.get("change")
+        if not isinstance(desired_change, dict) or _safe_actions(desired_change.get("actions")) != [
+            "no-op"
+        ]:
+            raise PlanEvidenceError("plan_recovery_drift_desired_action_not_noop")
+        drift_after = drift_change.get("after")
+        desired_after = desired_change.get("after")
+        if (
+            not isinstance(drift_after, dict)
+            or not isinstance(desired_after, dict)
+            or drift_after != desired_after
+        ):
+            raise PlanEvidenceError("plan_recovery_drift_desired_state_mismatch")
+        _validate_tags(drift_change, manifest)
+        drift.append(
+            {
+                "address": address,
+                "actions": actions,
+                "provider": provider,
+                "resource_type": resource_type,
+            }
+        )
+    return sorted(drift, key=lambda item: item["address"])
+
+
 def summarize_plan(
     plan: dict[str, Any],
     manifest: PlanManifest,
@@ -828,10 +920,15 @@ def summarize_plan(
         workflow_ref=workflow_ref,
     )
     _validate_plan_status(plan, stage=manifest.stage)
-    drift_changes = _validate_destroy_drift(plan, manifest) if manifest.stage == "destroy" else []
     raw_changes = plan.get("resource_changes", [])
     if not isinstance(raw_changes, list):
         raise PlanEvidenceError("plan_resource_changes_not_array")
+    if manifest.stage == "destroy":
+        drift_changes = _validate_destroy_drift(plan, manifest)
+    elif manifest.stage == "prerequisites":
+        drift_changes = _validate_prerequisite_recovery_drift(plan, manifest, raw_changes)
+    else:
+        drift_changes = []
     changes: list[dict[str, Any]] = []
     changes_by_address: dict[str, dict[str, Any]] = {}
     seen_resource_instances: set[tuple[str, str | None]] = set()
@@ -924,6 +1021,8 @@ def summarize_plan(
     if manifest.stage == "destroy":
         attestations["deposed_managed_deletes_verified"] = True
         attestations["destroy_owned_drift_boundary_verified"] = True
+    elif drift_changes:
+        attestations["prerequisite_owned_noop_drift_verified"] = True
     masked_account = f"********{manifest.account_id[-4:]}"
     return {
         "schema_version": "modelguard.redacted-terraform-plan.v1",
@@ -1008,6 +1107,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.append("- No resource changes.")
     if identity["stage"] == "destroy":
         lines.append(f"- Deposed managed deletes: `{summary['deposed_delete_count']}`")
+    if summary["drift_change_count"]:
         lines.append(f"- Owned drift changes: `{summary['drift_change_count']}`")
     lines.extend(["", "## Contract attestations", ""])
     attestations = summary["contract_attestations"]
@@ -1023,7 +1123,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.extend(f"- `{'/'.join(item['actions'])}` `{item['address']}`" for item in changes)
     else:
         lines.append("- No resource changes.")
-    if identity["stage"] == "destroy":
+    if summary["drift_change_count"]:
         lines.extend(["", "## Owned drift actions", ""])
         drift_changes = summary["drift_changes"]
         if drift_changes:
