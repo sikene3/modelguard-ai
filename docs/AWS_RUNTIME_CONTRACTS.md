@@ -42,7 +42,8 @@ It has not been run against AWS in the local readiness segment.
 
 ## API bundle hydration
 
-An AWS API task starts with an empty writable `/runtime` volume. Startup performs this ordered,
+An AWS API task starts with an empty model destination on its task-scoped writable `/tmp` volume.
+Startup performs this ordered,
 fail-closed sequence:
 
 1. Call `GetBucketLocation` for the exact configured model bucket. Require an explicit
@@ -63,7 +64,7 @@ fail-closed sequence:
    seven-object download below 1.25 MiB; `model.joblib` is bounded to 64 KiB compressed and its
    reviewed zlib stream to 4 MiB inflated bytes before trusted deserialization. These measured
    ceilings replace the former generic 256 MiB allowance for the 1 GiB API task.
-6. Rename the verified directory atomically into `/runtime/model-bundle`, `fsync` the parent, repeat
+6. Rename the verified directory atomically into `/tmp/model-bundle`, `fsync` the parent, repeat
    the trusted-bundle verification, and only then deserialize and install the model once.
 
 An existing destination is never reused merely because its semantic model identity looks valid: it
