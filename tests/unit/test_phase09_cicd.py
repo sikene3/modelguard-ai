@@ -1820,6 +1820,130 @@ def test_prerequisite_partial_recovery_allows_only_exact_interrupted_alb_update(
         _summarize(missing_drift, manifest)
 
 
+def test_prerequisite_recovery_allows_only_the_supported_alb_log_policy_correction() -> None:
+    manifest = _plan_manifest()
+    audit_bucket = (
+        f"{manifest.project}-{manifest.environment}-{manifest.account_id}-{manifest.region}-audit"
+    )
+    resource = f"arn:aws:s3:::{audit_bucket}/alb/AWSLogs/{manifest.account_id}/*"
+    source_prefix = (
+        f"arn:aws:elasticloadbalancing:{manifest.region}:{manifest.account_id}:loadbalancer"
+    )
+    common_statement = {
+        "Action": "s3:PutObject",
+        "Effect": "Allow",
+        "Principal": {"Service": "logdelivery.elasticloadbalancing.amazonaws.com"},
+        "Resource": resource,
+        "Sid": "AllowAlbLogDelivery",
+    }
+    before_policy = {
+        "Statement": [
+            {"Action": "s3:*", "Effect": "Deny", "Resource": resource, "Sid": "Unchanged"},
+            {
+                **common_statement,
+                "Condition": {
+                    "ArnLike": {
+                        "aws:SourceArn": (
+                            f"{source_prefix}/app/{manifest.project}-{manifest.environment}/*"
+                        )
+                    },
+                    "StringEquals": {"aws:SourceAccount": manifest.account_id},
+                },
+            },
+        ],
+        "Version": "2012-10-17",
+    }
+    after_policy = {
+        **before_policy,
+        "Statement": [
+            before_policy["Statement"][0],
+            {
+                **common_statement,
+                "Condition": {"ArnLike": {"aws:SourceArn": f"{source_prefix}/*"}},
+            },
+        ],
+    }
+    policy_update = _plan_change(
+        manifest,
+        address='module.data_plane.aws_s3_bucket_policy.this["audit"]',
+        resource_type="aws_s3_bucket_policy",
+        actions=["update"],
+    )
+    policy_update["change"]["before"] = {
+        "bucket": audit_bucket,
+        "id": audit_bucket,
+        "policy": json.dumps(before_policy, sort_keys=True),
+    }
+    policy_update["change"]["after"] = {
+        "bucket": audit_bucket,
+        "id": audit_bucket,
+        "policy": json.dumps(after_policy, sort_keys=True),
+    }
+    existing = _plan_change(
+        manifest,
+        address="aws_ecs_cluster.this",
+        resource_type="aws_ecs_cluster",
+        actions=["no-op"],
+    )
+    plan = _show_plan(manifest, existing, policy_update)
+
+    summary = _summarize(plan, manifest)
+    assert summary["action_counts"]["update"] == 1
+    assert (
+        summary["contract_attestations"]["prerequisite_alb_log_policy_correction_verified"] is True
+    )
+
+    broader_resource = json.loads(json.dumps(plan))
+    policy = next(
+        item
+        for item in broader_resource["resource_changes"]
+        if item["address"] == 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
+    )
+    after = json.loads(policy["change"]["after"]["policy"])
+    after["Statement"][1]["Resource"] = "arn:aws:s3:::*"
+    policy["change"]["after"]["policy"] = json.dumps(after)
+    with pytest.raises(PlanEvidenceError, match="transition_invalid"):
+        _summarize(broader_resource, manifest)
+
+    wrong_source = json.loads(json.dumps(plan))
+    policy = next(
+        item
+        for item in wrong_source["resource_changes"]
+        if item["address"] == 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
+    )
+    after = json.loads(policy["change"]["after"]["policy"])
+    after["Statement"][1]["Condition"]["ArnLike"]["aws:SourceArn"] = (
+        "arn:aws:elasticloadbalancing:*:*:loadbalancer/*"
+    )
+    policy["change"]["after"]["policy"] = json.dumps(after)
+    with pytest.raises(PlanEvidenceError, match="transition_invalid"):
+        _summarize(wrong_source, manifest)
+
+    changed_unrelated_statement = json.loads(json.dumps(plan))
+    policy = next(
+        item
+        for item in changed_unrelated_statement["resource_changes"]
+        if item["address"] == 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
+    )
+    after = json.loads(policy["change"]["after"]["policy"])
+    after["Statement"][0]["Action"] = "s3:GetObject"
+    policy["change"]["after"]["policy"] = json.dumps(after)
+    with pytest.raises(PlanEvidenceError, match="scope_invalid"):
+        _summarize(changed_unrelated_statement, manifest)
+
+    unrecognized_before = json.loads(json.dumps(plan))
+    policy = next(
+        item
+        for item in unrecognized_before["resource_changes"]
+        if item["address"] == 'module.data_plane.aws_s3_bucket_policy.this["audit"]'
+    )
+    before = json.loads(policy["change"]["before"]["policy"])
+    del before["Statement"][1]["Condition"]["StringEquals"]
+    policy["change"]["before"]["policy"] = json.dumps(before)
+    with pytest.raises(PlanEvidenceError, match="transition_invalid"):
+        _summarize(unrecognized_before, manifest)
+
+
 def test_destroy_governance_is_bound_when_guard_state_exists_and_absence_is_recoverable() -> None:
     manifest = _plan_manifest(stage="destroy")
     plan = _show_plan(manifest)

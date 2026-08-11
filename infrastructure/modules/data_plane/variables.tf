@@ -57,16 +57,6 @@ variable "alb_log_prefix" {
   }
 }
 
-variable "alb_name" {
-  description = "Exact ALB name permitted to deliver access logs to the audit bucket."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{2,31}$", var.alb_name))
-    error_message = "alb_name must be an AWS-safe ALB name."
-  }
-}
-
 variable "tags" {
   description = "Required common resource tags."
   type        = map(string)

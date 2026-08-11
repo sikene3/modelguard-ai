@@ -6,7 +6,6 @@ module "data_plane" {
   account_id           = var.aws_account_id
   region               = var.aws_region
   alb_log_prefix       = "alb"
-  alb_name             = local.name_prefix
   tags                 = local.common_tags
 }
 

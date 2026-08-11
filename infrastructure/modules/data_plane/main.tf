@@ -137,16 +137,10 @@ data "aws_iam_policy_document" "bucket" {
       ]
 
       condition {
-        test     = "StringEquals"
-        variable = "aws:SourceAccount"
-        values   = [var.account_id]
-      }
-
-      condition {
         test     = "ArnLike"
         variable = "aws:SourceArn"
         values = [
-          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${var.region}:${var.account_id}:loadbalancer/app/${var.alb_name}/*",
+          "arn:${data.aws_partition.current.partition}:elasticloadbalancing:${var.region}:${var.account_id}:loadbalancer/*",
         ]
       }
     }
