@@ -32,7 +32,7 @@ PHASE11_SECOND_SUMMARY ?=
 PHASE11_REPEATABILITY_OUTPUT ?= $(PHASE11_EVIDENCE_ROOT)/local-repeatability.json
 PHASE11_TEARDOWN_SUMMARY ?=
 
-.PHONY: help setup format lint typecheck test security security-tools-bootstrap security-tools-check security-scan release-gates generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local phase11-demo-local phase11-compare-local phase11-verify-teardown scan-images shell-check verify clean
+.PHONY: help setup format lint typecheck test security security-tools-bootstrap security-tools-check security-scan release-gates generate-data train inspect-model verify-model api load-test export-monitor-schema monitor monitor-status dashboard docker-build docker-up smoke-local demo-local e2e-local phase11-demo-local phase11-compare-local phase11-verify-teardown portfolio-check scan-images shell-check verify clean
 
 help:
 	@echo "ModelGuard AI commands"
@@ -63,6 +63,7 @@ help:
 	@echo "  make phase11-demo-local  Run one explicit-window Phase 11 evidence cycle"
 	@echo "  make phase11-compare-local  Compare two completed Phase 11 local cycles"
 	@echo "  make phase11-verify-teardown  Recheck one Phase 11 local closure summary"
+	@echo "  make portfolio-check  Validate Phase 13 public assets, links, claims, and hygiene"
 	@echo "  make scan-images  Scan images and enforce bounded Trivy exceptions"
 	@echo "  make shell-check  Run Bash syntax and the verified repository-local ShellCheck"
 	@echo "  make verify      Run quality/security gates and verify the generated bundle"
@@ -97,7 +98,9 @@ typecheck:
 		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py \
-		scripts/phase11_demo.py
+		scripts/phase11_demo.py \
+		scripts/export_portfolio_architecture.py \
+		scripts/validate_portfolio.py
 
 test:
 	$(UV_RUN) pytest -q
@@ -122,7 +125,9 @@ security:
 		scripts/aws_readiness_preflight.py \
 		scripts/verify_deployment_inputs.py \
 		scripts/deployment_record.py \
-		scripts/phase11_demo.py
+		scripts/phase11_demo.py \
+		scripts/export_portfolio_architecture.py \
+		scripts/validate_portfolio.py
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))
 	$(UV) export --quiet --all-groups --frozen --no-emit-project \
 		--output-file $(PIP_AUDIT_REQUIREMENTS)
@@ -139,7 +144,7 @@ security-tools-check:
 security-scan: security-tools-check
 	./scripts/security_scan.sh repository
 
-release-gates: verify security-scan
+release-gates: verify security-scan portfolio-check
 
 generate-data:
 	$(UV_RUN) python -m modelguard.training.cli generate \
@@ -227,6 +232,9 @@ phase11-verify-teardown:
 	@test -n "$(PHASE11_TEARDOWN_SUMMARY)" || { echo "PHASE11_TEARDOWN_SUMMARY is required." >&2; exit 2; }
 	$(UV_RUN) python scripts/phase11_demo.py verify-local-teardown \
 		--summary "$(PHASE11_TEARDOWN_SUMMARY)"
+
+portfolio-check:
+	$(UV_RUN) python -m scripts.validate_portfolio
 
 scan-images:
 	./scripts/scan_local_images.sh

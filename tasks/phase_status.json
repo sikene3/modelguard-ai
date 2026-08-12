@@ -82,8 +82,40 @@
     "report": null
   },
   "phase_13": {
-    "status": "not_started",
-    "commit": null,
-    "report": null
+    "status": "completed",
+    "commit": "recorded-by-final-phase-13-git-commit",
+    "report": "reports/phase-13.md",
+    "portfolio_validation": "passed_with_genuine_media",
+    "clean_quickstart": "passed_with_locked_offline_cache",
+    "reviewed_screenshots": 4,
+    "architecture_exports": [
+      "portfolio/assets/modelguard-architecture.svg",
+      "portfolio/assets/modelguard-architecture.png"
+    ],
+    "demo_recording": {
+      "status": "validated",
+      "path": "portfolio/assets/demo/modelguard-demo.mp4",
+      "duration_seconds": 255.0356,
+      "resolution": "1280x720",
+      "sha256": "a8910b4c8fd9d392dc7e161cc773caefcff38501815f25f3e43d8f3fe6f07237"
+    },
+    "short_gif": {
+      "status": "validated_same_recording_excerpt",
+      "path": "portfolio/assets/demo/modelguard-drift.gif",
+      "duration_seconds": 15.0,
+      "sha256": "e0a0f8112298ee633f8a9381859fa6d37554d110e67cbe9c53f189c40d1a1dc4"
+    },
+    "release_gates": "passed_on_unrestricted_host_final_closure",
+    "media_validation": {
+      "status": "passed",
+      "focused_tests": 18,
+      "required_paths": 15,
+      "local_links": 188,
+      "manifest_parity": "passed"
+    },
+    "closure_blocker": null,
+    "formal_commit": "recorded-by-final-phase-13-git-commit",
+    "publication": "completed-via-protected-pull-request",
+    "phase_12_status": "not_started"
   }
 }
