@@ -162,8 +162,8 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       native-service or bounded EMF source, and scheduler submission is not treated as monitor
       completion. All 12 live alarm/source contracts were inventoried before teardown.
 - [x] The exact saved `terraform destroy` plan removed the disposable demo environment. Terraform
-      state and every live service namespace are empty; only validated nonbillable provider/tag
-      metadata and the required retained Budget remain.
+      state was verified empty and every explicitly inventoried demo service namespace was empty;
+      only validated nonbillable provider/tag metadata and the required retained Budget remained.
 
 ## CI/CD
 

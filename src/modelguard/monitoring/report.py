@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from html import escape
 from typing import Any, Literal
 
@@ -27,6 +28,7 @@ from modelguard.monitoring.state import (
     PerformanceState,
     RunState,
     aggregate_drift_state,
+    ensure_utc,
 )
 
 MONITORING_REPORT_SCHEMA_VERSION: Literal["modelguard.monitoring-report.v1"] = (
@@ -108,8 +110,19 @@ def canonical_report_identity(
     classified_label_digests: tuple[str, ...],
     known_non_targets: Sequence[EventIdentity] = (),
     label_source_configured: bool = False,
+    label_evaluation_cutoff: datetime | None = None,
 ) -> ReportIdentityContract:
     """Hash only canonical semantic inputs, never storage layout or mutable file identity."""
+
+    if label_source_configured != (label_evaluation_cutoff is not None):
+        raise ValueError("configured label sources require an identity-bound evaluation cutoff")
+    serialized_cutoff = None
+    if label_evaluation_cutoff is not None:
+        serialized_cutoff = (
+            ensure_utc(label_evaluation_cutoff, name="label_evaluation_cutoff")
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
     serialized_window = window.model_dump(mode="json")
     payload = {
@@ -133,12 +146,13 @@ def canonical_report_identity(
             ),
         ),
         "label_source_configured": label_source_configured,
+        "label_evaluation_cutoff": serialized_cutoff,
         "selected_record_classification_digests": sorted(classified_record_digests),
         "label_classification_digests": sorted(classified_label_digests),
     }
     identity_hash = canonical_json_hash(
         payload,
-        canonicalization_version="modelguard.monitoring-report-identity.v1",
+        canonicalization_version="modelguard.monitoring-report-identity.v2",
         ordering=(
             "canonical JSON keys ascending; known identities canonical-tuple ascending; record "
             "and label classification-digest multisets ascending"
@@ -148,7 +162,7 @@ def canonical_report_identity(
             "storage object name",
             "file boundary",
             "mutable enclosing-file hash",
-            "monitor invocation time after grace",
+            "monitor invocation time when no label source is configured",
             "HTML presentation",
         ],
     )
@@ -196,6 +210,7 @@ def build_monitoring_report(
         classified_label_digests=performance.classified_label_digests,
         known_non_targets=known_non_targets,
         label_source_configured=performance.evaluation.label_source_configured,
+        label_evaluation_cutoff=performance.evaluation.evaluation_cutoff,
     )
     return MonitoringReport(
         report_id=identity.hash.digest,

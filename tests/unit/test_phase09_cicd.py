@@ -825,17 +825,27 @@ def test_required_workflows_parse_and_external_actions_are_commit_pinned(
                 continue
             assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action), action
     ci = _read(repository_root, ".github/workflows/ci.yml")
+    makefile = _read(repository_root, "Makefile")
     security_scan = _read(repository_root, "scripts/security_scan.sh")
     assert "fetch-depth: 0" in ci
     assert "--redact=100" in security_scan
     assert "make security-tools-bootstrap" in ci
     assert "make security-scan" in ci
+    assert "make typecheck" in ci
+    assert "mypy src scripts" in makefile
+    assert "bandit -q -r src scripts" in makefile
+    assert 'MLFLOW_DISABLE_TELEMETRY: "true"' in ci
     assert "security-tools.lock.json" in _read(repository_root, "scripts/security_tools.py")
-    assert "yamllint==1.37.1" in ci
+    assert "uvx --from" not in ci
+    assert "uv run --frozen --no-sync yamllint" in ci
+    assert '"yamllint==1.37.1"' in _read(repository_root, "pyproject.toml")
     assert "UV_FROZEN" not in ci
     assert "uv sync --all-groups --locked" in ci
     assert "continue-on-error" not in ci
     assert "github/codeql-action/upload-sarif@" in ci
+    terraform = _read(repository_root, ".github/workflows/terraform-plan.yml")
+    assert "terraform -chdir=infrastructure/audit-bootstrap init -backend=false" in terraform
+    assert "terraform -chdir=infrastructure/audit-bootstrap validate" in terraform
 
 
 def test_required_ci_ruleset_contexts_are_exact_emitted_job_names(

@@ -12,6 +12,7 @@ permissions:
 env:
   UV_CACHE_DIR: ${{ github.workspace }}/.cache/uv
   UV_NO_SYNC: "1"
+  MLFLOW_DISABLE_TELEMETRY: "true"
 
 jobs:
   quality:
@@ -38,25 +39,7 @@ jobs:
       - name: Run Ruff lint
         run: uv run ruff check .
       - name: Run strict Mypy
-        run: >-
-          uv run mypy src
-          scripts/terraform_demo_guard.py
-          scripts/notification_enrollment.py
-          scripts/secret_scan_policy.py
-          scripts/plan_evidence.py
-          scripts/render_ci_terraform.py
-          scripts/release_manifest.py
-          scripts/sanitize_sarif.py
-          scripts/security_gate_runner.py
-          scripts/security_policy.py
-          scripts/security_tools.py
-          scripts/deployment_governance.py
-          scripts/confidential_artifact.py
-          scripts/human_aws_login.py
-          scripts/model_bundle_publisher.py
-          scripts/aws_readiness_preflight.py
-          scripts/verify_deployment_inputs.py
-          scripts/deployment_record.py
+        run: make typecheck
 
   tests:
     name: Pytest and branch coverage
@@ -146,5 +129,10 @@ jobs:
         with:
           version: 0.12.1
           python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize the locked lint environment
+        run: uv sync --all-groups --locked
+        env:
+          UV_NO_SYNC: "0"
       - name: Run locked yamllint
-        run: uvx --from yamllint==1.37.1 yamllint .github/workflows
+        run: uv run --frozen --no-sync yamllint .github/workflows

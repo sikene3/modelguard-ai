@@ -269,6 +269,7 @@ def execute_aws_monitoring_once(
             event_snapshot=event_snapshot,
             label_snapshot=None,
             window=window,
+            evaluation_cutoff=normalized_as_of,
             config=config,
         )
         report = evaluation.report

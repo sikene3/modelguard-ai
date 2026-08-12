@@ -157,11 +157,18 @@ Extra fields, coercion, non-UTC text, and labels outside `{0,1}` are rejected. C
 labels deduplicate; differing rows for one event ID conflict. Orphans are reported and excluded.
 Coverage is unique valid joined labels divided by accepted target events.
 
-The local-only label adapter validates timestamp syntax but does not enforce the logical ordering
-`event_timestamp <= labeled_at <= evaluation_cutoff`. A label source is therefore trusted to supply
-temporally eligible synthetic labels. This is an accepted MVP limitation: online/AWS label
-collection is out of scope, results describe only the supplied synthetic subset, and they are never
-presented as real-world or causal performance evidence.
+The local-only label adapter enforces the inclusive logical ordering
+`event_timestamp <= labeled_at <= evaluation_cutoff`. The explicit cutoff is the run's UTC `as_of`
+timestamp. Labels before their matching event or after that cutoff are classified separately,
+excluded from the joined subset, counted as `temporally_ineligible`, and force performance to
+`unknown` rather than allowing misleading metrics. Both the cutoff and the temporal classification
+are bound into the report identity. Online/AWS label collection remains out of scope; results
+describe only the supplied synthetic subset and are never presented as real-world or causal
+performance evidence.
+
+New reports use `modelguard.monitoring-report-identity.v2` for this cutoff-aware identity. Existing
+v1 report artifacts remain parseable and are explicitly marked with the legacy temporal-policy
+default rather than being reinterpreted as cutoff-validated evidence.
 
 Adequacy requires all of:
 
@@ -171,9 +178,9 @@ Adequacy requires all of:
 - at least 100 negative labels.
 
 No configured source is `unknown`. A valid configured source below adequacy is `pending_labels`.
-Unknown schema versions, malformed rows, or conflicts are `unknown`. Only adequate labels produce
-average precision/prevalence/AP lift, ROC-AUC, Brier, log loss, and locked-threshold
-precision/recall/F1/confusion metrics.
+Unknown schema versions, malformed rows, temporal ineligibility, or conflicts are `unknown`. Only
+adequate labels produce average precision/prevalence/AP lift, ROC-AUC, Brier, log loss, and
+locked-threshold precision/recall/F1/confusion metrics.
 
 Only the locked policy votes on performance state:
 

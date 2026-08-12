@@ -8,6 +8,7 @@ import json
 import os
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import numpy as np
@@ -34,8 +35,8 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _python_features(row: object) -> dict[str, object]:
-    values = row._asdict()
+def _python_features(row: object) -> dict[str, Any]:
+    values = row._asdict()  # type: ignore[attr-defined]
     return {
         "amount": float(values["amount"]),
         "transaction_hour": int(values["transaction_hour"]),
@@ -49,7 +50,7 @@ def _python_features(row: object) -> dict[str, object]:
     }
 
 
-def _shift(features: dict[str, object]) -> dict[str, object]:
+def _shift(features: dict[str, Any]) -> dict[str, Any]:
     shifted = dict(features)
     shifted.update(
         {

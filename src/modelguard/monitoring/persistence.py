@@ -304,6 +304,7 @@ class LocalRunStateStore:
     def __init__(self, report_root: Path) -> None:
         self._root = report_root
         self._path = report_root / "run-status.json"
+        self._lock_path = report_root / ".run-status.lock"
 
     def _read(self) -> RunStatusArtifact | None:
         if not self._path.exists():
@@ -314,11 +315,35 @@ class LocalRunStateStore:
 
     def _write_if_current(self, status: RunStatusArtifact) -> bool:
         self._root.mkdir(parents=True, exist_ok=True)
-        current = self._read()
-        if current is not None and status.latest_attempt_at < current.latest_attempt_at:
-            return False
-        _atomic_replace(self._path, canonical_json_bytes(status) + b"\n")
-        return True
+        lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        lock_flags |= getattr(os, "O_NOFOLLOW", 0)
+        lock_descriptor = os.open(self._lock_path, lock_flags, 0o600)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            current = self._read()
+            candidate = status
+            if current is not None:
+                if status.latest_attempt_at < current.latest_attempt_at:
+                    return False
+                if status.latest_attempt_state == "failed":
+                    candidate = status.model_copy(
+                        update={
+                            "latest_success_at": current.latest_success_at,
+                            "latest_report_id": current.latest_report_id,
+                        }
+                    )
+                payload = canonical_json_bytes(candidate) + b"\n"
+                if status.latest_attempt_at == current.latest_attempt_at:
+                    if canonical_json_bytes(current) + b"\n" != payload:
+                        raise ValueError("same-time local run-status attempts conflict")
+                    return False
+            else:
+                payload = canonical_json_bytes(candidate) + b"\n"
+            _atomic_replace(self._path, payload)
+            return True
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
 
     def record_success(
         self,
@@ -339,13 +364,12 @@ class LocalRunStateStore:
 
     def record_failure(self, *, attempted_at: datetime, reason: str) -> bool:
         normalized = ensure_utc(attempted_at, name="attempted_at")
-        current = self._read()
         return self._write_if_current(
             RunStatusArtifact(
                 latest_attempt_state="failed",
                 latest_attempt_at=normalized,
-                latest_success_at=current.latest_success_at if current is not None else None,
-                latest_report_id=current.latest_report_id if current is not None else None,
+                latest_success_at=None,
+                latest_report_id=None,
                 failure_reason=reason,
             )
         )

@@ -9,6 +9,12 @@ import json
 import re
 import shutil
 import struct
+# security-suppression:
+# finding=B404
+# justification=Only one resolved local Git enumeration is executed without a shell.
+# owner=modelguard-maintainers
+# expires=2026-10-31
+import subprocess  # nosec B404
 import tempfile
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
@@ -148,6 +154,49 @@ def _validate_required_paths(repository_root: Path) -> None:
         raise PortfolioValidationError(f"missing required portfolio paths: {missing}")
 
 
+def _validate_file_manifest(repository_root: Path) -> None:
+    manifest_path = repository_root / "FILE_MANIFEST.txt"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise PortfolioValidationError("FILE_MANIFEST.txt must be a regular file")
+    manifest_paths = manifest_path.read_text(encoding="utf-8").splitlines()
+    if not manifest_paths or manifest_paths != sorted(set(manifest_paths)):
+        raise PortfolioValidationError("FILE_MANIFEST.txt must be non-empty, sorted, and unique")
+
+    git_binary = shutil.which("git")
+    if git_binary is None:
+        raise PortfolioValidationError("git is required to validate FILE_MANIFEST.txt parity")
+    # security-suppression:
+    # finding=B603
+    # justification=The resolved executable and every argument are fixed with no shell input.
+    # owner=modelguard-maintainers
+    # expires=2026-10-31
+    completed = subprocess.run(  # nosec B603
+        [git_binary, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=repository_root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise PortfolioValidationError("git could not enumerate the repository candidate set")
+    try:
+        candidates = sorted(
+            path
+            for path in completed.stdout.decode("utf-8").split("\0")
+            if path and path != "FILE_MANIFEST.txt"
+        )
+    except UnicodeDecodeError as error:
+        raise PortfolioValidationError("repository candidate paths must be UTF-8") from error
+
+    if manifest_paths != candidates:
+        manifest_set = set(manifest_paths)
+        candidate_set = set(candidates)
+        missing = sorted(manifest_set - candidate_set)[:10]
+        unlisted = sorted(candidate_set - manifest_set)[:10]
+        raise PortfolioValidationError(
+            f"FILE_MANIFEST.txt parity failed: missing={missing}, unlisted={unlisted}"
+        )
+
+
 def _validate_public_hygiene(repository_root: Path) -> None:
     findings: dict[str, tuple[str, ...]] = {}
     for path in _public_text_paths(repository_root):
@@ -165,7 +214,13 @@ def _validate_public_hygiene(repository_root: Path) -> None:
         raise PortfolioValidationError("temporary-cloud boundary missing from README.md")
 
 
-def _validate_fragment(path: Path, fragment: str, *, source: Path) -> None:
+def _validate_fragment(
+    path: Path,
+    fragment: str,
+    *,
+    source: Path,
+    repository_root: Path,
+) -> None:
     if not fragment or path.suffix.casefold() not in {".md", ".markdown"}:
         return
     headings = {
@@ -173,8 +228,11 @@ def _validate_fragment(path: Path, fragment: str, *, source: Path) -> None:
         for match in HEADING_PATTERN.finditer(path.read_text(encoding="utf-8"))
     }
     if fragment.casefold() not in headings:
+        relative_path = path.relative_to(repository_root).as_posix()
+        relative_source = source.relative_to(repository_root).as_posix()
         raise PortfolioValidationError(
-            f"missing markdown fragment #{fragment} in {path} linked from {source}"
+            f"missing markdown fragment #{fragment} in {relative_path}; "
+            f"linked from {relative_source}"
         )
 
 
@@ -197,15 +255,21 @@ def validate_markdown_links(repository_root: Path) -> tuple[int, int]:
             try:
                 resolved.relative_to(repository_root.resolve())
             except ValueError as error:
+                relative_source = source.relative_to(repository_root).as_posix()
                 raise PortfolioValidationError(
-                    f"local link escapes repository: {target} in {source}"
+                    f"local link escapes repository: {target} in {relative_source}"
                 ) from error
             if not resolved.exists():
                 relative_source = source.relative_to(repository_root).as_posix()
                 raise PortfolioValidationError(
                     f"missing local link target {target} in {relative_source}"
                 )
-            _validate_fragment(resolved, fragment, source=source)
+            _validate_fragment(
+                resolved,
+                fragment,
+                source=source,
+                repository_root=repository_root,
+            )
     return len(markdown_paths), local_link_count
 
 
@@ -439,6 +503,7 @@ def validate_portfolio(repository_root: Path) -> ValidationSummary:
     """Run the complete non-network Phase 13 public-asset validation."""
 
     root = repository_root.resolve()
+    _validate_file_manifest(root)
     _validate_required_paths(root)
     markdown_files, local_links = validate_markdown_links(root)
     _validate_public_hygiene(root)

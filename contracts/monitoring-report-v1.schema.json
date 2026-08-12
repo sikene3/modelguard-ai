@@ -449,6 +449,12 @@
           "title": "Rejected",
           "type": "integer"
         },
+        "temporally_ineligible": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Temporally Ineligible",
+          "type": "integer"
+        },
         "unique_valid": {
           "minimum": 0,
           "title": "Unique Valid",
@@ -852,6 +858,19 @@
           "default": null,
           "title": "Coverage"
         },
+        "evaluation_cutoff": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluation Cutoff"
+        },
         "interpretation": {
           "const": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
           "default": "synthetic-policy cost on the labeled subset versus held-out synthetic reference",
@@ -892,6 +911,16 @@
         },
         "state": {
           "$ref": "#/$defs/PerformanceState"
+        },
+        "temporal_eligibility_policy": {
+          "default": "not_recorded_legacy_v1",
+          "enum": [
+            "not_recorded_legacy_v1",
+            "not_applicable",
+            "event_time_to_evaluation_cutoff_inclusive"
+          ],
+          "title": "Temporal Eligibility Policy",
+          "type": "string"
         }
       },
       "required": [

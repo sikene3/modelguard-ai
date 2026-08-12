@@ -59,7 +59,7 @@ def validate_local_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def _python_features(row: object) -> dict[str, object]:
+def _python_features(row: object) -> dict[str, Any]:
     values = row._asdict()  # type: ignore[attr-defined]
     return {
         "amount": float(values["amount"]),
@@ -74,7 +74,7 @@ def _python_features(row: object) -> dict[str, object]:
     }
 
 
-def shift_features(features: dict[str, object]) -> dict[str, object]:
+def shift_features(features: dict[str, Any]) -> dict[str, Any]:
     """Apply a deterministic, bounded shift strong enough to exercise degraded drift."""
 
     shifted = dict(features)
@@ -102,7 +102,7 @@ def shift_features(features: dict[str, object]) -> dict[str, object]:
     return shifted
 
 
-def build_payloads(*, scenario: str, row_count: int, seed: int) -> list[dict[str, object]]:
+def build_payloads(*, scenario: str, row_count: int, seed: int) -> list[dict[str, Any]]:
     """Create the exact schema payloads used by the local traffic scenarios."""
 
     if scenario not in DEFAULT_ROW_COUNTS:

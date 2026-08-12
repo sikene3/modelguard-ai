@@ -7,6 +7,10 @@
 **Outcome:** show a healthy finalized window becoming degraded while performance remains honestly
 unknown, then connect that evidence to the guarded AWS design and teardown record
 
+The tracked MP4 contains no audio stream. This file is therefore the canonical voice-over and
+caption source for the existing visual recording; do not publish the MP4 as narrated media unless
+this track has been recorded or burned in.
+
 Do not imply that the historical AWS environment is currently live. Do not show a private endpoint,
 IP address, account identifier, ARN, email address, bearer value, `.env`, Terraform plan/state, raw
 cloud receipt, shell history, or notification details.

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import UTC, datetime, timedelta
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,60 @@ from modelguard.monitoring.state import (
 from modelguard.monitoring.telemetry import build_monitor_completion_emf
 from modelguard.training.bundle import ValidatedBundleMetadata
 
+
+def _delayed_run_status_success(
+    report_root: str,
+    completed_at: str,
+    report_id: str,
+    ready_marker: str,
+    release_marker: str,
+) -> None:
+    """Hold the first atomic replace so a competing process reaches the status update."""
+
+    from modelguard.monitoring import persistence
+
+    original_replace = persistence._atomic_replace
+
+    def delayed_replace(path: Path, payload: bytes) -> None:
+        Path(ready_marker).touch()
+        deadline = time.monotonic() + 10
+        while not Path(release_marker).exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("run-status interleaving release was not signaled")
+            time.sleep(0.01)
+        original_replace(path, payload)
+
+    persistence._atomic_replace = delayed_replace
+    persistence.LocalRunStateStore(Path(report_root)).record_success(
+        completed_at=datetime.fromisoformat(completed_at),
+        report_id=report_id,
+    )
+
+
+def _record_run_status_success(
+    report_root: str,
+    completed_at: str,
+    report_id: str,
+    started_marker: str,
+    finished_marker: str,
+) -> None:
+    Path(started_marker).touch()
+    LocalRunStateStore(Path(report_root)).record_success(
+        completed_at=datetime.fromisoformat(completed_at),
+        report_id=report_id,
+    )
+    Path(finished_marker).touch()
+
+
+def _wait_for_marker(path: Path, *, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.01)
+    return path.exists()
+
+
 WINDOW_END = datetime(2026, 1, 1, 1, tzinfo=UTC)
 
 
@@ -84,6 +140,7 @@ def _base_report(
     performance = evaluate_delayed_performance(
         classified.accepted_events,
         label_snapshot=None,
+        evaluation_cutoff=WINDOW_END + timedelta(minutes=10),
         locked_threshold=metadata.threshold.threshold,
         held_out_reference_cost_per_event=float(
             metadata.metrics.held_out_test.synthetic_cost_per_event.value or 0.0
@@ -167,6 +224,14 @@ def test_canonical_report_id_is_order_independent_and_label_sensitive(
         classified_record_digests=("duplicate:b", "accepted:a"),
         classified_label_digests=("orphan:d", "joined:c"),
         label_source_configured=True,
+        label_evaluation_cutoff=WINDOW_END + timedelta(minutes=10),
+    )
+    changed_cutoff = canonical_report_identity(
+        **kwargs,
+        classified_record_digests=("duplicate:b", "accepted:a"),
+        classified_label_digests=("orphan:d", "joined:c"),
+        label_source_configured=True,
+        label_evaluation_cutoff=WINDOW_END + timedelta(minutes=11),
     )
     known_non_target = monitoring_target.model_copy(
         update={"model_version": "9.9.9", "bundle_manifest_sha256": "b" * 64}
@@ -180,6 +245,7 @@ def test_canonical_report_id_is_order_independent_and_label_sensitive(
     assert first.hash.digest == reordered.hash.digest
     assert first.hash.digest != changed_label.hash.digest
     assert first.hash.digest != configured_empty_labels.hash.digest
+    assert configured_empty_labels.hash.digest != changed_cutoff.hash.digest
     assert first.hash.digest != changed_known_identities.hash.digest
     assert "storage object name" in first.hash.exclusions
 
@@ -203,6 +269,23 @@ def test_strict_json_and_escaped_offline_html_have_no_external_dependency(
     assert "https://evil" in html  # escaped text, never a fetched resource
     assert "<script" not in html
     assert "synthetic-policy cost on the labeled subset" in html
+
+
+def test_v1_reports_without_temporal_fields_remain_parseable_as_legacy(
+    monitoring_event_factory: Any,
+    monitoring_target: EventIdentity,
+    monitoring_metadata: ValidatedBundleMetadata,
+) -> None:
+    report = _base_report(monitoring_event_factory, monitoring_target, monitoring_metadata)
+    legacy = report.model_dump(mode="json")
+    legacy["performance"].pop("temporal_eligibility_policy")
+    legacy["performance"].pop("evaluation_cutoff")
+    legacy["performance"]["counts"].pop("temporally_ineligible")
+
+    parsed = MonitoringReport.model_validate(legacy)
+    assert parsed.performance.temporal_eligibility_policy == "not_recorded_legacy_v1"
+    assert parsed.performance.evaluation_cutoff is None
+    assert parsed.performance.counts.temporally_ineligible == 0
 
 
 class RecordingAlertSink:
@@ -360,6 +443,65 @@ def test_run_state_never_success_stale_failure_and_restart_persistence(tmp_path:
         is RunState.FAILED
     )
     assert not store.record_success(completed_at=completed, report_id="b" * 64)
+
+
+def test_local_run_state_process_lock_prevents_an_older_attempt_from_winning(
+    tmp_path: Path,
+) -> None:
+    context = get_context("spawn")
+    older_at = datetime(2026, 1, 1, 1, tzinfo=UTC)
+    newer_at = older_at + timedelta(minutes=1)
+    ready = tmp_path / "older-ready"
+    release = tmp_path / "release-older"
+    newer_started = tmp_path / "newer-started"
+    newer_finished = tmp_path / "newer-finished"
+    older = context.Process(
+        target=_delayed_run_status_success,
+        args=(str(tmp_path), older_at.isoformat(), "a" * 64, str(ready), str(release)),
+    )
+    newer = context.Process(
+        target=_record_run_status_success,
+        args=(
+            str(tmp_path),
+            newer_at.isoformat(),
+            "b" * 64,
+            str(newer_started),
+            str(newer_finished),
+        ),
+    )
+    older.start()
+    try:
+        assert _wait_for_marker(ready)
+        newer.start()
+        assert _wait_for_marker(newer_started)
+        # Without a lock, the newer process completes while the older process is paused and the
+        # older replace then wins. With the lock, the newer process waits and commits last.
+        _wait_for_marker(newer_finished, timeout=0.5)
+        release.touch()
+        older.join(timeout=10)
+        newer.join(timeout=10)
+        assert older.exitcode == 0
+        assert newer.exitcode == 0
+    finally:
+        release.touch(exist_ok=True)
+        for process in (older, newer):
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+    persisted = json.loads((tmp_path / "run-status.json").read_text(encoding="utf-8"))
+    assert persisted["latest_attempt_at"] == "2026-01-01T01:01:00Z"
+    assert persisted["latest_report_id"] == "b" * 64
+    assert newer_finished.exists()
+
+
+def test_local_run_state_same_time_updates_are_idempotent_or_conflicting(tmp_path: Path) -> None:
+    store = LocalRunStateStore(tmp_path)
+    completed = datetime(2026, 1, 1, 1, tzinfo=UTC)
+    assert store.record_success(completed_at=completed, report_id="a" * 64)
+    assert not store.record_success(completed_at=completed, report_id="a" * 64)
+    with pytest.raises(ValueError, match="same-time local run-status attempts conflict"):
+        store.record_success(completed_at=completed, report_id="b" * 64)
 
 
 def test_emf_has_only_bounded_dimensions_counts_and_non_delivery_freshness(

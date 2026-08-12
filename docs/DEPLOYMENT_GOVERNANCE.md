@@ -1,5 +1,12 @@
 # Deployment governance modes
 
+> **Current state (updated 12 August 2026):** the paragraph later in this document describing
+> disabled Actions is the immutable pre-activation publication baseline. Phase 10 subsequently
+> configured the exact solo controls, enabled the reviewed workflows, completed the restricted
+> deployment, and destroyed the disposable demo environment. See the
+> [Phase 10 closure](../reports/phase-10.md#post-closure-current-state-superseding-earlier-phase-10-progress-notes).
+> The retained Budget and audit/bootstrap controls remain intentionally outside that teardown.
+
 ModelGuard has two explicit governance modes. They share the same exact GitHub OIDC subject,
 separate plan/deploy roles, permission boundary, immutable release identities, saved-plan checks,
 bounded demo lifetime, and fail-closed behavior. Selecting a mode does not change an IAM subject or
@@ -73,10 +80,11 @@ production approval model. Before it can be selected:
    unattended delete.
 
 The sanitized baseline passed the sealed Publication Audit, was pushed once to the authorized Public
-repository, and is protected by the exact active solo `main` ruleset and the three contract
-environments. Actions remain disabled. Repository variables, the customized OIDC template, matching
-AWS trust, and live deployment are still intentionally absent; those controls remain later Phase 10
-boundaries and must not be inferred from publication readiness.
+repository, and was protected by the exact active solo `main` ruleset and the three contract
+environments. **Historical baseline:** Actions were disabled at that point, and repository
+variables, the customized OIDC template, matching AWS trust, and live deployment were intentionally
+absent. Phase 10 later superseded that activation state, completed the bounded live demonstration,
+and tore down the disposable environment; the baseline remains here to preserve the audit sequence.
 
 ## Upgrade path
 

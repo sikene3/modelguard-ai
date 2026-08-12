@@ -42,6 +42,11 @@ jobs:
           terraform_wrapper: false
       - name: Check Terraform formatting
         run: terraform fmt -check -recursive infrastructure
+      - name: Initialize and validate retained audit bootstrap without a backend
+        run: |
+          terraform -chdir=infrastructure/audit-bootstrap init -backend=false -input=false \
+            -lockfile=readonly
+          terraform -chdir=infrastructure/audit-bootstrap validate
       - name: Initialize and validate bootstrap without a backend
         run: |
           terraform -chdir=infrastructure/bootstrap init -backend=false -input=false \

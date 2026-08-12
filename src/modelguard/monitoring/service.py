@@ -79,6 +79,7 @@ def evaluate_monitoring_snapshots(
     event_snapshot: FrozenRawSnapshot,
     label_snapshot: FrozenRawSnapshot | None,
     window: MonitoringWindow,
+    evaluation_cutoff: datetime,
     config: MonitoringConfig,
 ) -> MonitoringEvaluation:
     """Evaluate already-frozen inputs without reading storage or mutating a model."""
@@ -141,6 +142,7 @@ def evaluate_monitoring_snapshots(
     performance = evaluate_delayed_performance(
         classified.accepted_events,
         label_snapshot=label_snapshot,
+        evaluation_cutoff=evaluation_cutoff,
         locked_threshold=metadata.threshold.threshold,
         held_out_reference_cost_per_event=float(reference_cost),
         config=config,
@@ -194,6 +196,7 @@ def run_local_monitoring(
         event_snapshot=event_snapshot,
         label_snapshot=label_snapshot,
         window=window,
+        evaluation_cutoff=spec.as_of,
         config=policy,
     )
     report = evaluation.report

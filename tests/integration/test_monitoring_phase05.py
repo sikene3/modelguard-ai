@@ -61,8 +61,9 @@ def _events(
     window_end: datetime,
     count: int,
     shifted: bool,
+    seed: int = 8_080,
 ) -> list[PredictionEventV1]:
-    dataset = generate_synthetic_data(count, seed=8_080)
+    dataset = generate_synthetic_data(count, seed=seed)
     feature_rows = [
         _feature_dict(row)
         for row in dataset.loc[:, list(FEATURE_ORDER)].itertuples(index=False, name=None)
@@ -162,7 +163,13 @@ def test_stationary_shifted_tiny_unlabeled_and_labeled_windows_are_independent_a
     )
 
     second_end = first_end + timedelta(hours=1)
-    second_events = _events(bundle, window_end=second_end, count=1_000, shifted=False)
+    second_events = _events(
+        bundle,
+        window_end=second_end,
+        count=1_000,
+        shifted=False,
+        seed=8_081,
+    )
     (event_directory / "second.jsonl").write_bytes(
         b"".join(canonical_json_bytes(event) + b"\n" for event in second_events)
     )

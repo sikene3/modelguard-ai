@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +21,63 @@ from modelguard.training.workflow import (
     load_training_inputs,
     materialize_split_frames,
 )
+
+
+def test_fresh_training_process_disables_mlflow_client_telemetry(
+    repository_root: Path,
+) -> None:
+    environment = os.environ.copy()
+    for name in (
+        "MLFLOW_DISABLE_TELEMETRY",
+        "DO_NOT_TRACK",
+        "PYTEST_CURRENT_TEST",
+        "GITHUB_ACTIONS",
+        "CI",
+        "CIRCLECI",
+        "GITLAB_CI",
+        "JENKINS_URL",
+        "TRAVIS",
+        "TF_BUILD",
+        "BITBUCKET_BUILD_NUMBER",
+        "CODEBUILD_BUILD_ARN",
+        "BUILDKITE",
+        "TEAMCITY_VERSION",
+        "CLOUD_RUN_EXECUTION",
+    ):
+        environment.pop(name, None)
+    probe = """
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from modelguard.training.tracking import create_local_mlflow_client
+from mlflow.telemetry import get_telemetry_client
+
+with tempfile.TemporaryDirectory() as directory:
+    client = create_local_mlflow_client(Path(directory).resolve().as_uri())
+    client.search_experiments()
+print(json.dumps({
+    "disabled": os.environ.get("MLFLOW_DISABLE_TELEMETRY"),
+    "telemetry_client_is_none": get_telemetry_client() is None,
+}))
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "disabled": "true",
+        "telemetry_client_is_none": True,
+    }
 
 
 def test_workflow_sequence_proves_test_scoring_occurs_only_after_threshold_lock(
