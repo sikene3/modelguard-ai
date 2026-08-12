@@ -93,6 +93,11 @@ The resulting drifted report recorded all expected boundary breaches:
 | `velocity_1h` | PSI | 14.9511396541 | 0.10/0.25 | degraded |
 | `prediction_score` | PSI | 20.5327366966 | 0.10/0.25 | degraded |
 
+These immutable values predate the Phase 12 baseline-v2 correction. The aggregate degraded result
+and listed metrics remain historical evidence, but the then-numeric `is_new_device` result is not a
+valid feature-level claim. Current source evaluates an explicit false/true Jensen-Shannon profile,
+and future reproductions require its degraded breach without rewriting this evidence.
+
 ## Immutable incident reports
 
 The two fixed-anchor runs produced matching report IDs and matching JSON/HTML bytes:

@@ -11,12 +11,21 @@ prove.
 > controls are documented in [the Phase 10 report](reports/phase-10.md). This is a compact
 > production-style portfolio project, not a claim of production readiness or high availability.
 
+**Current verification:** the release candidate is reviewed through
+[PR #17](https://github.com/sikene3/modelguard-ai/pull/17). The launch-remediation candidate passed
+628 local tests at 83.75% branch coverage, strict lint/type checks, the hashed dependency audit,
+model verification, and portfolio/manifest validation. The PR is the authoritative status for the
+remote Terraform, repository, and container-security gates. See the
+[Phase 12 audit](reports/phase-12-final-audit.md) for the remaining accepted MVP boundaries.
+
 ## Demo
 
 [![Genuine ModelGuard healthy-to-degraded dashboard transition](portfolio/assets/demo/modelguard-drift.gif)](portfolio/assets/demo/modelguard-demo.mp4)
 
 [Watch the full 4 minute 15 second local demonstration](portfolio/assets/demo/modelguard-demo.mp4).
-The GIF is derived from that same 1280×720 recording. Both show the real loopback application using
+The GIF is derived from that same 1280×720 recording. The full recording is intentionally silent;
+use the timed [demo script](portfolio/demo-script.md) as its narration/caption track. Both show the
+real loopback application using
 synthetic data: verified startup and prediction, a healthy monitoring window, the deterministic
 drift trigger, the live degraded dashboard, and the resulting immutable evidence.
 
@@ -68,7 +77,8 @@ EventBridge Scheduler, SNS, and CloudWatch. The deeper contracts are in
 ## What the demo proves
 
 - A deterministic training workflow persists the split before fitting, calibrates on training data,
-  locks the decision threshold on validation data, and evaluates the synthetic test split once.
+  locks the decision threshold on validation data, and evaluates the synthetic test split once per
+  training invocation after that lock.
 - A seven-file model bundle binds the model, schema, threshold, metrics, baseline, manifest, and
   checksums. Readiness fails closed if verification or trusted loading fails.
 - FastAPI returns a bounded, schema-validated prediction with request ID, risk score, decision,

@@ -248,7 +248,7 @@ def test_every_bundle_object_has_a_measured_task_safe_download_bound(
     monitoring_metadata: ValidatedBundleMetadata,
 ) -> None:
     reviewed_sizes = {
-        "baseline_profile.json": 40_618,
+        "baseline_profile.json": 39_685,
         "checksums.sha256": 491,
         "input_schema.json": 2_279,
         "manifest.json": 20_121,

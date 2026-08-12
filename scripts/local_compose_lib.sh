@@ -147,7 +147,7 @@ modelguard_copy_latest_report() {
 modelguard_copy_latest_html() {
   local output_path="$1"
   modelguard_compose exec -T dashboard python \
-    -c 'import os,sys; from pathlib import Path; from modelguard.monitoring.report import MonitoringReport; root=Path(os.environ["LOCAL_REPORT_DIR"]); report=MonitoringReport.model_validate_json((root/"latest.json").read_bytes()); history=root/"history"/report.window.end.strftime("%Y%m%dT%H%M%SZ")/f"{report.report_id}.html"; sys.stdout.buffer.write(history.read_bytes())' \
+    -c 'import os,sys; from pathlib import Path; from modelguard.core.serialization import validate_strict_json_model; from modelguard.monitoring.report import MonitoringReport; root=Path(os.environ["LOCAL_REPORT_DIR"]); report=validate_strict_json_model((root/"latest.json").read_bytes(), MonitoringReport); history=root/"history"/report.window.end.strftime("%Y%m%dT%H%M%SZ")/f"{report.report_id}.html"; sys.stdout.buffer.write(history.read_bytes())' \
     >"$output_path"
 }
 

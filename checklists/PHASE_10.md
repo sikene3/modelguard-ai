@@ -46,7 +46,7 @@
       model/image artifacts and their source-bound release evidence passed before activation
 - [x] AWS identity confirmed with the browser-authenticated non-root operator profile in `us-east-1`
 - [x] Account/Region/backend/tags/expiry/access-mode guardrails confirmed; ingress was exactly the
-      verified runner address `41.68.210.73/32`, never world-open
+      reviewed runner `/32`, never world-open; the raw address is omitted from the current tree
 - [x] Manual USD 10 budget exists and passes the value-free read-only preflight
 - [x] Firehose account readiness passes without `SubscriptionRequiredException`
 - [x] Retained CloudTrail design reviewed/applied; encrypted state, backup, and restore verified

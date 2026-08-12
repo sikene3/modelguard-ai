@@ -22,7 +22,8 @@ ModelGuard AI is a compact production-style MLOps reliability system that trains
 - Persisted, hashed, stratified train/validation/test split created before fitting.
 - Scikit-learn preprocessing and classification pipeline.
 - MLflow experiment tracking in local development.
-- Cross-fitted calibration on train only; validation-only cost threshold; test evaluated once.
+- Cross-fitted calibration on train only; validation-only cost threshold; held-out test evaluated
+  once per training invocation after the threshold is locked.
 - Metrics: average precision versus prevalence/lift, ROC-AUC, Brier, log loss, reliability bins,
   precision, recall, F1, confusion matrix, selected threshold, and synthetic cost.
 - Versioned model bundle containing model, schema, metrics, threshold, and baseline profile.
@@ -53,7 +54,8 @@ ModelGuard AI is a compact production-style MLOps reliability system that trains
 - Numeric drift using Population Stability Index (PSI), with optional KS statistic.
 - Categorical drift using Jensen-Shannon distance (square root of base-2 divergence).
 - Prediction score/decision distribution drift.
-- Missingness and schema violations.
+- Accepted-event missingness plus schema violations; under the strict v1 event contract a missing
+  required feature is a schema rejection rather than a per-feature missingness attribution.
 - Produces JSON and HTML reports.
 - Separate states for monitor run, data quality, drift, and label-backed performance.
 - UTC half-open event-time windows, a finalization grace, frozen input snapshots, event-ID

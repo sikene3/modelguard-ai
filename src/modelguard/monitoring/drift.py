@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import Field
 
 from modelguard.core.serialization import StrictArtifactModel
+from modelguard.data.schema import BOOLEAN_FEATURES
 from modelguard.inference.events import PredictionEventV1
 from modelguard.monitoring.config import MonitoringConfig
 from modelguard.monitoring.state import DriftState
@@ -222,6 +223,17 @@ def _numeric_counts(values: Sequence[object], profile: NumericFeatureProfile) ->
     return counts
 
 
+def _boolean_counts(values: Sequence[object]) -> list[int] | None:
+    counts = [0, 0]
+    for value in values:
+        if value is None:
+            continue
+        if type(value) is not bool:
+            return None
+        counts[int(value)] += 1
+    return counts
+
+
 def evaluate_missingness_signal(
     feature: str,
     values: Sequence[object],
@@ -256,8 +268,42 @@ def evaluate_drift(
     signals: list[DriftSignal] = []
     missingness: list[MissingnessSignal] = []
     for name in config.required_numeric_features:
-        numeric_profile = baseline.numeric_features[name]
         values = [getattr(event.features, name) for event in events]
+        if name in BOOLEAN_FEATURES:
+            boolean_profile = baseline.boolean_features[name]
+            boolean_universe: list[str] = list(boolean_profile.universe)
+            baseline_values = [
+                float(boolean_profile.proportions[key].value or 0.0) for key in boolean_universe
+            ]
+            current_counts = _boolean_counts(values)
+            if current_counts is None:
+                signal = DriftSignal(
+                    name=name,
+                    kind="categorical_js_distance",
+                    value=None,
+                    state=DriftState.UNKNOWN,
+                    reason="invalid_current_boolean_value",
+                    baseline_proportions=baseline_values,
+                    current_proportions=[],
+                    universe=boolean_universe,
+                )
+            else:
+                signal = evaluate_distribution_signal(
+                    name=name,
+                    kind="categorical_js_distance",
+                    baseline=baseline_values,
+                    current_counts=current_counts,
+                    universe=boolean_universe,
+                    config=config,
+                    constant=boolean_profile.constant,
+                )
+            signals.append(signal)
+            baseline_missingness = float(boolean_profile.missingness.proportion.value or 0.0)
+            missingness.append(
+                evaluate_missingness_signal(name, values, baseline_missingness, config)
+            )
+            continue
+        numeric_profile = baseline.numeric_features[name]
         current_counts = _numeric_counts(values, numeric_profile)
         baseline_values = [float(item.proportion.value or 0.0) for item in numeric_profile.bins]
         if current_counts is None:

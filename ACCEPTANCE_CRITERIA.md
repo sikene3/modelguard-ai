@@ -10,7 +10,7 @@ The MVP is portfolio-ready only when every required criterion below is evidenced
 - [x] Schema and data-quality checks fail clearly on malformed data.
 - [x] Training uses a single sklearn Pipeline including preprocessing.
 - [x] Split is persisted before fitting; calibration is train-only; threshold is validation-only;
-      the held-out test is evaluated once.
+      the held-out test is evaluated once per training invocation after threshold lock.
 - [x] Calibration folds/method/ensemble, threshold grid/tie policy, reliability bins, and undefined
       metric serialization are explicit and deterministic rather than library defaults.
 - [x] Average precision is compared with prevalence; calibration/cost evidence is reported.
@@ -162,8 +162,8 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
       native-service or bounded EMF source, and scheduler submission is not treated as monitor
       completion. All 12 live alarm/source contracts were inventoried before teardown.
 - [x] The exact saved `terraform destroy` plan removed the disposable demo environment. Terraform
-      state and every live service namespace are empty; only validated nonbillable provider/tag
-      metadata and the required retained Budget remain.
+      state was verified empty and every explicitly inventoried demo service namespace was empty;
+      only validated nonbillable provider/tag metadata and the required retained Budget remained.
 
 ## CI/CD
 
@@ -188,7 +188,8 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 - [x] Each deployable Git-SHA image is built/scanned once and promoted by digest without rebuild;
       actions/base images are pinned.
 - [x] The replacement restricted runner passed live/ready/version/prediction and dashboard health
-      from the exact `41.68.210.73/32` ingress rule.
+      from the exact reviewed runner `/32` ingress rule; the raw address is excluded from the
+      current publication tree.
 - [x] HTTPS smoke keeps the bearer token out of curl argv/environment and persisted evidence by
       validating it and supplying the Authorization header only through anonymous config stdin.
 - [x] Failed deployment does not silently remain marked successful and has explicit protected ECS

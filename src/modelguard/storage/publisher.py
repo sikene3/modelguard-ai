@@ -19,6 +19,7 @@ from modelguard.core.serialization import (
     StrictArtifactModel,
     canonical_json_bytes,
     parse_strict_json_bytes,
+    validate_strict_json_model,
 )
 from modelguard.monitoring.events import target_identity_from_bundle
 from modelguard.storage.versioned_bundle import (
@@ -559,11 +560,11 @@ class CreateOnlyModelBundlePublisher:
                 raise ValueError("pointer must be a JSON object")
             schema = parsed.get("pointer_schema_version")
             if schema == "modelguard.unset.v1":
-                UnsetModelPointer.model_validate(parsed)
+                validate_strict_json_model(value.encode("utf-8"), UnsetModelPointer)
                 return
             if schema != "modelguard.active-monitor-target.v1":
                 raise ValueError("pointer schema is not approved")
-            pointer = ActiveMonitoringPointer.model_validate(parsed)
+            pointer = validate_strict_json_model(value.encode("utf-8"), ActiveMonitoringPointer)
             model_version = pointer.target_identity.model_version
             validate_pointer_scope(
                 pointer,

@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from modelguard.core.serialization import load_strict_json
+from modelguard.core.serialization import load_strict_json, validate_strict_json_model
 from modelguard.monitoring.report import MonitoringReport
 
 
@@ -134,7 +134,7 @@ def validate_scenario(
 ) -> dict[str, Any]:
     traffic = _object(traffic_path)
     monitor = _object(monitor_path)
-    report = MonitoringReport.model_validate_json(report_path.read_bytes())
+    report = validate_strict_json_model(report_path.read_bytes(), MonitoringReport)
     _require(traffic.get("status") == "passed", "traffic did not pass")
     _require(traffic.get("scenario") == expected_scenario, "traffic scenario did not match")
     expected_traffic_count = expected_accepted if expected_traffic is None else expected_traffic

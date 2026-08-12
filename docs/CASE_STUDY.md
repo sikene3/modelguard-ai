@@ -33,7 +33,8 @@ reconciled window, preserve incident evidence, and keep performance conclusions 
 - Core behavior had to run locally without AWS credentials or hidden network calls in tests.
 - The AWS environment had to be restricted, cost-aware, staged, reviewable, and destroyable.
 - Model evaluation needed explicit leakage boundaries: persisted split before fitting, calibration
-  on training only, threshold selection on validation only, and one held-out test evaluation.
+  on training only, threshold selection on validation only, and one held-out test evaluation per
+  training invocation after threshold lock.
 - Monitoring needed deterministic event-time windows, identity filtering, deduplication, exact
   record reconciliation, and honest small-sample/label states.
 - Public claims had to be backed by tracked reports, tests, commands, or real captures.
@@ -87,8 +88,8 @@ stale or missing reports never silently render as healthy.
 The training workflow generates 5,000 synthetic rows from committed configuration, validates them,
 persists a hashed stratified split, fits a scikit-learn preprocessing/classification pipeline,
 cross-fits calibration on training rows, locks a synthetic 10:1 false-negative cost threshold on
-validation, evaluates the held-out test once, logs to local MLflow, and publishes the immutable
-bundle and training-reference baseline.
+validation, evaluates the held-out test once per training invocation after that lock, logs to local
+MLflow, and publishes the immutable bundle and training-reference baseline.
 
 The canonical synthetic test result is deliberately not polished: average precision was about
 0.408 against 0.188 prevalence (about 2.17× lift), while the locked cost rule selected a low

@@ -148,9 +148,10 @@ window. The shifted fixture applies these explicit transformations:
 
 The harness requires degraded-boundary breaches for PSI on `amount`, `velocity_1h`,
 `distance_from_home_km`, `device_risk_score`, `merchant_risk_score`, and `prediction_score`; it also
-requires degraded Jensen-Shannon distance for `country_code` and `device_type`. The locked-decision
-Jensen-Shannon signal must cross the warning boundary while remaining below degraded. Exact values
-are recorded under `expected_breached_metrics` in each drifted summary.
+requires degraded Jensen-Shannon distance for the explicit false/true `is_new_device` profile,
+`country_code`, and `device_type`. The locked-decision Jensen-Shannon signal must cross the warning
+boundary while remaining below degraded. Exact values are recorded under
+`expected_breached_metrics` in each drifted summary.
 
 ## Evidence paths
 

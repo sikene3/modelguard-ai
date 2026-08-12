@@ -32,7 +32,11 @@ from sklearn.metrics import (
 )
 
 from modelguard.core.hashing import HashRecord, canonical_json_hash, sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import (
+    StrictArtifactModel,
+    canonical_json_bytes,
+    validate_strict_json_model,
+)
 from modelguard.inference.events import PredictionEventV1
 from modelguard.monitoring.config import PERFORMANCE_SCOPE_WORDING, MonitoringConfig
 from modelguard.monitoring.events import FrozenRawSnapshot, parse_strict_json_record
@@ -71,6 +75,7 @@ class DelayedLabelV1(StrictLabelModel):
 class LabelCounts(StrictArtifactModel):
     raw: int = Field(ge=0)
     rejected: int = Field(ge=0)
+    temporally_ineligible: int = Field(default=0, ge=0)
     duplicate: int = Field(ge=0)
     conflicting: int = Field(ge=0)
     unique_valid: int = Field(ge=0)
@@ -83,7 +88,13 @@ class LabelCounts(StrictArtifactModel):
 
     @model_validator(mode="after")
     def reconcile(self) -> LabelCounts:
-        if self.raw != self.rejected + self.duplicate + self.conflicting + self.unique_valid:
+        if self.raw != (
+            self.rejected
+            + self.temporally_ineligible
+            + self.duplicate
+            + self.conflicting
+            + self.unique_valid
+        ):
             raise ValueError("raw labels do not reconcile")
         if self.unique_valid != self.joined + self.orphan:
             raise ValueError("unique valid labels do not reconcile to joined plus orphan")
@@ -127,6 +138,12 @@ class PerformanceEvaluation(StrictArtifactModel):
     reason: str
     label_source_configured: bool
     label_schema_version: Literal["modelguard.label.v1"]
+    temporal_eligibility_policy: Literal[
+        "not_recorded_legacy_v1",
+        "not_applicable",
+        "event_time_to_evaluation_cutoff_inclusive",
+    ] = "not_recorded_legacy_v1"
+    evaluation_cutoff: AwareDatetime | None = None
     coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     counts: LabelCounts
     adequacy_requirements: dict[str, int | float]
@@ -138,6 +155,29 @@ class PerformanceEvaluation(StrictArtifactModel):
     limitation: Literal[
         "partial-label selection bias may make the labeled subset unrepresentative"
     ] = "partial-label selection bias may make the labeled subset unrepresentative"
+
+    @field_validator("evaluation_cutoff")
+    @classmethod
+    def require_utc_cutoff(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.utcoffset() != timedelta(0):
+            raise ValueError("evaluation_cutoff must use UTC")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def validate_temporal_policy(self) -> PerformanceEvaluation:
+        if self.temporal_eligibility_policy == "not_recorded_legacy_v1":
+            if self.evaluation_cutoff is not None:
+                raise ValueError("legacy temporal policy cannot carry an evaluation cutoff")
+            return self
+        if self.temporal_eligibility_policy == "not_applicable":
+            if self.label_source_configured or self.evaluation_cutoff is not None:
+                raise ValueError("unconfigured label sources must use the not-applicable policy")
+            return self
+        if not self.label_source_configured or self.evaluation_cutoff is None:
+            raise ValueError("configured label sources require an explicit evaluation cutoff")
+        return self
 
 
 @dataclass(frozen=True)
@@ -168,6 +208,7 @@ def _unknown_or_pending_evaluation(
     state: PerformanceState,
     reason: str,
     configured: bool,
+    evaluation_cutoff: datetime | None,
     accepted_count: int,
     counts: LabelCounts | None,
     coverage: float | None,
@@ -177,6 +218,7 @@ def _unknown_or_pending_evaluation(
     actual_counts = counts or LabelCounts(
         raw=0,
         rejected=0,
+        temporally_ineligible=0,
         duplicate=0,
         conflicting=0,
         unique_valid=0,
@@ -192,6 +234,10 @@ def _unknown_or_pending_evaluation(
         reason=reason,
         label_source_configured=configured,
         label_schema_version=config.label_schema_version,
+        temporal_eligibility_policy=(
+            "event_time_to_evaluation_cutoff_inclusive" if configured else "not_applicable"
+        ),
+        evaluation_cutoff=evaluation_cutoff,
         coverage=coverage,
         counts=actual_counts,
         adequacy_requirements=_requirements(config),
@@ -204,11 +250,16 @@ def evaluate_delayed_performance(
     events: tuple[PredictionEventV1, ...],
     *,
     label_snapshot: FrozenRawSnapshot | None,
+    evaluation_cutoff: datetime,
     locked_threshold: float,
     held_out_reference_cost_per_event: float,
     config: MonitoringConfig,
 ) -> EvaluatedPerformance:
     """Join strict labels and compute metrics only after every adequacy boundary passes."""
+
+    if evaluation_cutoff.utcoffset() != timedelta(0):
+        raise ValueError("evaluation_cutoff must use UTC")
+    normalized_cutoff = evaluation_cutoff.astimezone(UTC)
 
     if label_snapshot is None:
         return EvaluatedPerformance(
@@ -216,6 +267,7 @@ def evaluate_delayed_performance(
                 state=PerformanceState.UNKNOWN,
                 reason="no_label_source_configured",
                 configured=False,
+                evaluation_cutoff=None,
                 accepted_count=len(events),
                 counts=None,
                 coverage=None,
@@ -233,7 +285,9 @@ def evaluate_delayed_performance(
         raise ValueError("locked threshold must be finite in [0, 1]")
 
     groups: dict[str, list[tuple[DelayedLabelV1, str]]] = defaultdict(list)
+    event_by_id = {str(event.event_id): event for event in events}
     rejected = 0
+    temporally_ineligible = 0
     duplicate = 0
     conflicting = 0
     unknown_versions = 0
@@ -256,13 +310,22 @@ def evaluate_delayed_performance(
         ):
             unknown_versions += 1
         try:
-            label = DelayedLabelV1.model_validate_json(canonical_json_bytes(parsed))
+            label = validate_strict_json_model(canonical_json_bytes(parsed), DelayedLabelV1)
         except ValueError:
             rejected += 1
             schema_fault = True
             classified_digests.append(f"rejected:{fallback_digest}")
             continue
         digest = sha256_bytes(canonical_json_bytes(label))
+        event = event_by_id.get(str(label.event_id))
+        if label.labeled_at > normalized_cutoff:
+            temporally_ineligible += 1
+            classified_digests.append(f"after_cutoff:{digest}")
+            continue
+        if event is not None and label.labeled_at < event.event_timestamp:
+            temporally_ineligible += 1
+            classified_digests.append(f"before_event:{digest}")
+            continue
         groups[str(label.event_id)].append((label, digest))
 
     unique_labels: dict[str, DelayedLabelV1] = {}
@@ -277,7 +340,6 @@ def evaluate_delayed_performance(
             conflicting += len(group)
             classified_digests.extend(f"conflicting:{digest}" for _, digest in group)
 
-    event_by_id = {str(event.event_id): event for event in events}
     joined_ids = sorted(set(event_by_id).intersection(unique_labels))
     orphan_ids = sorted(set(unique_labels) - set(event_by_id))
     for event_id in joined_ids:
@@ -295,6 +357,7 @@ def evaluate_delayed_performance(
     counts = LabelCounts(
         raw=len(label_snapshot.records),
         rejected=rejected,
+        temporally_ineligible=temporally_ineligible,
         duplicate=duplicate,
         conflicting=conflicting,
         unique_valid=len(unique_labels),
@@ -315,6 +378,7 @@ def evaluate_delayed_performance(
             state=PerformanceState.UNKNOWN,
             reason="unknown_label_schema_version",
             configured=True,
+            evaluation_cutoff=normalized_cutoff,
             accepted_count=accepted_count,
             counts=counts,
             coverage=coverage,
@@ -327,6 +391,7 @@ def evaluate_delayed_performance(
             state=PerformanceState.UNKNOWN,
             reason="conflicting_label_group",
             configured=True,
+            evaluation_cutoff=normalized_cutoff,
             accepted_count=accepted_count,
             counts=counts,
             coverage=coverage,
@@ -339,6 +404,20 @@ def evaluate_delayed_performance(
             state=PerformanceState.UNKNOWN,
             reason="invalid_label_schema",
             configured=True,
+            evaluation_cutoff=normalized_cutoff,
+            accepted_count=accepted_count,
+            counts=counts,
+            coverage=coverage,
+            label_hash=label_hash,
+            config=config,
+        )
+        return EvaluatedPerformance(evaluation, tuple(sorted(classified_digests)))
+    if temporally_ineligible:
+        evaluation = _unknown_or_pending_evaluation(
+            state=PerformanceState.UNKNOWN,
+            reason="temporally_ineligible_label",
+            configured=True,
+            evaluation_cutoff=normalized_cutoff,
             accepted_count=accepted_count,
             counts=counts,
             coverage=coverage,
@@ -358,6 +437,7 @@ def evaluate_delayed_performance(
             state=PerformanceState.PENDING_LABELS,
             reason="configured_label_source_below_adequacy",
             configured=True,
+            evaluation_cutoff=normalized_cutoff,
             accepted_count=accepted_count,
             counts=counts,
             coverage=coverage,
@@ -413,6 +493,8 @@ def evaluate_delayed_performance(
         reason="adequate_labels_cost_delta_evaluated",
         label_source_configured=True,
         label_schema_version=config.label_schema_version,
+        temporal_eligibility_policy="event_time_to_evaluation_cutoff_inclusive",
+        evaluation_cutoff=normalized_cutoff,
         coverage=coverage,
         counts=counts,
         adequacy_requirements=_requirements(config),

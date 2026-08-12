@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import pytest
@@ -11,6 +13,7 @@ from modelguard.monitoring.config import MonitoringConfig, monitoring_config_has
 from modelguard.monitoring.drift import (
     categorical_counts,
     evaluate_distribution_signal,
+    evaluate_drift,
     evaluate_missingness_signal,
     jensen_shannon_distance,
     metric_severity,
@@ -181,3 +184,41 @@ def test_monitoring_configuration_hash_covers_result_policy_not_source_formattin
     assert monitoring_config_hash(first) == monitoring_config_hash(second)
     assert monitoring_config_hash(first).digest != monitoring_config_hash(changed).digest
     assert np.isfinite(float(int(monitoring_config_hash(first).digest[:8], 16)))
+
+
+def test_boolean_feature_uses_false_true_js_and_detects_both_extreme_shifts(
+    monitoring_event_factory: Any,
+    monitoring_metadata: Any,
+    valid_prediction_payload: dict[str, object],
+) -> None:
+    profile = monitoring_metadata.baseline.boolean_features["is_new_device"]
+    total = 500
+    true_count = round(total * float(profile.proportions["true"].value or 0.0))
+
+    def signal(values: list[bool]) -> Any:
+        events = [
+            monitoring_event_factory(
+                index,
+                datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+                features={**valid_prediction_payload, "is_new_device": value},
+            )
+            for index, value in enumerate(values)
+        ]
+        evaluation = evaluate_drift(
+            events,
+            monitoring_metadata.baseline,
+            MonitoringConfig(),
+        )
+        return next(item for item in evaluation.signals if item.name == "is_new_device")
+
+    baseline_like = signal([False] * (total - true_count) + [True] * true_count)
+    all_false = signal([False] * total)
+    all_true = signal([True] * total)
+
+    assert baseline_like.kind == "categorical_js_distance"
+    assert baseline_like.universe == ["false", "true"]
+    assert baseline_like.state is DriftState.HEALTHY
+    assert all_false.state is DriftState.DEGRADED
+    assert all_true.state is DriftState.DEGRADED
+    assert all_false.value is not None and all_false.value >= 0.20
+    assert all_true.value is not None and all_true.value >= 0.20

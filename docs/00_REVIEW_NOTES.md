@@ -12,7 +12,8 @@ built.
 ## Most important gaps closed
 
 1. Prevented data leakage by requiring a fixed split before training, calibration within training
-   data, threshold selection on validation data, and one-time held-out test evaluation.
+   data, threshold selection on validation data, and one held-out test evaluation per training
+   invocation after threshold lock.
 2. Defined score and metric semantics, including average precision versus prevalence, calibration,
    the synthetic cost rule, lineage, and bundle verification before joblib loading.
 3. Separated run, data-quality, drift, and label-backed performance states instead of using a

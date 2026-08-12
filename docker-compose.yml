@@ -1,7 +1,7 @@
 x-build-args: &build-args
   PYTHON_BASE_IMAGE: python:3.12.13-alpine3.23@sha256:601d3d3797e90e2534782e69c85fafb7971b43f24c7b1b079b7e48dd435e458d
   SOURCE_REVISION: ${SOURCE_REVISION:-local-uncommitted}
-  UV_LOCK_SHA256: ${UV_LOCK_SHA256:-338de57a75920c0b2fc2d17a6ae9e27904409d2b0437856ed6add01c3fc3736b}
+  UV_LOCK_SHA256: ${UV_LOCK_SHA256:-4b0a516bcb952e351077dddb910296a0394ce2b13841719b92d1750d278d8cf4}
 
 x-runtime-security: &runtime-security
   user: "10001:10001"

@@ -28,7 +28,8 @@ Core specs, `AGENTS.md`, `checklists/PHASE_02.md`, ADR-002, ADR-004, and ADR-006
   are `[0.0,0.1), ... [0.8,0.9), [0.9,1.0]` and store count/mean score/observed prevalence. Empty or
   zero-denominator results serialize as JSON `null` with numerator, denominator, and reason—never
   NaN/Infinity. Namespace validation threshold-selection evidence separately; public headline
-  evaluation metrics are the one-time held-out-test results, not training metrics.
+  evaluation metrics are the once-per-training-invocation held-out-test results after threshold
+  lock, not training metrics.
 
 ## Required artifacts
 - Dataset/config/quality manifests and persisted split assignments.

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from scripts.phase11_demo import (
+    EXPECTED_DEGRADED_SIGNALS,
     DemoEvidenceError,
     LocalModelPointer,
     _exercise_sink_outage_async,
@@ -39,6 +40,10 @@ def test_phase11_windows_are_explicit_adjacent_and_finalized() -> None:
         window.as_of == window.end + timedelta(minutes=10)
         for window in (insufficient, baseline, drifted)
     )
+
+
+def test_phase11_drift_contract_requires_the_boolean_signal_to_degrade() -> None:
+    assert ("categorical_js_distance", "is_new_device") in EXPECTED_DEGRADED_SIGNALS
 
 
 def test_phase11_window_builder_rejects_non_utc_anchor() -> None:

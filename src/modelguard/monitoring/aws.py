@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import gzip
+import zlib
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any, Protocol, cast
 
 from botocore.exceptions import BotoCoreError, ClientError
 
 from modelguard.core.hashing import sha256_bytes
-from modelguard.core.serialization import canonical_json_bytes
+from modelguard.core.serialization import canonical_json_bytes, validate_strict_json_model
 from modelguard.monitoring.events import (
     EventIdentity,
     FrozenRawSnapshot,
+    MonitoringWindow,
     freeze_raw_payloads,
     target_identity_from_bundle,
 )
@@ -94,67 +96,104 @@ class S3ObjectSnapshot:
 
 
 PREDICTION_OBJECT_SUFFIXES = (".jsonl.gz",)
+MAXIMUM_PREDICTION_HOUR_PREFIXES = 100
+
+
+def prediction_arrival_hour_prefixes(
+    window: MonitoringWindow,
+    *,
+    root_prefix: str = "predictions/",
+    maximum_prefixes: int = MAXIMUM_PREDICTION_HOUR_PREFIXES,
+) -> tuple[str, ...]:
+    """Return finite UTC arrival-hour prefixes covering the event window through finalization."""
+
+    if (
+        not root_prefix
+        or root_prefix.startswith("/")
+        or not root_prefix.endswith("/")
+        or "//" in root_prefix
+        or any(ord(character) < 32 for character in root_prefix)
+        or maximum_prefixes < 1
+    ):
+        raise ValueError("prediction arrival-prefix configuration is invalid")
+    start = window.start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    final_arrival = window.eligible_at.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    if final_arrival < start:
+        raise ValueError("prediction arrival-prefix window is invalid")
+    count = int((final_arrival - start).total_seconds() // 3_600) + 1
+    if count > maximum_prefixes:
+        raise ValueError("prediction arrival-prefix window exceeds the bounded hour limit")
+    return tuple(
+        f"{root_prefix}year={hour:%Y}/month={hour:%m}/day={hour:%d}/hour={hour:%H}/"
+        for hour in (start + timedelta(hours=index) for index in range(count))
+    )
 
 
 def _enumerate_s3_objects(
     client: S3Client,
     *,
     bucket: str,
-    prefix: str,
+    prefixes: tuple[str, ...],
     maximum_objects: int,
     maximum_pages: int = 100,
     maximum_entries: int = 50_000,
 ) -> list[str]:
-    if not prefix or maximum_objects < 1 or maximum_pages < 1 or maximum_entries < 1:
-        raise ValueError("S3 prediction enumeration bounds and prefix must be positive")
-    keys: list[str] = []
-    token: str | None = None
-    seen_tokens: set[str] = set()
+    if (
+        not prefixes
+        or len(set(prefixes)) != len(prefixes)
+        or any(not prefix or not prefix.endswith("/") for prefix in prefixes)
+        or maximum_objects < 1
+        or maximum_pages < 1
+        or maximum_entries < 1
+    ):
+        raise ValueError("S3 prediction enumeration bounds and prefixes must be valid")
+    keys: set[str] = set()
     page_count = 0
     entry_count = 0
-    while True:
-        page_count += 1
-        if page_count > maximum_pages:
-            raise ValueError("S3 prediction snapshot exceeds the pagination limit")
-        request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1_000}
-        if token is not None:
-            request["ContinuationToken"] = token
-        response = client.list_objects_v2(**request)
-        contents = response.get("Contents", [])
-        if not isinstance(contents, list):
-            raise ValueError("S3 listing Contents must be a list")
-        for item in contents:
-            if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
-                raise ValueError("S3 listing contains an invalid key entry")
-            key = item["Key"]
-            entry_count += 1
-            if entry_count > maximum_entries:
-                raise ValueError("S3 prediction snapshot exceeds the listing-entry limit")
-            if not key.startswith(prefix):
-                raise ValueError("S3 listing returned a key outside the requested prefix")
-            if key.endswith(PREDICTION_OBJECT_SUFFIXES):
-                keys.append(key)
-                if len(keys) > maximum_objects:
-                    raise ValueError("S3 prediction snapshot exceeds the object-count limit")
-        if "IsTruncated" not in response:
-            raise ValueError("S3 listing lacks a truncation marker")
-        is_truncated = response["IsTruncated"]
-        if not isinstance(is_truncated, bool):
-            raise ValueError("S3 listing truncation marker must be a boolean")
-        if not is_truncated:
-            break
-        next_token = response.get("NextContinuationToken")
-        if (
-            not isinstance(next_token, str)
-            or not next_token
-            or next_token == token
-            or next_token in seen_tokens
-        ):
-            raise ValueError("S3 listing pagination token is invalid")
-        seen_tokens.add(next_token)
-        token = next_token
-    if len(keys) != len(set(keys)):
-        raise ValueError("S3 snapshot enumeration returned duplicate keys")
+    for prefix in prefixes:
+        token: str | None = None
+        seen_tokens: set[str] = set()
+        while True:
+            page_count += 1
+            if page_count > maximum_pages:
+                raise ValueError("S3 prediction snapshot exceeds the pagination limit")
+            request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1_000}
+            if token is not None:
+                request["ContinuationToken"] = token
+            response = client.list_objects_v2(**request)
+            contents = response.get("Contents", [])
+            if not isinstance(contents, list):
+                raise ValueError("S3 listing Contents must be a list")
+            for item in contents:
+                if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
+                    raise ValueError("S3 listing contains an invalid key entry")
+                key = item["Key"]
+                entry_count += 1
+                if entry_count > maximum_entries:
+                    raise ValueError("S3 prediction snapshot exceeds the listing-entry limit")
+                if not key.startswith(prefix):
+                    raise ValueError("S3 listing returned a key outside the requested prefix")
+                if key.endswith(PREDICTION_OBJECT_SUFFIXES):
+                    keys.add(key)
+                    if len(keys) > maximum_objects:
+                        raise ValueError("S3 prediction snapshot exceeds the object-count limit")
+            if "IsTruncated" not in response:
+                raise ValueError("S3 listing lacks a truncation marker")
+            is_truncated = response["IsTruncated"]
+            if not isinstance(is_truncated, bool):
+                raise ValueError("S3 listing truncation marker must be a boolean")
+            if not is_truncated:
+                break
+            next_token = response.get("NextContinuationToken")
+            if (
+                not isinstance(next_token, str)
+                or not next_token
+                or next_token == token
+                or next_token in seen_tokens
+            ):
+                raise ValueError("S3 listing pagination token is invalid")
+            seen_tokens.add(next_token)
+            token = next_token
     return sorted(keys)
 
 
@@ -162,7 +201,7 @@ def freeze_s3_raw_snapshot(
     client: S3Client,
     *,
     bucket: str,
-    prefix: str,
+    prefixes: tuple[str, ...],
     maximum_objects: int = 10_000,
     maximum_object_bytes: int = 64 * 1024 * 1024,
     maximum_snapshot_bytes: int = 256 * 1024 * 1024,
@@ -174,7 +213,7 @@ def freeze_s3_raw_snapshot(
     for key in _enumerate_s3_objects(
         client,
         bucket=bucket,
-        prefix=prefix,
+        prefixes=prefixes,
         maximum_objects=maximum_objects,
     ):
         metadata = client.head_object(Bucket=bucket, Key=key)
@@ -218,7 +257,7 @@ def freeze_s3_raw_snapshot(
             try:
                 with gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as compressed:
                     payload = compressed.read(maximum_object_bytes + 1)
-            except (gzip.BadGzipFile, EOFError) as error:
+            except (gzip.BadGzipFile, EOFError, zlib.error) as error:
                 raise ValueError("S3 prediction object is not valid GZIP JSONL") from error
             if len(payload) > maximum_object_bytes:
                 raise ValueError("decompressed prediction object exceeds the size limit")
@@ -396,7 +435,9 @@ class S3ReportStore:
         for _ in range(5):
             current = self._get(latest_key)
             previous = (
-                MonitoringReport.model_validate_json(current[0]) if current is not None else None
+                validate_strict_json_model(current[0], MonitoringReport)
+                if current is not None
+                else None
             )
             if previous is not None and report.window.end <= previous.window.end:
                 latest_decided = True
@@ -480,7 +521,7 @@ class S3RunStateStore:
         etag = response.get("ETag")
         if not isinstance(etag, str) or not etag:
             raise ValueError("S3 run-status object lacks ETag")
-        return RunStatusArtifact.model_validate_json(_body_bytes(response)), etag
+        return validate_strict_json_model(_body_bytes(response), RunStatusArtifact), etag
 
     def _write_if_current(self, status: RunStatusArtifact) -> bool:
         for _ in range(5):

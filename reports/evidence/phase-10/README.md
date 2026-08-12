@@ -1,6 +1,13 @@
-# Phase 10 local-readiness evidence boundary
+# Phase 10 evidence boundary
 
-This directory records only the version-controlled description of the Phase 10 code-only evidence.
+> Historical evidence note (clarified 12 August 2026): Phase 10 did proceed through an authorized
+> live activation and teardown, as recorded in `reports/phase-10.md`. The sensitive source, plan,
+> receipt, inventory, and state-zero evidence was retained externally under encrypted, private
+> controls and is not independently reproducible from this public tree. The repository contains the
+> sanitized narrative and published digests only; it must not be treated as a standalone
+> machine-checkable live attestation. No demo deployment is currently active.
+
+This directory records only the version-controlled, public-safe description of Phase 10 evidence.
 No AWS response, GitHub response, Terraform plan or state, credential material, subscriber endpoint,
 raw scanner output, vulnerability database, container archive, or generated runtime artifact belongs
 here.
@@ -26,7 +33,8 @@ sealed verifier with AppArmor, built-in seccomp, and genuine `no-new-privileges`
 Compose smoke/demo/E2E matrix. Its generated evidence remains ignored locally and is intentionally
 not copied into this version-controlled directory.
 
-Local image-ID evidence does not by itself set Terraform `runtime_contract_verified=true`; a future
-authorized activation must supply a matching clean-source immutable-registry-digest record. Live ECS,
-IAM, S3, SSM, CloudWatch, Logs, SNS, Firehose, OIDC, budget, CloudTrail, Terraform, and teardown
-evidence remains absent and must not be inferred from local tests.
+Local image-ID evidence does not by itself set Terraform `runtime_contract_verified=true`; any
+future authorized activation must supply a matching clean-source immutable-registry-digest record.
+Historical live ECS, IAM, S3, SSM, CloudWatch, Logs, SNS, Firehose, OIDC, budget, CloudTrail,
+Terraform, and teardown acceptance rests on the externally retained private attestation described
+above, not on local tests or files in this directory.

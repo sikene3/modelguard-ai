@@ -14,6 +14,7 @@ import pytest
 from botocore.exceptions import ClientError
 from pytest import CaptureFixture, MonkeyPatch
 
+import modelguard.monitoring.aws_run as monitoring_aws_run
 import modelguard.monitoring.cli as monitoring_cli
 from modelguard.core.config import AppEnvironment, EventSink, RuntimeComponent, Settings
 from modelguard.core.serialization import canonical_json_bytes
@@ -87,13 +88,18 @@ class IntegratedS3:
         fail_run_status: bool = False,
         prediction_version_override: str | None = None,
         truncate_prediction: bool = False,
+        corrupt_prediction_gzip: bool = False,
         bucket_region: str | None = None,
         deny_bucket_location: bool = False,
     ) -> None:
         self.bundle = bundle
         self.event_payload = event_payload
         self.stored_event_payload = (
-            gzip.compress(event_payload, mtime=0) if event_payload is not None else None
+            b"\x1f\x8b\x08\x00" + b"x" * 30
+            if corrupt_prediction_gzip
+            else gzip.compress(event_payload, mtime=0)
+            if event_payload is not None
+            else None
         )
         self.corrupt_bundle = corrupt_bundle
         self.fail_report_write = fail_report_write
@@ -113,9 +119,10 @@ class IntegratedS3:
 
     def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
         if kwargs["Bucket"] == "modelguard-test-predictions":
+            event_key = "predictions/year=2026/month=01/day=01/hour=00/events.jsonl.gz"
             contents = (
-                [{"Key": "predictions/closed/events.jsonl.gz"}]
-                if self.event_payload is not None
+                [{"Key": event_key}]
+                if self.event_payload is not None and event_key.startswith(str(kwargs["Prefix"]))
                 else []
             )
             return {"Contents": contents, "IsTruncated": False}
@@ -358,6 +365,71 @@ def test_aws_run_fails_closed_on_incomplete_corrupt_permission_sink_and_region_c
     )
     assert wrong_region.exit_code is AwsRunExitCode.INVALID_CONFIGURATION
     assert wrong_region.output.category == "invalid_aws_run_configuration"
+
+
+def test_aws_run_normalizes_invalid_deflate_to_one_result_and_persists_failure(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    monitoring_target: EventIdentity,
+    monitoring_metadata: ValidatedBundleMetadata,
+) -> None:
+    s3 = IntegratedS3(
+        monitoring_metadata.path,
+        b"placeholder",
+        corrupt_prediction_gzip=True,
+    )
+    clients = AwsRunClients(
+        ssm=FakeSsm(_pointer(monitoring_target)),
+        s3=s3,
+        sns=FakeSns(),
+    )
+    monkeypatch.setattr(monitoring_cli, "load_settings", lambda: _settings(tmp_path))
+    monkeypatch.setattr(
+        monitoring_cli,
+        "load_monitoring_config",
+        lambda _: MonitoringConfig(),
+    )
+    monkeypatch.setattr(monitoring_aws_run, "_aws_clients", lambda _: clients)
+
+    assert monitoring_cli.main(
+        [
+            "aws-run",
+            "--as-of",
+            "2026-01-01T01:10:00Z",
+            "--window-end",
+            "2026-01-01T01:00:00Z",
+        ]
+    ) == int(AwsRunExitCode.INVALID_OR_INCOMPLETE_EVIDENCE)
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert output.out.count("\n") == 1
+    payload = json.loads(output.out)
+    assert payload["as_of"] == "2026-01-01T01:10:00Z"
+    assert payload["category"] == "invalid_monitoring_evidence"
+    assert payload["monitoring_policy_sha256"] == AWS_LOCKED_MONITORING_POLICY_SHA256
+    assert payload["output_schema_version"] == "modelguard.monitor-aws-run-output.v1"
+    assert payload["status"] == "failed"
+    assert all(
+        payload[field] is None
+        for field in (
+            "accepted_target",
+            "data_quality_state",
+            "drift_state",
+            "html_key",
+            "html_sha256",
+            "json_key",
+            "json_sha256",
+            "latest_updated",
+            "performance_state",
+            "report_id",
+        )
+    )
+    status = RunStatusArtifact.model_validate_json(
+        s3.objects["monitoring/run-status.json"][0], strict=True
+    )
+    assert status.latest_attempt_state == "failed"
+    assert status.failure_reason == "invalid_monitoring_evidence"
 
 
 def test_aws_run_rejects_stale_partial_cross_region_and_unwritable_status_evidence(

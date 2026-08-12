@@ -14,7 +14,11 @@ from typing import Literal, Protocol
 from pydantic import AwareDatetime, Field, model_validator
 
 from modelguard.core.hashing import sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import (
+    StrictArtifactModel,
+    canonical_json_bytes,
+    validate_strict_json_model,
+)
 from modelguard.monitoring.config import MonitoringConfig
 from modelguard.monitoring.report import MonitoringReport, render_offline_html
 from modelguard.monitoring.state import RunState, determine_run_state, ensure_utc
@@ -164,7 +168,7 @@ def _read_report(path: Path) -> MonitoringReport | None:
         return None
     if path.is_symlink() or not path.is_file():
         raise OSError("latest report path must be a regular file")
-    return MonitoringReport.model_validate_json(path.read_bytes())
+    return validate_strict_json_model(path.read_bytes(), MonitoringReport)
 
 
 def _dimension_states(report: MonitoringReport) -> dict[AlertDimension, tuple[str, str]]:
@@ -300,21 +304,46 @@ class LocalRunStateStore:
     def __init__(self, report_root: Path) -> None:
         self._root = report_root
         self._path = report_root / "run-status.json"
+        self._lock_path = report_root / ".run-status.lock"
 
     def _read(self) -> RunStatusArtifact | None:
         if not self._path.exists():
             return None
         if self._path.is_symlink() or not self._path.is_file():
             raise OSError("run status path must be a regular file")
-        return RunStatusArtifact.model_validate_json(self._path.read_bytes())
+        return validate_strict_json_model(self._path.read_bytes(), RunStatusArtifact)
 
     def _write_if_current(self, status: RunStatusArtifact) -> bool:
         self._root.mkdir(parents=True, exist_ok=True)
-        current = self._read()
-        if current is not None and status.latest_attempt_at < current.latest_attempt_at:
-            return False
-        _atomic_replace(self._path, canonical_json_bytes(status) + b"\n")
-        return True
+        lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        lock_flags |= getattr(os, "O_NOFOLLOW", 0)
+        lock_descriptor = os.open(self._lock_path, lock_flags, 0o600)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            current = self._read()
+            candidate = status
+            if current is not None:
+                if status.latest_attempt_at < current.latest_attempt_at:
+                    return False
+                if status.latest_attempt_state == "failed":
+                    candidate = status.model_copy(
+                        update={
+                            "latest_success_at": current.latest_success_at,
+                            "latest_report_id": current.latest_report_id,
+                        }
+                    )
+                payload = canonical_json_bytes(candidate) + b"\n"
+                if status.latest_attempt_at == current.latest_attempt_at:
+                    if canonical_json_bytes(current) + b"\n" != payload:
+                        raise ValueError("same-time local run-status attempts conflict")
+                    return False
+            else:
+                payload = canonical_json_bytes(candidate) + b"\n"
+            _atomic_replace(self._path, payload)
+            return True
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
 
     def record_success(
         self,
@@ -335,13 +364,12 @@ class LocalRunStateStore:
 
     def record_failure(self, *, attempted_at: datetime, reason: str) -> bool:
         normalized = ensure_utc(attempted_at, name="attempted_at")
-        current = self._read()
         return self._write_if_current(
             RunStatusArtifact(
                 latest_attempt_state="failed",
                 latest_attempt_at=normalized,
-                latest_success_at=current.latest_success_at if current is not None else None,
-                latest_report_id=current.latest_report_id if current is not None else None,
+                latest_success_at=None,
+                latest_report_id=None,
                 failure_reason=reason,
             )
         )

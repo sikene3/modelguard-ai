@@ -32,6 +32,10 @@ NUMERIC_FEATURES = (
     "merchant_risk_score",
     "is_new_device",
 )
+BOOLEAN_FEATURES = ("is_new_device",)
+CONTINUOUS_NUMERIC_FEATURES = tuple(
+    feature for feature in NUMERIC_FEATURES if feature not in BOOLEAN_FEATURES
+)
 CATEGORICAL_FEATURES = ("country_code", "device_type")
 COUNTRY_CODES = ("BR", "DE", "EG", "GB", "IN", "US")
 DEVICE_TYPES = ("desktop", "mobile", "tablet")

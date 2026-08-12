@@ -35,6 +35,7 @@ from modelguard.core.serialization import (
     canonical_json_bytes,
     load_strict_json,
     parse_strict_json_bytes,
+    validate_strict_json_model,
 )
 from modelguard.core.telemetry import build_telemetry
 from modelguard.dashboard.parsing import DashboardSnapshot, load_dashboard_snapshot
@@ -76,6 +77,7 @@ EXPECTED_DEGRADED_SIGNALS: frozenset[tuple[SignalKind, str]] = frozenset(
         ("numeric_psi", "distance_from_home_km"),
         ("numeric_psi", "device_risk_score"),
         ("numeric_psi", "merchant_risk_score"),
+        ("categorical_js_distance", "is_new_device"),
         ("categorical_js_distance", "country_code"),
         ("categorical_js_distance", "device_type"),
         ("prediction_psi", "prediction_score"),
@@ -518,7 +520,7 @@ def _run_scenario(
     html_path = Path(str(monitor.get("html_report", "")))
     _require(report_path.is_file(), f"{stage} JSON report was absent")
     _require(html_path.is_file(), f"{stage} HTML report was absent")
-    report = MonitoringReport.model_validate_json(report_path.read_bytes())
+    report = validate_strict_json_model(report_path.read_bytes(), MonitoringReport)
     _require(fixture.get("row_count") == row_count, f"{stage} fixture row count differed")
     _require(monitor.get("report_id") == report.report_id, f"{stage} report ID differed")
     _require(monitor.get("json_sha256") == _sha256_file(report_path), f"{stage} JSON hash differed")

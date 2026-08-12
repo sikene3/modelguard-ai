@@ -5,6 +5,8 @@ UV ?= uv
 UV_RUN ?= $(UV) run
 UV_CACHE_DIR ?= $(CURDIR)/.cache/uv
 export UV_CACHE_DIR
+MLFLOW_DISABLE_TELEMETRY ?= true
+export MLFLOW_DISABLE_TELEMETRY
 PIP_AUDIT_CACHE_DIR ?= .cache/pip-audit
 PIP_AUDIT_REQUIREMENTS ?= .cache/audit-requirements.txt
 TRAINING_CONFIG ?= configs/phase-02-training.json
@@ -80,54 +82,13 @@ lint:
 	$(UV_RUN) ruff check .
 
 typecheck:
-	$(UV_RUN) mypy src \
-		scripts/terraform_demo_guard.py \
-		scripts/notification_enrollment.py \
-		scripts/secret_scan_policy.py \
-		scripts/plan_evidence.py \
-		scripts/render_ci_terraform.py \
-		scripts/release_manifest.py \
-		scripts/sanitize_sarif.py \
-		scripts/security_gate_runner.py \
-		scripts/security_policy.py \
-		scripts/security_tools.py \
-		scripts/deployment_governance.py \
-		scripts/confidential_artifact.py \
-		scripts/human_aws_login.py \
-		scripts/model_bundle_publisher.py \
-		scripts/aws_readiness_preflight.py \
-		scripts/verify_deployment_inputs.py \
-		scripts/deployment_record.py \
-		scripts/phase11_demo.py \
-		scripts/export_portfolio_architecture.py \
-		scripts/validate_portfolio.py
+	$(UV_RUN) mypy src scripts
 
 test:
 	$(UV_RUN) pytest -q
 
 security:
-	$(UV_RUN) bandit -q -r \
-		src \
-		scripts/terraform_demo_guard.py \
-		scripts/notification_enrollment.py \
-		scripts/secret_scan_policy.py \
-		scripts/plan_evidence.py \
-		scripts/render_ci_terraform.py \
-		scripts/release_manifest.py \
-		scripts/sanitize_sarif.py \
-		scripts/security_gate_runner.py \
-		scripts/security_policy.py \
-		scripts/security_tools.py \
-		scripts/deployment_governance.py \
-		scripts/confidential_artifact.py \
-		scripts/human_aws_login.py \
-		scripts/model_bundle_publisher.py \
-		scripts/aws_readiness_preflight.py \
-		scripts/verify_deployment_inputs.py \
-		scripts/deployment_record.py \
-		scripts/phase11_demo.py \
-		scripts/export_portfolio_architecture.py \
-		scripts/validate_portfolio.py
+	$(UV_RUN) bandit -q -r src scripts
 	mkdir -p $(dir $(PIP_AUDIT_REQUIREMENTS))
 	$(UV) export --quiet --all-groups --frozen --no-emit-project \
 		--output-file $(PIP_AUDIT_REQUIREMENTS)

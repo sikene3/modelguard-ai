@@ -17,6 +17,7 @@ from modelguard.monitoring.state import PerformanceState
 
 EVENT_TIME = datetime(2026, 1, 1, 0, 30, tzinfo=UTC)
 LABEL_TIME = datetime(2026, 1, 1, 2, tzinfo=UTC)
+EVALUATION_CUTOFF = datetime(2026, 1, 1, 3, tzinfo=UTC)
 
 
 def _events(factory: Any, count: int = 500) -> tuple[object, ...]:
@@ -61,6 +62,7 @@ def test_no_label_source_is_unknown_and_never_inferred_from_drift(
     result = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=None,
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -83,6 +85,7 @@ def test_configured_labels_report_coverage_missing_orphans_and_pending_adequacy(
     result = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=_snapshot(labels),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -96,6 +99,47 @@ def test_configured_labels_report_coverage_missing_orphans_and_pending_adequacy(
     assert result.metrics is None
 
 
+def test_labels_must_be_at_or_after_event_and_at_or_before_explicit_cutoff(
+    monitoring_event_factory: Any,
+) -> None:
+    events = _events(monitoring_event_factory, count=2)
+    early = _label(events[0], 0, labeled_at=EVENT_TIME.replace(minute=29))
+    future = _label(events[1], 1, labeled_at=EVALUATION_CUTOFF.replace(minute=1))
+    ineligible = evaluate_delayed_performance(
+        events,  # type: ignore[arg-type]
+        label_snapshot=_snapshot([early, future]),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
+        locked_threshold=0.075,
+        held_out_reference_cost_per_event=0.75,
+        config=MonitoringConfig(),
+    )
+
+    assert ineligible.evaluation.state is PerformanceState.UNKNOWN
+    assert ineligible.evaluation.reason == "temporally_ineligible_label"
+    assert ineligible.evaluation.evaluation_cutoff == EVALUATION_CUTOFF
+    assert ineligible.evaluation.counts.temporally_ineligible == 2
+    assert ineligible.evaluation.counts.joined == 0
+    assert any(item.startswith("before_event:") for item in ineligible.classified_label_digests)
+    assert any(item.startswith("after_cutoff:") for item in ineligible.classified_label_digests)
+
+    boundaries = evaluate_delayed_performance(
+        events,  # type: ignore[arg-type]
+        label_snapshot=_snapshot(
+            [
+                _label(events[0], 0, labeled_at=EVENT_TIME),
+                _label(events[1], 1, labeled_at=EVALUATION_CUTOFF),
+            ]
+        ),
+        evaluation_cutoff=EVALUATION_CUTOFF,
+        locked_threshold=0.075,
+        held_out_reference_cost_per_event=0.75,
+        config=MonitoringConfig(),
+    ).evaluation
+    assert boundaries.state is PerformanceState.PENDING_LABELS
+    assert boundaries.counts.temporally_ineligible == 0
+    assert boundaries.counts.joined == 2
+
+
 def test_label_adequacy_accepts_exact_coverage_row_and_negative_boundaries(
     monitoring_event_factory: Any,
 ) -> None:
@@ -106,6 +150,7 @@ def test_label_adequacy_accepts_exact_coverage_row_and_negative_boundaries(
     exact = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=_snapshot(labels),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -113,6 +158,7 @@ def test_label_adequacy_accepts_exact_coverage_row_and_negative_boundaries(
     below_coverage = evaluate_delayed_performance(
         (*events, monitoring_event_factory(626, EVENT_TIME, score=0.5)),  # type: ignore[arg-type]
         label_snapshot=_snapshot(labels),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -135,6 +181,7 @@ def test_identical_labels_deduplicate_but_conflicts_make_performance_unknown(
     benign = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=_snapshot([first, first]),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -142,6 +189,7 @@ def test_identical_labels_deduplicate_but_conflicts_make_performance_unknown(
     conflicting = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=_snapshot([first, _label(events[0], 1)]),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -168,6 +216,7 @@ def test_unknown_and_malformed_label_schemas_are_unknown(
     unknown = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=freeze_raw_payloads([canonical_json_bytes(base) + b"\n"]),
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -177,6 +226,7 @@ def test_unknown_and_malformed_label_schemas_are_unknown(
     malformed = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=freeze_raw_payloads([canonical_json_bytes(malformed_payload)]),
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=0.75,
         config=MonitoringConfig(),
@@ -210,6 +260,7 @@ def test_adequate_labels_compute_only_label_backed_metrics_and_cost_boundaries(
     result = evaluate_delayed_performance(
         events,  # type: ignore[arg-type]
         label_snapshot=_snapshot(labels),  # type: ignore[arg-type]
+        evaluation_cutoff=EVALUATION_CUTOFF,
         locked_threshold=0.075,
         held_out_reference_cost_per_event=reference,
         config=MonitoringConfig(),

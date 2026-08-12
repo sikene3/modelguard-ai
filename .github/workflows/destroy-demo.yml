@@ -63,6 +63,9 @@ jobs:
       ACM_CERTIFICATE_ARN: ${{ vars.DEMO_ACM_CERTIFICATE_ARN }}
       PREDICTION_TOKEN_SSM_ARN: ${{ vars.DEMO_PREDICTION_TOKEN_SSM_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      AUTO_DESTROY_DATE: ${{ inputs.auto_destroy_date }}
+      TEARDOWN_AUTHORIZED: ${{ inputs.teardown_authorized }}
       CONFIGURED_GOVERNANCE_MODE: ${{ vars.DEPLOYMENT_GOVERNANCE_MODE }}
       REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
     steps:
@@ -93,7 +96,7 @@ jobs:
           job_workflow_ref="$(jq -er '.workflow_ref | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
           job_workflow_commit="$(jq -er '.workflow_sha | select(type == "string" and length > 0)' <<<"$JOB_CONTEXT")"
           test "$GOVERNANCE_MODE" = "$CONFIGURED_GOVERNANCE_MODE"
-          test "${{ inputs.teardown_authorized }}" = "true"
+          test "$TEARDOWN_AUTHORIZED" = "true"
           uv run --frozen --no-sync python -m scripts.deployment_governance entry \
             --mode "$GOVERNANCE_MODE" \
             --operation destroy \
@@ -104,7 +107,7 @@ jobs:
             --environment demo-destroy \
             --workflow-ref "$WORKFLOW_REF" \
             --job-workflow-ref "$job_workflow_ref" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --source-commit "$SOURCE_COMMIT" \
             --workflow-commit "$GITHUB_SHA" \
             --job-workflow-commit "$job_workflow_commit" \
             --confirmation "$CONFIRMATION"
@@ -135,7 +138,7 @@ jobs:
             --region "$AWS_REGION" \
             --owner-tag "$OWNER_TAG" \
             --governance-mode "$GOVERNANCE_MODE" \
-            --auto-destroy-date "${{ inputs.auto_destroy_date }}" \
+            --auto-destroy-date "$AUTO_DESTROY_DATE" \
             --backend-bucket "$BACKEND_BUCKET" \
             --backend-kms-key-arn "$BACKEND_KMS_KEY_ARN" \
             --permission-boundary-arn "$PERMISSION_BOUNDARY_ARN" \
@@ -175,7 +178,7 @@ jobs:
             --account-id "$AWS_ACCOUNT_ID" \
             --region "$AWS_REGION" \
             --repository . \
-            --auto-destroy-date "${{ inputs.auto_destroy_date }}" \
+            --auto-destroy-date "$AUTO_DESTROY_DATE" \
             --activate-services false \
             --source-activation-state "$source_activation_state" \
             --output artifacts/destroy/destroy.tfplan.identity.json
@@ -221,6 +224,7 @@ jobs:
       BACKEND_BUCKET: ${{ vars.TF_BACKEND_BUCKET }}
       BACKEND_KMS_KEY_ARN: ${{ vars.TF_BACKEND_KMS_KEY_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
       TEARDOWN_AUTHORIZED: ${{ inputs.teardown_authorized }}
     steps:
       - name: Check out the exact source commit
@@ -286,7 +290,7 @@ jobs:
             --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:destroy" \
             --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
             --confirmation "$REVIEW_CONFIRMATION" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --source-commit "$SOURCE_COMMIT" \
             --workflow-commit "$GITHUB_SHA" \
             --plan-sha256 "$(sha256sum "$plan" | awk '{print $1}')" \
             --reviewed-plan-sha256 "$REVIEWED_PLAN_SHA256" \

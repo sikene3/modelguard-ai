@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+MAXIMUM_JSON_NESTING_DEPTH = 100
+
 
 class StrictArtifactModel(BaseModel):
     """Base model used by versioned JSON contracts."""
@@ -77,6 +79,18 @@ def _reject_non_finite_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
+def _require_bounded_json_nesting(value: Any) -> None:
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAXIMUM_JSON_NESTING_DEPTH:
+            raise ValueError("JSON artifact exceeds the bounded nesting contract")
+        if isinstance(current, Mapping):
+            stack.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+
+
 def parse_strict_json_bytes(payload: bytes) -> Any:
     """Parse UTF-8 JSON while rejecting duplicate keys and non-finite extensions."""
 
@@ -84,11 +98,25 @@ def parse_strict_json_bytes(payload: bytes) -> Any:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError("JSON artifact must be valid UTF-8") from error
-    return json.loads(
-        text,
-        object_pairs_hook=_reject_duplicate_keys,
-        parse_constant=_reject_non_finite_constant,
-    )
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_non_finite_constant,
+        )
+    except RecursionError as error:
+        raise ValueError("JSON artifact exceeds the bounded nesting contract") from error
+    _require_bounded_json_nesting(parsed)
+    return parsed
+
+
+def validate_strict_json_model[JsonModelT: BaseModel](
+    payload: bytes, model_type: type[JsonModelT]
+) -> JsonModelT:
+    """Validate external JSON bytes without duplicate, non-finite, or coercive acceptance."""
+
+    parsed = parse_strict_json_bytes(payload)
+    return model_type.model_validate_json(canonical_json_bytes(parsed), strict=True)
 
 
 def load_strict_json(path: Path) -> Any:
@@ -100,6 +128,6 @@ def load_strict_json(path: Path) -> Any:
 def load_json_model[ArtifactModelT: StrictArtifactModel](
     path: Path, model_type: type[ArtifactModelT]
 ) -> ArtifactModelT:
-    """Parse a strict JSON file into an extra-forbid Pydantic contract."""
+    """Parse an external JSON file into one strict, extra-forbid Pydantic contract."""
 
-    return model_type.model_validate(load_strict_json(path))
+    return validate_strict_json_model(path.read_bytes(), model_type)

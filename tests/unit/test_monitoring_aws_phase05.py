@@ -24,9 +24,10 @@ from modelguard.monitoring.aws import (
     download_versioned_bundle,
     freeze_s3_raw_snapshot,
     pointer_matches_metadata,
+    prediction_arrival_hour_prefixes,
 )
 from modelguard.monitoring.config import MonitoringConfig
-from modelguard.monitoring.events import EventIdentity, freeze_raw_payloads
+from modelguard.monitoring.events import EventIdentity, freeze_raw_payloads, resolve_window
 from modelguard.monitoring.persistence import AlertNotification, AlertSendStatus
 from modelguard.monitoring.report import MonitoringReport
 from modelguard.monitoring.service import LocalMonitoringRunSpec, run_local_monitoring
@@ -210,7 +211,7 @@ def test_s3_raw_snapshot_pins_versions_and_accepts_only_exact_firehose_suffix() 
     snapshot = freeze_s3_raw_snapshot(
         client,
         bucket="modelguard-events",
-        prefix="predictions/",
+        prefixes=("predictions/",),
     )
 
     assert snapshot.digest == freeze_raw_payloads([second]).digest
@@ -244,7 +245,7 @@ def test_s3_enumeration_binds_prefix_max_keys_and_rejects_malformed_pages() -> N
     assert _enumerate_s3_objects(
         valid,
         bucket="events",
-        prefix="predictions/",
+        prefixes=("predictions/",),
         maximum_objects=2,
     ) == ["predictions/first.jsonl.gz"]
     assert valid.calls == [
@@ -271,7 +272,7 @@ def test_s3_enumeration_binds_prefix_max_keys_and_rejects_malformed_pages() -> N
             _enumerate_s3_objects(
                 ListingS3(responses),
                 bucket="events",
-                prefix="predictions/",
+                prefixes=("predictions/",),
                 maximum_objects=2,
             )
 
@@ -298,7 +299,7 @@ def test_s3_enumeration_rejects_excess_pages_entries_and_changing_tokens() -> No
         _enumerate_s3_objects(
             InfiniteS3(with_entries=False),
             bucket="events",
-            prefix="predictions/",
+            prefixes=("predictions/",),
             maximum_objects=1,
             maximum_pages=3,
             maximum_entries=10,
@@ -307,10 +308,136 @@ def test_s3_enumeration_rejects_excess_pages_entries_and_changing_tokens() -> No
         _enumerate_s3_objects(
             InfiniteS3(with_entries=True),
             bucket="events",
-            prefix="predictions/",
+            prefixes=("predictions/",),
             maximum_objects=1,
             maximum_pages=10,
             maximum_entries=2,
+        )
+
+
+@pytest.mark.parametrize(
+    ("window_end", "expected"),
+    (
+        (
+            datetime(2026, 1, 1, 0, tzinfo=UTC),
+            (
+                "predictions/year=2025/month=12/day=31/hour=23/",
+                "predictions/year=2026/month=01/day=01/hour=00/",
+            ),
+        ),
+        (
+            datetime(2026, 3, 1, 0, tzinfo=UTC),
+            (
+                "predictions/year=2026/month=02/day=28/hour=23/",
+                "predictions/year=2026/month=03/day=01/hour=00/",
+            ),
+        ),
+    ),
+    ids=("year-rollover", "month-rollover"),
+)
+def test_prediction_arrival_prefixes_cover_only_window_and_finalization_hours(
+    window_end: datetime,
+    expected: tuple[str, ...],
+) -> None:
+    window = resolve_window(
+        as_of=window_end + timedelta(minutes=10),
+        window_end=window_end,
+        config=MonitoringConfig(),
+    )
+
+    assert prediction_arrival_hour_prefixes(window) == expected
+
+
+def test_multi_prefix_enumeration_deduplicates_keys_and_shares_all_listing_budgets() -> None:
+    shared_key = "predictions/year=2026/month=01/day=01/hour=00/events.jsonl.gz"
+
+    class SharedKeyS3:
+        def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
+            return {"Contents": [{"Key": shared_key}], "IsTruncated": False}
+
+    assert _enumerate_s3_objects(
+        SharedKeyS3(),
+        bucket="events",
+        prefixes=("predictions/", "predictions/year=2026/"),
+        maximum_objects=1,
+    ) == [shared_key]
+
+    class PerPrefixS3:
+        def __init__(self, suffix: str) -> None:
+            self.suffix = suffix
+
+        def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
+            return {
+                "Contents": [{"Key": f"{kwargs['Prefix']}entry{self.suffix}"}],
+                "IsTruncated": False,
+            }
+
+    prefixes = ("predictions/hour=00/", "predictions/hour=01/")
+    with pytest.raises(ValueError, match="pagination limit"):
+        _enumerate_s3_objects(
+            PerPrefixS3(".txt"),
+            bucket="events",
+            prefixes=prefixes,
+            maximum_objects=2,
+            maximum_pages=1,
+        )
+    with pytest.raises(ValueError, match="listing-entry limit"):
+        _enumerate_s3_objects(
+            PerPrefixS3(".txt"),
+            bucket="events",
+            prefixes=prefixes,
+            maximum_objects=2,
+            maximum_entries=1,
+        )
+    with pytest.raises(ValueError, match="object-count limit"):
+        _enumerate_s3_objects(
+            PerPrefixS3(".jsonl.gz"),
+            bucket="events",
+            prefixes=prefixes,
+            maximum_objects=1,
+        )
+
+
+def test_multi_prefix_snapshot_shares_compressed_and_decoded_byte_budgets() -> None:
+    prefixes = ("predictions/hour=00/", "predictions/hour=01/")
+    payloads = {
+        f"{prefix}events.jsonl.gz": gzip.compress(b"x" * 100, mtime=0) for prefix in prefixes
+    }
+
+    class PartitionedSnapshotS3(SnapshotS3):
+        def list_objects_v2(self, **kwargs: Any) -> Mapping[str, Any]:
+            prefix = str(kwargs["Prefix"])
+            return {
+                "Contents": [{"Key": key} for key in self.payloads if key.startswith(prefix)],
+                "IsTruncated": False,
+            }
+
+    with pytest.raises(ValueError, match="aggregate size contract"):
+        freeze_s3_raw_snapshot(
+            PartitionedSnapshotS3(payloads),
+            bucket="events",
+            prefixes=prefixes,
+            maximum_object_bytes=200,
+            maximum_snapshot_bytes=40,
+        )
+    with pytest.raises(ValueError, match="decoded prediction snapshot"):
+        freeze_s3_raw_snapshot(
+            PartitionedSnapshotS3(payloads),
+            bucket="events",
+            prefixes=prefixes,
+            maximum_object_bytes=200,
+            maximum_snapshot_bytes=100,
+        )
+
+
+def test_s3_snapshot_normalizes_invalid_deflate_bytes() -> None:
+    key = "predictions/hour=00/corrupt.jsonl.gz"
+
+    with pytest.raises(ValueError, match="valid GZIP JSONL"):
+        freeze_s3_raw_snapshot(
+            SnapshotS3({key: b"\x1f\x8b\x08\x00" + b"x" * 30}),
+            bucket="events",
+            prefixes=("predictions/",),
         )
 
 

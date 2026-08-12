@@ -5,6 +5,8 @@
 I built ModelGuard AI to stop two quiet ML failures: loading the wrong model artifacts and calling
 distribution drift an accuracy problem before labels exist.
 
+Repository: https://github.com/sikene3/modelguard-ai
+
 The project starts with deterministic synthetic fraud data and ends with a versioned prediction
 service, lineage-preserving events, finalized drift windows, immutable incident reports, and a
 read-only dashboard. The important part is the behavior when something goes wrong:
@@ -28,6 +30,9 @@ dashboard from hiding an unknown condition.
 All data is synthetic, the cloud environment was temporary, and automatic retraining is
 deliberately out of scope. The repository includes the architecture, local quickstart, case study,
 failure-demo evidence, security gates, cost/teardown notes, and a claim-by-claim evidence ledger.
+
+If you are building an AWS ML system and need model-release, drift-monitoring, CI/CD, or evidence
+boundaries reviewed, I am available for scoped architecture and implementation work.
 
 #AWS #MLOps #DevOps #DataEngineering #MachineLearning
 

@@ -1,11 +1,18 @@
 # Controlled publication record and remaining activation checklist
 
+> **Historical publication baseline:** this checklist records the exact state immediately before
+> the initial Public conversion. Phase 10 later satisfied the separate activation conditions,
+> enabled the reviewed workflows, completed the restricted AWS demonstration, and destroyed the
+> disposable environment. The authoritative current-state narrative is the
+> [Phase 10 closure](../reports/phase-10.md#post-closure-current-state-superseding-earlier-phase-10-progress-notes).
+> The final item below is preserved with its later closure so the sequence remains auditable.
+
 The sanitized baseline completed this checklist and the checksum-verified Publication Audit before
 its single authorized initial push and Public conversion. The repository is now Public with Actions
-disabled. This record does not authorize another visibility mutation, direct `main` push, Actions
-enablement, release, package publication, Code Scanning change, OIDC change, or AWS mutation. Any
-later Phase 10 corrective branch must pass its applicable release and privacy gates before a
-ruleset-governed pull request.
+disabled **at the historical baseline captured here**. This record did not authorize another
+visibility mutation, direct `main` push, Actions enablement, release, package publication, Code
+Scanning change, OIDC change, or AWS mutation. The later Phase 10 activation used its own reviewed
+authorization and evidence boundary.
 
 Completed for the exact published baseline immediately before Public conversion:
 
@@ -39,9 +46,10 @@ Completed for the separately authorized conversion itself:
       audit's unauthenticated read-only checks.
 - [x] Repeat complete history/worktree secret scans and manifest parity against the exact public
       commit.
-- [ ] Keep Actions disabled until the exact OIDC/IAM trust, governance mode, environments,
+- [x] Keep Actions disabled until the exact OIDC/IAM trust, governance mode, environments,
       protections, variables, release gates, cost prerequisites, and rollback plan receive separate
-      approval.
+      approval. **Closed later by the separately authorized Phase 10 activation; this checkbox does
+      not claim Actions stayed disabled afterward.**
 
 If any scan fails, an unexpected object appears, or sensitive material ever entered Git history,
 stop. Do not rely on deleting the current file alone; rotate any affected credential and use a

@@ -9,7 +9,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from modelguard.core.hashing import sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, parse_strict_json_bytes
+from modelguard.core.serialization import StrictArtifactModel, validate_strict_json_model
 from modelguard.dashboard.repository import (
     DashboardRepository,
     DashboardRepositoryError,
@@ -74,13 +74,13 @@ class DashboardSnapshot:
 def parse_monitoring_report(artifact: RawArtifact) -> MonitoringReport:
     """Parse one strict report, including duplicate-key/non-finite rejection."""
 
-    return MonitoringReport.model_validate(parse_strict_json_bytes(artifact.payload))
+    return validate_strict_json_model(artifact.payload, MonitoringReport)
 
 
 def parse_run_status(artifact: RawArtifact) -> RunStatusArtifact:
     """Parse the mutable run-health artifact independently from the latest report."""
 
-    return RunStatusArtifact.model_validate(parse_strict_json_bytes(artifact.payload))
+    return validate_strict_json_model(artifact.payload, RunStatusArtifact)
 
 
 def parse_active_model_manifest(
@@ -90,7 +90,7 @@ def parse_active_model_manifest(
 ) -> ActiveModelIdentity:
     """Derive the configured active identity from strict manifest bytes without loading joblib."""
 
-    manifest = ModelManifest.model_validate(parse_strict_json_bytes(artifact.payload))
+    manifest = validate_strict_json_model(artifact.payload, ModelManifest)
     if manifest.model_version != expected_model_version:
         raise ValueError("active manifest version differs from configured active version")
     return ActiveModelIdentity(

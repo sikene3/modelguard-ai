@@ -825,17 +825,27 @@ def test_required_workflows_parse_and_external_actions_are_commit_pinned(
                 continue
             assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", action), action
     ci = _read(repository_root, ".github/workflows/ci.yml")
+    makefile = _read(repository_root, "Makefile")
     security_scan = _read(repository_root, "scripts/security_scan.sh")
     assert "fetch-depth: 0" in ci
     assert "--redact=100" in security_scan
     assert "make security-tools-bootstrap" in ci
     assert "make security-scan" in ci
+    assert "make typecheck" in ci
+    assert "mypy src scripts" in makefile
+    assert "bandit -q -r src scripts" in makefile
+    assert 'MLFLOW_DISABLE_TELEMETRY: "true"' in ci
     assert "security-tools.lock.json" in _read(repository_root, "scripts/security_tools.py")
-    assert "yamllint==1.37.1" in ci
+    assert "uvx --from" not in ci
+    assert "uv run --frozen --no-sync yamllint" in ci
+    assert '"yamllint==1.37.1"' in _read(repository_root, "pyproject.toml")
     assert "UV_FROZEN" not in ci
     assert "uv sync --all-groups --locked" in ci
     assert "continue-on-error" not in ci
     assert "github/codeql-action/upload-sarif@" in ci
+    terraform = _read(repository_root, ".github/workflows/terraform-plan.yml")
+    assert "terraform -chdir=infrastructure/audit-bootstrap init -backend=false" in terraform
+    assert "terraform -chdir=infrastructure/audit-bootstrap validate" in terraform
 
 
 def test_required_ci_ruleset_contexts_are_exact_emitted_job_names(
@@ -2689,7 +2699,8 @@ def test_destroy_workflow_binds_authorization_source_state_and_cleanup_order(
     assert "output -json activation_state" not in destroy
     assert "output -raw deployment_governance_mode" not in destroy
     assert "--activate-services false" in destroy
-    assert '--auto-destroy-date "${{ inputs.auto_destroy_date }}"' in destroy
+    assert "AUTO_DESTROY_DATE: ${{ inputs.auto_destroy_date }}" in destroy
+    assert '--auto-destroy-date "$AUTO_DESTROY_DATE"' in destroy
     apply_index = destroy.index("Reverify and apply the exact destroy plan")
     inventory_index = destroy.index(
         "Verify twice and privately retain the exact teardown inventories"
@@ -2717,6 +2728,55 @@ def test_destroy_workflow_binds_authorization_source_state_and_cleanup_order(
     apply_guard = _read(repository_root, "scripts/ci_apply_saved_plan.sh")
     assert 'if [[ "$PLAN_STAGE" == "activation" ]]' in apply_guard
     assert 'if [[ "$PLAN_STAGE" != "prerequisites" ]]' not in apply_guard
+
+
+def test_workflow_dispatch_inputs_never_interpolate_directly_into_shell(
+    repository_root: Path,
+) -> None:
+    offenders: list[str] = []
+    for path in sorted((repository_root / ".github/workflows").glob("*.yml")):
+        workflow = _workflow(repository_root, path.name)
+        jobs = workflow.get("jobs")
+        assert isinstance(jobs, dict), path.name
+        for job_name, job in jobs.items():
+            assert isinstance(job, dict), f"{path.name}:{job_name}"
+            steps = job.get("steps", [])
+            assert isinstance(steps, list), f"{path.name}:{job_name}"
+            for index, step in enumerate(steps):
+                assert isinstance(step, dict), f"{path.name}:{job_name}:{index}"
+                run = step.get("run")
+                if not isinstance(run, str):
+                    continue
+                if "${{ inputs." in run or "${{ github.event.inputs." in run:
+                    offenders.append(f"{path.name}:{job_name}:{index}")
+    assert offenders == []
+
+    deploy = _read(repository_root, ".github/workflows/deploy-demo.yml")
+    destroy = _read(repository_root, ".github/workflows/destroy-demo.yml")
+    assert deploy.count("SOURCE_COMMIT: ${{ inputs.source_commit }}") >= 3
+    assert '--source-commit "$SOURCE_COMMIT"' in deploy
+    assert '"release-manifests/${SOURCE_COMMIT}.json"' in deploy
+    assert "SOURCE_COMMIT: ${{ inputs.source_commit }}" in destroy
+    assert "TEARDOWN_AUTHORIZED: ${{ inputs.teardown_authorized }}" in destroy
+    assert '--source-commit "$SOURCE_COMMIT"' in destroy
+    assert 'test "$TEARDOWN_AUTHORIZED" = "true"' in destroy
+
+
+def test_shell_does_not_re_evaluate_command_substitution_from_dispatch_environment(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "workflow-input-command-ran"
+    candidate = f'2026-08-12$(touch "{marker}")'
+    result = subprocess.run(
+        ["bash", "-c", 'printf "%s" "$AUTO_DESTROY_DATE"'],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"AUTO_DESTROY_DATE": candidate},
+    )
+    assert result.returncode == 0
+    assert result.stdout == candidate
+    assert not marker.exists()
 
 
 def test_complete_human_destroy_command_lists_every_required_guard_input(

@@ -12,9 +12,10 @@ from pydantic import Field, model_validator
 from modelguard.core.hashing import HashRecord
 from modelguard.core.serialization import StrictArtifactModel
 from modelguard.data.schema import (
+    BOOLEAN_FEATURES,
     CATEGORICAL_FEATURES,
+    CONTINUOUS_NUMERIC_FEATURES,
     FEATURE_ORDER,
-    NUMERIC_FEATURES,
     canonical_feature_definitions,
 )
 from modelguard.data.split import membership_hash
@@ -89,6 +90,31 @@ class CategoricalFeatureProfile(StrictArtifactModel):
         return self
 
 
+class BooleanFeatureProfile(StrictArtifactModel):
+    """Explicit false/true training reference for one strict boolean feature."""
+
+    constant: bool
+    row_count: int = Field(gt=0)
+    universe: list[Literal["false", "true"]]
+    counts: dict[str, int]
+    proportions: dict[str, MetricValue]
+    missingness: MissingnessProfile
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> BooleanFeatureProfile:
+        expected = {"false", "true"}
+        if self.universe != ["false", "true"]:
+            raise ValueError("boolean universe must be ordered false then true")
+        if set(self.counts) != expected or set(self.proportions) != expected:
+            raise ValueError("boolean counts and proportions must cover false and true")
+        observed = sum(self.counts.values())
+        if observed + self.missingness.count != self.row_count:
+            raise ValueError("boolean counts and missingness must reconcile to row count")
+        if self.constant != (sum(count > 0 for count in self.counts.values()) == 1):
+            raise ValueError("boolean constant flag must match the observed buckets")
+        return self
+
+
 class ScoreBin(StrictArtifactModel):
     index: int = Field(ge=0, le=9)
     interval: str
@@ -114,7 +140,7 @@ class DecisionDistribution(StrictArtifactModel):
 class BaselineProfile(StrictArtifactModel):
     """Training distribution reference with no training-performance evidence."""
 
-    contract_version: Literal["modelguard.baseline-profile.v1"] = "modelguard.baseline-profile.v1"
+    contract_version: Literal["modelguard.baseline-profile.v2"] = "modelguard.baseline-profile.v2"
     model_version: str
     created_at: str
     reference_scope: Literal["training_distribution_only_not_performance"] = (
@@ -124,6 +150,7 @@ class BaselineProfile(StrictArtifactModel):
     training_membership_hash: HashRecord
     feature_order: list[str]
     numeric_features: dict[str, NumericFeatureProfile]
+    boolean_features: dict[str, BooleanFeatureProfile]
     categorical_features: dict[str, CategoricalFeatureProfile]
     calibrated_score_distribution: ScoreDistribution
     locked_decision_distribution: DecisionDistribution
@@ -132,8 +159,10 @@ class BaselineProfile(StrictArtifactModel):
     def validate_profile(self) -> BaselineProfile:
         if self.feature_order != list(FEATURE_ORDER):
             raise ValueError("baseline feature order must match the model allowlist")
-        if set(self.numeric_features) != set(NUMERIC_FEATURES):
+        if set(self.numeric_features) != set(CONTINUOUS_NUMERIC_FEATURES):
             raise ValueError("numeric baseline must cover the locked feature set")
+        if set(self.boolean_features) != set(BOOLEAN_FEATURES):
+            raise ValueError("boolean baseline must cover the locked feature set")
         if set(self.categorical_features) != set(CATEGORICAL_FEATURES):
             raise ValueError("categorical baseline must cover the locked feature set")
         score_count = sum(item.count for item in self.calibrated_score_distribution.bins)
@@ -269,6 +298,35 @@ def _categorical_profile(
     )
 
 
+def _boolean_profile(series: pd.Series) -> BooleanFeatureProfile:
+    counts = {"false": 0, "true": 0}
+    missing_count = 0
+    for value in series:
+        if pd.isna(value):
+            missing_count += 1
+        elif isinstance(value, (bool, np.bool_)):
+            counts["true" if bool(value) else "false"] += 1
+        else:
+            raise ValueError("boolean baseline values must be strict booleans")
+    row_count = len(series)
+    observed = row_count - missing_count
+    proportions = {
+        bucket: safe_ratio(count, observed, zero_reason="no_observed_boolean_values")
+        for bucket, count in counts.items()
+    }
+    return BooleanFeatureProfile(
+        constant=sum(count > 0 for count in counts.values()) == 1,
+        row_count=row_count,
+        universe=["false", "true"],
+        counts=counts,
+        proportions=proportions,
+        missingness=MissingnessProfile(
+            count=missing_count,
+            proportion=safe_ratio(missing_count, row_count, zero_reason="empty_reference"),
+        ),
+    )
+
+
 def _score_distribution(scores: np.ndarray) -> ScoreDistribution:
     bins: list[ScoreBin] = []
     row_count = len(scores)
@@ -314,7 +372,10 @@ def build_baseline_profile(
     definitions = {item.name: item for item in canonical_feature_definitions()}
     numeric_profiles = {
         feature: _numeric_profile(training_features[feature], config)
-        for feature in NUMERIC_FEATURES
+        for feature in CONTINUOUS_NUMERIC_FEATURES
+    }
+    boolean_profiles = {
+        feature: _boolean_profile(training_features[feature]) for feature in BOOLEAN_FEATURES
     }
     categorical_profiles: dict[str, CategoricalFeatureProfile] = {}
     for feature in CATEGORICAL_FEATURES:
@@ -337,6 +398,7 @@ def build_baseline_profile(
         training_membership_hash=membership_hash(training_features.index.astype(str).tolist()),
         feature_order=list(FEATURE_ORDER),
         numeric_features=numeric_profiles,
+        boolean_features=boolean_profiles,
         categorical_features=categorical_profiles,
         calibrated_score_distribution=_score_distribution(scores),
         locked_decision_distribution=DecisionDistribution(
