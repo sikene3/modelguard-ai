@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import struct
+
 # security-suppression:
 # finding=B404
 # justification=Only one resolved local Git enumeration is executed without a shell.
