@@ -66,6 +66,7 @@ docs/09_AGENT_WORKFLOW.md
 docs/10_COMMANDS_CHEATSHEET.md
 docs/AWS_ACCOUNT_PREREQUISITES.md
 docs/AWS_RUNTIME_CONTRACTS.md
+docs/CASE_STUDY.md
 docs/CICD_SECURITY.md
 docs/CONTAINER_LOCAL_DEMO.md
 docs/DASHBOARD_CONTRACT.md
@@ -134,6 +135,19 @@ infrastructure/modules/network/variables.tf
 infrastructure/modules/network/versions.tf
 logs/.gitkeep
 portfolio/.gitkeep
+portfolio/architecture-export.md
+portfolio/architecture.mmd
+portfolio/assets/demo/modelguard-demo.mp4
+portfolio/assets/demo/modelguard-drift.gif
+portfolio/assets/modelguard-architecture.png
+portfolio/assets/modelguard-architecture.svg
+portfolio/claims-ledger.md
+portfolio/demo-script.md
+portfolio/fiverr-packages.md
+portfolio/linkedin-post.md
+portfolio/screenshot-checklist.md
+portfolio/skills-to-evidence.md
+portfolio/upwork-portfolio.md
 prompts/00_ULTRA_ARCHITECTURE_REVIEW.md
 prompts/01_REPO_BOOTSTRAP.md
 prompts/02_DATA_AND_TRAINING.md
@@ -172,6 +186,7 @@ reports/phase-09-1.md
 reports/phase-09.md
 reports/phase-10.md
 reports/phase-11.md
+reports/phase-13.md
 scripts/__init__.py
 scripts/aws_readiness_preflight.py
 scripts/bootstrap_repo.sh
@@ -187,6 +202,7 @@ scripts/deployment_record.py
 scripts/e2e_local.sh
 scripts/evaluate_trivy_scan.py
 scripts/export_monitoring_report_schema.py
+scripts/export_portfolio_architecture.py
 scripts/generate_local_traffic.py
 scripts/generate_monitoring_fixture.py
 scripts/human_aws_login.py
@@ -214,6 +230,7 @@ scripts/smoke_aws.sh
 scripts/smoke_local.sh
 scripts/terraform_demo_guard.py
 scripts/validate_local_evidence.py
+scripts/validate_portfolio.py
 scripts/verify_aws_teardown.sh
 scripts/verify_deployment_inputs.py
 scripts/verify_environment.sh
@@ -321,6 +338,7 @@ tests/unit/test_phase10_model_publisher.py
 tests/unit/test_phase10_prerequisites.py
 tests/unit/test_phase10_runtime_readiness.py
 tests/unit/test_phase11_demo.py
+tests/unit/test_phase13_portfolio.py
 tests/unit/test_prediction_events_phase04.py
 tests/unit/test_publication_audit.py
 tests/unit/test_settings.py

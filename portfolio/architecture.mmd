@@ -1,0 +1,28 @@
+flowchart TB
+    Client[Demo client] --> Edge[Restricted ALB]
+    Edge --> API[ECS Fargate API]
+    Edge --> Dashboard[ECS Fargate dashboard]
+    Model[SSM active pointer and S3 versioned model bundle] --> API
+    API --> Events[Firehose to S3 prediction events]
+
+    Scheduler[EventBridge Scheduler] --> Monitor[ECS one-shot drift monitor]
+    Model --> Monitor
+    Events --> Monitor
+    Monitor --> Reports[S3 immutable reports and latest status]
+    Monitor --> Alerts[SNS transition alerts]
+    Reports --> Dashboard
+
+    API --> Observability[CloudWatch logs, EMF, and alarms]
+    Monitor --> Observability
+    Dashboard --> Observability
+
+    Delivery[GitHub OIDC, reviewed Terraform plans, and ECR digests] --> API
+    Delivery --> Monitor
+    Delivery --> Dashboard
+
+    classDef compute fill:#e8f2ff,stroke:#2563eb,color:#172033
+    classDef data fill:#ecfdf5,stroke:#059669,color:#172033
+    classDef control fill:#fff7ed,stroke:#ea580c,color:#172033
+    class API,Dashboard,Monitor compute
+    class Model,Events,Reports data
+    class Edge,Scheduler,Alerts,Observability,Delivery control

@@ -196,10 +196,14 @@ successfully on a Docker-capable host. See `reports/phase-07.md`.
 
 ## Portfolio assets
 
-- [ ] README contains architecture, quickstart, demo scenario, security, cost, and limitations.
-- [ ] Architecture diagram is exported to PNG/SVG for LinkedIn/Upwork.
-- [ ] 3–5 minute demo recording exists.
-- [ ] At least four screenshots/GIFs exist.
-- [ ] Case study explains the problem, trade-offs, implementation, evidence, and outcome.
+- [x] README contains architecture, quickstart, demo scenario, security, cost, and limitations.
+- [x] Architecture diagram is exported to PNG/SVG for LinkedIn/Upwork.
+- [x] 3–5 minute demo recording exists.
+- [x] At least four screenshots/GIFs exist.
+- [x] Case study explains the problem, trade-offs, implementation, evidence, and outcome.
 - [x] No disposable demo infrastructure or secrets remain after capture; the USD 10 Budget and
       retained audit/bootstrap control plane remain intentionally.
+
+The genuine current-run recording is 255.036 seconds at 1280×720, and the 15-second animated GIF is
+derived from its healthy-to-degraded interval. Both passed the Phase 13 privacy and media checks;
+the existing four reviewed dashboard PNGs remain unchanged.
