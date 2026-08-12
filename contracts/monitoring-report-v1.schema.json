@@ -5,7 +5,10 @@
       "description": "Baseline identity derived only from an exactly verified target manifest.",
       "properties": {
         "baseline_contract_version": {
-          "const": "modelguard.baseline-profile.v1",
+          "enum": [
+            "modelguard.baseline-profile.v1",
+            "modelguard.baseline-profile.v2"
+          ],
           "title": "Baseline Contract Version",
           "type": "string"
         },

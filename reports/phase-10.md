@@ -640,13 +640,15 @@ no-live-evidence statement retained above as historical audit context.
 - Activation plan `03e2b171f1a13994ebf60d2c9f5178d636a9f1132753093fa712939d4b261643`
   enabled the digest-pinned services. The source-bound ingress-only plan
   `9a8e74d355e513107531135785c02de3a801b5dfb5b9ffc761ddc51f7ae9733a`
-  replaced only the API task definition, API service, and ALB HTTP ingress to use
-  `41.68.210.73/32`; the old CIDR and `0.0.0.0/0` were absent.
+  replaced only the API task definition, API service, and ALB HTTP ingress to use the exact reviewed
+  runner `/32`; the prior CIDR and `0.0.0.0/0` were absent. The raw address is intentionally omitted
+  from the current publication tree; its already-published historical exposure was not rewritten.
 
 ### Live verification
 
-- Notification enrollment had exactly one confirmed subscriber without querying or recording its
-  address. Runner `modelguard-demo-vm` was online, idle, and carried exactly the required labels.
+- Notification enrollment had exactly one confirmed subscriber. The verifier transiently queried
+  the endpoint in memory but did not log, emit, or persist it. Runner `modelguard-demo-vm` was
+  online, idle, and carried exactly the required labels.
   Egress verification run `31513598233` proved the runner's current address matched the reviewed
   `/32` without printing it.
 - Restricted smoke run `31517078978` passed API live, ready, version, prediction, and dashboard

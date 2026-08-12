@@ -172,3 +172,46 @@ def test_cli_persists_invalid_monitoring_config_as_a_failed_attempt(
         )
         is RunState.FAILED
     )
+
+
+def test_cli_normalizes_corrupt_gzip_and_persists_a_failed_attempt(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    monitoring_target: EventIdentity,
+    monitoring_metadata: ValidatedBundleMetadata,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env=AppEnvironment.TEST,
+        model_bundle_path=monitoring_metadata.path,
+        active_model_version=monitoring_target.model_version,
+    )
+    monkeypatch.setattr(monitoring_cli, "load_settings", lambda: settings)
+    event_directory = tmp_path / "events"
+    event_directory.mkdir()
+    (event_directory / "corrupt.jsonl.gz").write_bytes(b"\x1f\x8b\x08\x00" + b"x" * 30)
+    report_directory = tmp_path / "reports"
+
+    assert (
+        monitoring_cli.main(
+            _args(
+                metadata=monitoring_metadata,
+                target=monitoring_target,
+                event_directory=event_directory,
+                report_directory=report_directory,
+                as_of="2026-01-01T01:10:00Z",
+            )
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "error: monitoring_runtime_failure\n"
+    assert (
+        LocalRunStateStore(report_directory).state_as_of(
+            as_of=datetime(2026, 1, 1, 1, 10, tzinfo=UTC),
+            config=monitoring_cli.MonitoringConfig(),
+        )
+        is RunState.FAILED
+    )

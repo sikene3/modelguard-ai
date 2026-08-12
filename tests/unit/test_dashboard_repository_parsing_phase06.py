@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -11,11 +12,16 @@ from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from streamlit.testing.v1 import AppTest
 
 from modelguard.core.config import AppEnvironment
-from modelguard.core.serialization import canonical_json_bytes, write_json
+from modelguard.core.serialization import (
+    canonical_json_bytes,
+    validate_strict_json_model,
+    write_json,
+)
 from modelguard.dashboard.app import _state_card
 from modelguard.dashboard.config import DashboardRepositoryMode, DashboardSettings
 from modelguard.dashboard.parsing import (
@@ -37,6 +43,7 @@ from modelguard.dashboard.repository import (
     RawArtifact,
     S3DashboardRepository,
 )
+from modelguard.inference.events import PredictionEventV1
 from modelguard.monitoring.config import MonitoringConfig
 from modelguard.monitoring.persistence import RunStatusArtifact
 from modelguard.monitoring.service import LocalMonitoringRunSpec, run_local_monitoring
@@ -333,10 +340,13 @@ def test_malformed_and_duplicate_key_reports_are_withheld(
 ) -> None:
     with pytest.raises(ValueError, match="duplicate JSON key"):
         parse_monitoring_report(RawArtifact(b'{"report_id":"a","report_id":"b"}', None))
+    deeply_nested = b"[" * 1_200 + b"0" + b"]" * 1_200
+    with pytest.raises(ValueError, match="bounded nesting contract"):
+        parse_monitoring_report(RawArtifact(deeply_nested, None))
 
     report_root = tmp_path / "malformed"
     report_root.mkdir()
-    (report_root / "latest.json").write_bytes(b'{"report_id":"not-a-report"}\n')
+    (report_root / "latest.json").write_bytes(deeply_nested)
     repository = LocalDashboardRepository(
         report_root=report_root,
         model_bundle_path=dashboard_artifacts.metadata.path,
@@ -354,6 +364,49 @@ def test_malformed_and_duplicate_key_reports_are_withheld(
     assert snapshot.latest_report is None
     assert snapshot.run_state is None
     assert "latest_report_malformed" in {issue.code for issue in snapshot.issues}
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement", "schema_rejects"),
+    (
+        (("records", "counts", "raw"), "1000", True),
+        (("records", "counts", "raw"), 1000.0, False),
+        (("drift", "evaluation", "signals", 0, "required"), "true", True),
+    ),
+    ids=("numeric-string", "float-to-integer", "boolean-string"),
+)
+def test_runtime_report_parser_matches_the_exported_strict_schema(
+    dashboard_artifacts: DashboardArtifacts,
+    repository_root: Path,
+    path: tuple[str | int, ...],
+    replacement: object,
+    schema_rejects: bool,
+) -> None:
+    artifact = _local_repository(dashboard_artifacts).read_latest_report()
+    assert artifact is not None
+    payload = json.loads(artifact.payload)
+    target: Any = payload
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = replacement
+    schema = json.loads(
+        (repository_root / "contracts" / "monitoring-report-v1.schema.json").read_bytes()
+    )
+
+    assert bool(list(Draft202012Validator(schema).iter_errors(payload))) is schema_rejects
+    with pytest.raises(ValueError):
+        parse_monitoring_report(RawArtifact(canonical_json_bytes(payload), None))
+
+
+def test_strict_json_model_loader_preserves_valid_json_datetime_and_uuid_values(
+    monitoring_event_factory: Any,
+) -> None:
+    event = monitoring_event_factory(91, datetime(2026, 1, 1, 0, 30, tzinfo=UTC))
+
+    parsed = validate_strict_json_model(canonical_json_bytes(event), PredictionEventV1)
+
+    assert parsed.event_timestamp == event.event_timestamp
+    assert parsed.event_id == event.event_id
 
 
 def test_current_failed_attempt_remains_separate_when_prior_report_is_missing(

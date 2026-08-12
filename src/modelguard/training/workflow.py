@@ -466,8 +466,9 @@ def _write_cards(
         f"- Held-out AP lift: {_format_metric(test_metrics.ap_lift.value)}\n"
         f"- Held-out synthetic cost/event: "
         f"{_format_metric(test_metrics.synthetic_cost_per_event.value)}\n"
-        "- Headline results are from the one-time held-out test evaluation. Training-reference "
-        "scores/decisions are distribution baselines only, not performance evidence.\n"
+        "- Headline results are from one held-out test evaluation per training invocation after "
+        "threshold lock. Training-reference scores/decisions are distribution baselines only, "
+        "not performance evidence.\n"
         "- Scores are calibrated only for this synthetic demo distribution and are not guaranteed "
         "real-world fraud probabilities or an economically optimal policy.\n",
         encoding="utf-8",

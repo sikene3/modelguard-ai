@@ -32,7 +32,11 @@ from sklearn.metrics import (
 )
 
 from modelguard.core.hashing import HashRecord, canonical_json_hash, sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import (
+    StrictArtifactModel,
+    canonical_json_bytes,
+    validate_strict_json_model,
+)
 from modelguard.inference.events import PredictionEventV1
 from modelguard.monitoring.config import PERFORMANCE_SCOPE_WORDING, MonitoringConfig
 from modelguard.monitoring.events import FrozenRawSnapshot, parse_strict_json_record
@@ -256,7 +260,7 @@ def evaluate_delayed_performance(
         ):
             unknown_versions += 1
         try:
-            label = DelayedLabelV1.model_validate_json(canonical_json_bytes(parsed))
+            label = validate_strict_json_model(canonical_json_bytes(parsed), DelayedLabelV1)
         except ValueError:
             rejected += 1
             schema_fault = True

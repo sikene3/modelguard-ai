@@ -17,6 +17,7 @@ from modelguard.monitoring.events import (
     default_window_end,
     freeze_local_raw_snapshot,
     freeze_raw_payloads,
+    parse_strict_json_record,
     parse_utc_timestamp,
     resolve_window,
 )
@@ -113,6 +114,18 @@ def test_frozen_local_snapshot_excludes_open_files_and_survives_later_append(
         first.rstrip(b"\n"),
         second.rstrip(b"\n"),
     )
+
+
+def test_local_snapshot_normalizes_invalid_deflate_and_excessive_json_nesting(
+    tmp_path: Path,
+) -> None:
+    corrupt = tmp_path / "corrupt.jsonl.gz"
+    corrupt.write_bytes(b"\x1f\x8b\x08\x00" + b"x" * 30)
+
+    with pytest.raises(RuntimeError, match="could not freeze an input object"):
+        freeze_local_raw_snapshot(tmp_path)
+    with pytest.raises(ValueError, match="bounded nesting contract"):
+        parse_strict_json_record(b"[" * 1_200 + b"0" + b"]" * 1_200)
 
 
 def test_snapshot_identity_ignores_order_repartition_and_enclosing_file_append(

@@ -6,7 +6,8 @@ Accepted.
 ## Decision
 The estimator/preprocessor Pipeline is cross-fitted and calibrated using training rows only.
 Average precision versus prevalence is primary. A documented synthetic cost threshold is selected
-on validation, locked, then test is evaluated once. Brier/log-loss/reliability evidence is required.
+on validation and locked, then the test is evaluated once per training invocation.
+Brier/log-loss/reliability evidence is required.
 
 The API score is calibrated only for the synthetic demo distribution. It is not a guaranteed
 real-world fraud probability or economically optimal policy.

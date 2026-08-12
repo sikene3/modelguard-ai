@@ -14,7 +14,7 @@ from typing import Any, Literal, Protocol, cast
 
 from pydantic import Field, model_validator
 
-from modelguard.core.serialization import StrictArtifactModel, parse_strict_json_bytes
+from modelguard.core.serialization import StrictArtifactModel, validate_strict_json_model
 from modelguard.monitoring.events import EventIdentity, verify_target_identity
 from modelguard.training.bundle import (
     BASELINE_FILENAME,
@@ -33,8 +33,8 @@ MODEL_JOBLIB_COMPRESSED_MAX_BYTES = 64 * 1024
 MODEL_JOBLIB_DECOMPRESSED_MAX_BYTES = 4 * 1024 * 1024
 
 # These per-object bounds are derived from the reviewed Phase 02 bundle: model.joblib=4,733,
-# manifest.json=20,133, input_schema.json=2,279, metrics.json=183,619,
-# threshold.json=1,375, baseline_profile.json=40,618, and checksums.sha256=491 bytes. The
+# manifest.json=20,121, input_schema.json=2,279, metrics.json=183,619,
+# threshold.json=1,375, baseline_profile.json=39,685, and checksums.sha256=491 bytes. The
 # deliberately rounded ceilings allow reviewed metadata growth while bounding the complete
 # compressed download to less than 1.25 MiB and model inflation to 4 MiB inside the 1 GiB API task.
 BUNDLE_OBJECT_MAX_BYTES: dict[str, int] = {
@@ -153,8 +153,8 @@ class SsmTargetSnapshotResolver:
             value = parameter["Value"]
             if len(value.encode("utf-8")) > 64 * 1024:
                 raise ValueError("SSM active target pointer exceeds the size limit")
-            self._snapshot = ActiveMonitoringPointer.model_validate(
-                parse_strict_json_bytes(value.encode("utf-8"))
+            self._snapshot = validate_strict_json_model(
+                value.encode("utf-8"), ActiveMonitoringPointer
             )
         return self._snapshot
 

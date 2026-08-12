@@ -51,6 +51,14 @@ degraded Jensen-Shannon distance for `country_code` and `device_type`; and warni
 Jensen-Shannon distance for the locked-decision distribution. Exact values and thresholds are in
 the generated drifted summary.
 
+Phase 12 found that these immutable Phase 11 reports predated the baseline-v2 boolean correction:
+their aggregate degraded transition remains valid evidence, but their historical
+`is_new_device` numeric signal is superseded and is not cited as feature-level evidence. Current
+source requires an explicit false/true Jensen-Shannon signal and regression-proves that a
+baseline-like mixture stays healthy while all-false and all-true populations degrade. Future Phase
+11 reproductions include that signal in `expected_breached_metrics`; the immutable historical files
+were not rewritten.
+
 ## Dashboard evidence
 
 | State | Tracked image | Kind | PNG SHA-256 |

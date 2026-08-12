@@ -68,7 +68,8 @@ EventBridge Scheduler, SNS, and CloudWatch. The deeper contracts are in
 ## What the demo proves
 
 - A deterministic training workflow persists the split before fitting, calibrates on training data,
-  locks the decision threshold on validation data, and evaluates the synthetic test split once.
+  locks the decision threshold on validation data, and evaluates the synthetic test split once per
+  training invocation after that lock.
 - A seven-file model bundle binds the model, schema, threshold, metrics, baseline, manifest, and
   checksums. Readiness fails closed if verification or trusted loading fails.
 - FastAPI returns a bounded, schema-validated prediction with request ID, risk score, decision,

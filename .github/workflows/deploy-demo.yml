@@ -326,6 +326,7 @@ jobs:
       - name: Verify the human-reviewed prerequisite evidence boundary
         env:
           GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
           REVIEWED_PLAN_SHA256: ${{ vars.REVIEWED_PREREQUISITE_PLAN_SHA256 }}
           REVIEWED_PLAN_IDENTITY_SHA256: ${{ vars.REVIEWED_PREREQUISITE_IDENTITY_SHA256 }}
           REVIEWED_RUN_IDENTITY: ${{ vars.REVIEWED_PREREQUISITE_RUN_IDENTITY }}
@@ -339,7 +340,7 @@ jobs:
             --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:prerequisites" \
             --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
             --confirmation "$REVIEW_CONFIRMATION" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --source-commit "$SOURCE_COMMIT" \
             --workflow-commit "$GITHUB_SHA" \
             --plan-sha256 "$(sha256sum "$plan" | awk '{print $1}')" \
             --reviewed-plan-sha256 "$REVIEWED_PLAN_SHA256" \
@@ -988,6 +989,7 @@ jobs:
       - name: Verify the human-reviewed activation evidence boundary
         env:
           GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
           API_IMAGE_REF: ${{ needs.resolve-images.outputs.api_ref }}
           DASHBOARD_IMAGE_REF: ${{ needs.resolve-images.outputs.dashboard_ref }}
           MONITOR_IMAGE_REF: ${{ needs.resolve-images.outputs.monitor_ref }}
@@ -1009,7 +1011,7 @@ jobs:
             --run-identity "${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:activation" \
             --reviewed-run-identity "$REVIEWED_RUN_IDENTITY" \
             --confirmation "$REVIEW_CONFIRMATION" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --source-commit "$SOURCE_COMMIT" \
             --workflow-commit "$GITHUB_SHA" \
             --api-image-ref "$API_IMAGE_REF" \
             --dashboard-image-ref "$DASHBOARD_IMAGE_REF" \
@@ -1074,6 +1076,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       GOVERNANCE_MODE: ${{ inputs.governance_mode }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
       API_ACCESS_MODE: ${{ vars.DEMO_API_ACCESS_MODE }}
       SMOKE_BASE_URL: ${{ vars.DEMO_SMOKE_BASE_URL }}
       EXPECTED_MODEL_VERSION: ${{ inputs.model_version }}
@@ -1137,9 +1140,9 @@ jobs:
             --key "${identity_prefix}/activation.json" \
             --expected-bucket-owner "$AWS_ACCOUNT_ID" \
             "$root/activation/activation.tfplan.identity.json" >/dev/null
-          if [[ "${{ inputs.governance_mode }}" = "solo_portfolio" ]]; then
+          if [[ "$GOVERNANCE_MODE" = "solo_portfolio" ]]; then
             aws s3api get-object --bucket "$audit_bucket" \
-              --key "release-manifests/${{ inputs.source_commit }}.json" \
+              --key "release-manifests/${SOURCE_COMMIT}.json" \
               --expected-bucket-owner "$AWS_ACCOUNT_ID" \
               "$root/published/image-release-manifest.json" >/dev/null
             aws s3api get-object --bucket "$audit_bucket" \

@@ -162,6 +162,14 @@ def test_baseline_collapses_constant_bins_and_has_explicit_outer_semantics(
         "__OTHER__",
         "__MISSING__",
     ]
+    assert baseline.contract_version == "modelguard.baseline-profile.v2"
+    assert "is_new_device" not in baseline.numeric_features
+    device_profile = baseline.boolean_features["is_new_device"]
+    assert device_profile.universe == ["false", "true"]
+    assert sum(device_profile.counts.values()) == len(features)
+    assert sum(
+        float(device_profile.proportions[key].value or 0.0) for key in device_profile.universe
+    ) == pytest.approx(1.0)
     serialized = baseline.model_dump_json()
     assert "Infinity" not in serialized
     assert "NaN" not in serialized

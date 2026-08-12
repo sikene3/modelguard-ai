@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,63 @@ from scripts.terraform_demo_guard import (
 
 def _read(root: Path, relative: str) -> str:
     return (root / relative).read_text(encoding="utf-8")
+
+
+def _terraform_statement(source: str, sid: str) -> str:
+    lines = source.splitlines(keepends=True)
+    sid_pattern = re.compile(rf'^\s+sid\s+= "{re.escape(sid)}"\s*$')
+    sid_index = next(
+        (index for index, line in enumerate(lines) if sid_pattern.fullmatch(line.rstrip("\n"))),
+        None,
+    )
+    assert sid_index is not None, sid
+    start = sid_index
+    while start >= 0 and lines[start].strip() != "statement {":
+        start -= 1
+    assert start >= 0, sid
+    depth = 0
+    for end in range(start, len(lines)):
+        stripped = lines[end].strip()
+        if stripped.endswith("{"):
+            depth += 1
+        elif stripped == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(lines[start : end + 1])
+    raise AssertionError(f"unterminated Terraform statement: {sid}")
+
+
+def _tagged_network_lifecycle_allows(
+    statement: str,
+    *,
+    region: str,
+    project: str | None,
+    environment: str | None,
+) -> bool:
+    expected_conditions = {
+        "aws:RequestedRegion": ("[var.aws_region]", region == "us-east-1"),
+        "aws:ResourceTag/Project": ("[var.project_name]", project == "modelguard-ai"),
+        "aws:ResourceTag/Environment": ('["demo"]', environment == "demo"),
+        "aws:ResourceTag/ManagedBy": ('["Terraform"]', True),
+        "aws:ResourceTag/Ownership": ('["demo"]', True),
+    }
+    matches: list[bool] = []
+    for variable, (values, match) in expected_conditions.items():
+        condition = re.search(
+            rf'condition \{{\s+test\s+= "StringEquals"\s+'
+            rf'variable\s+= "{re.escape(variable)}"\s+'
+            rf"values\s+= {re.escape(values)}\s+\}}",
+            statement,
+        )
+        assert condition is not None, variable
+        matches.append(match)
+    return all(matches)
+
+
+def _terraform_local_string_list(source: str, name: str) -> set[str]:
+    match = re.search(rf"\b{re.escape(name)}\s*=\s*\[(.*?)\n\s*\]", source, re.DOTALL)
+    assert match is not None, name
+    return set(re.findall(r'"([A-Za-z0-9:*]+)"', match.group(1)))
 
 
 def _clean_test_repository(tmp_path: Path) -> Path:
@@ -2036,6 +2094,188 @@ def test_bootstrap_iam_uses_current_budget_actions_and_scoped_managed_policies(
         '"s3:PutObject"',
     ):
         assert required_action in iam
+
+
+def test_deploy_network_iam_splits_creation_tagging_lifecycle_and_delete_boundaries(
+    repository_root: Path,
+) -> None:
+    iam = _read(repository_root, "infrastructure/bootstrap/iam.tf")
+    create_policy = iam.split(
+        'data "aws_iam_policy_document" "ci_deploy_network_create" {', maxsplit=1
+    )[1].split('data "aws_iam_policy_document" "ci_deploy_network_dependencies" {', maxsplit=1)[0]
+    dependencies_policy = iam.split(
+        'data "aws_iam_policy_document" "ci_deploy_network_dependencies" {', maxsplit=1
+    )[1].split('data "aws_iam_policy_document" "ci_deploy_network_lifecycle" {', maxsplit=1)[0]
+    lifecycle_policy = iam.split(
+        'data "aws_iam_policy_document" "ci_deploy_network_lifecycle" {', maxsplit=1
+    )[1].split('data "aws_iam_policy_document" "ci_deploy_boundary" {', maxsplit=1)[0]
+    compute_policy = iam.split('data "aws_iam_policy_document" "ci_deploy_compute" {', maxsplit=1)[
+        1
+    ].split('data "aws_iam_policy_document" "ci_deploy_network_create" {', maxsplit=1)[0]
+
+    assert 'sid    = "ManageGuardedDemoNetwork"' not in iam
+    assert '"ec2:' not in compute_policy
+    assert "permissions_boundary = aws_iam_policy.ci_deploy_boundary.arn" in iam
+    boundary_policy = iam.split(
+        'data "aws_iam_policy_document" "ci_deploy_boundary" {', maxsplit=1
+    )[1].split('data "aws_iam_policy_document" "ci_deploy_data" {', maxsplit=1)[0]
+    assert 'actions   = ["*"]' not in boundary_policy
+    assert 'not_actions = ["ec2:*"]' in boundary_policy
+    assert "actions = concat(" in _terraform_statement(
+        boundary_policy, "AllowOnlyGuardedEc2NetworkCandidates"
+    )
+    expected_actions = {
+        "ec2:AllocateAddress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AssociateRouteTable",
+        "ec2:AttachInternetGateway",
+        "ec2:CreateInternetGateway",
+        "ec2:CreateNatGateway",
+        "ec2:CreateRoute",
+        "ec2:CreateRouteTable",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateSubnet",
+        "ec2:CreateTags",
+        "ec2:CreateVpc",
+        "ec2:CreateVpcEndpoint",
+        "ec2:DeleteInternetGateway",
+        "ec2:DeleteNatGateway",
+        "ec2:DeleteRoute",
+        "ec2:DeleteRouteTable",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteSubnet",
+        "ec2:DeleteTags",
+        "ec2:DeleteVpc",
+        "ec2:DeleteVpcEndpoints",
+        "ec2:DetachInternetGateway",
+        "ec2:DisassociateRouteTable",
+        "ec2:ModifySubnetAttribute",
+        "ec2:ModifyVpcAttribute",
+        "ec2:ModifyVpcEndpoint",
+        "ec2:ReleaseAddress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+    }
+    split_actions = {"ec2:CreateTags"}
+    for local_name in (
+        "ec2_network_create_actions",
+        "ec2_network_association_actions",
+        "ec2_network_mutation_actions",
+        "ec2_network_delete_actions",
+    ):
+        split_actions.update(_terraform_local_string_list(iam, local_name))
+    assert split_actions == expected_actions
+    for resource_type in (
+        "elastic-ip",
+        "internet-gateway",
+        "natgateway",
+        "route-table",
+        "security-group",
+        "security-group-rule",
+        "subnet",
+        "vpc",
+        "vpc-endpoint",
+    ):
+        assert (
+            f"arn:${{local.partition}}:ec2:${{var.aws_region}}:"
+            f"${{var.aws_account_id}}:{resource_type}/*"
+        ) in iam
+
+    for sid in (
+        "CreateTaggedDemoVpc",
+        "CreateTaggedDemoVpcChildren",
+        "CreateTaggedDemoInternetAndAddressResources",
+        "UseTaggedDemoVpcForChildCreation",
+        "TagDemoResourcesOnlyAtCreation",
+        "TagGuardedDefaultSecurityGroup",
+    ):
+        statement = _terraform_statement(create_policy, sid)
+        assert 'variable = "aws:RequestedRegion"' in statement
+    for sid in (
+        "CreateTaggedDemoNatGateway",
+        "UseTaggedDemoParentsForNatGateway",
+        "CreateTaggedDemoVpcEndpoint",
+        "UseTaggedDemoParentsForVpcEndpoint",
+    ):
+        statement = _terraform_statement(dependencies_policy, sid)
+        assert 'variable = "aws:RequestedRegion"' in statement
+    for sid in (
+        "CreateRulesOnlyOnTaggedDemoSecurityGroups",
+        "MutateTaggedDemoNetworkResources",
+        "AssociateTaggedDemoNetworkResources",
+        "DeleteTaggedDemoNetworkResources",
+    ):
+        statement = _terraform_statement(lifecycle_policy, sid)
+        assert 'variable = "aws:RequestedRegion"' in statement
+
+    create = _terraform_statement(create_policy, "CreateTaggedDemoVpc")
+    assert 'variable = "aws:RequestTag/Project"' in create
+    assert 'variable = "aws:RequestTag/Environment"' in create
+    assert 'variable = "aws:RequestTag/ManagedBy"' in create
+    assert 'variable = "aws:RequestTag/Ownership"' in create
+    assert 'test     = "ForAllValues:StringEquals"' in create
+    creation_tags = _terraform_statement(create_policy, "TagDemoResourcesOnlyAtCreation")
+    assert 'variable = "ec2:CreateAction"' in creation_tags
+    assert 'actions   = ["ec2:CreateTags"]' in creation_tags
+
+    assert 'resources = ["*"]' not in create_policy
+    assert 'resources = ["*"]' not in dependencies_policy
+    assert 'resources = ["*"]' not in lifecycle_policy
+    assert 'resource "aws_iam_policy" "ci_deploy_network_create"' in iam
+    assert 'resource "aws_iam_policy" "ci_deploy_network_dependencies"' in iam
+    assert 'resource "aws_iam_policy" "ci_deploy_network_lifecycle"' in iam
+    for key, resource in (
+        ("network_create", "ci_deploy_network_create"),
+        ("network_dependencies", "ci_deploy_network_dependencies"),
+        ("network_lifecycle", "ci_deploy_network_lifecycle"),
+    ):
+        assert re.search(rf"^\s+{key}\s+= aws_iam_policy\.{resource}\.arn$", iam, re.MULTILINE)
+
+
+def test_deploy_network_iam_semantically_denies_foreign_vpc_and_second_region(
+    repository_root: Path,
+) -> None:
+    iam = _read(repository_root, "infrastructure/bootstrap/iam.tf")
+    delete = _terraform_statement(iam, "DeleteTaggedDemoNetworkResources")
+    assert "actions   = local.ec2_network_delete_actions" in delete
+    delete_actions = iam.split("ec2_network_delete_actions = [", maxsplit=1)[1].split(
+        "]", maxsplit=1
+    )[0]
+    assert '"ec2:DeleteVpc"' in delete_actions
+    assert _tagged_network_lifecycle_allows(
+        delete,
+        region="us-east-1",
+        project="modelguard-ai",
+        environment="demo",
+    )
+    assert not _tagged_network_lifecycle_allows(
+        delete,
+        region="us-east-1",
+        project="unrelated-project",
+        environment="demo",
+    )
+    assert not _tagged_network_lifecycle_allows(
+        delete,
+        region="us-west-2",
+        project="modelguard-ai",
+        environment="demo",
+    )
+
+    region_deny = _terraform_statement(iam, "DenyDemoNetworkOutsideApprovedRegion")
+    assert 'test     = "StringNotEquals"' in region_deny
+    assert 'variable = "aws:RequestedRegion"' in region_deny
+    assert "values   = [var.aws_region]" in region_deny
+    assert "ec2_network_create_actions" in region_deny
+    assert "ec2_network_lifecycle_actions" in region_deny
+
+    foreign_project_deny = _terraform_statement(iam, "DenyForeignProjectNetworkLifecycle")
+    assert 'test     = "StringNotEqualsIfExists"' in foreign_project_deny
+    assert 'variable = "aws:ResourceTag/Project"' in foreign_project_deny
+    assert "values   = [var.project_name]" in foreign_project_deny
+    foreign_environment_deny = _terraform_statement(iam, "DenyForeignEnvironmentNetworkLifecycle")
+    assert 'variable = "aws:ResourceTag/Environment"' in foreign_environment_deny
+    assert 'values   = ["demo"]' in foreign_environment_deny
 
 
 def test_plan_role_allows_only_terraform_backend_workspace_discovery_prefix(

@@ -25,6 +25,7 @@ from modelguard.monitoring.aws import (
     SnsAlertSink,
     SnsClient,
     freeze_s3_raw_snapshot,
+    prediction_arrival_hour_prefixes,
 )
 from modelguard.monitoring.config import (
     AWS_LOCKED_MONITORING_POLICY_SHA256,
@@ -259,7 +260,7 @@ def execute_aws_monitoring_once(
         event_snapshot = freeze_s3_raw_snapshot(
             resolved_clients.s3,
             bucket=settings.prediction_bucket,
-            prefix="predictions/",
+            prefixes=prediction_arrival_hour_prefixes(window),
         )
         evaluation = evaluate_monitoring_snapshots(
             metadata=installed.metadata,

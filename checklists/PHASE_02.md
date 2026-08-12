@@ -6,7 +6,8 @@
 - [x] Feature allowlist excludes ID/label/split/leakage fields
 - [x] Full sklearn Pipeline is wrapped by train-only cross-fitted calibration
 - [x] Explicit five-fold/sigmoid/ensemble calibration; no library-default semantics
-- [x] Exact validation grid/tie policy; locked threshold; test evaluated once afterward
+- [x] Exact validation grid/tie policy; locked threshold; test evaluated once afterward per
+      training invocation
 - [x] AP vs prevalence/lift, ROC-AUC, Brier/log-loss/reliability/confusion metrics
 - [x] Null/zero-denominator conventions and held-out synthetic-cost-per-event reference
 - [x] Local MLflow params/metrics/tags/plots/artifacts

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import gzip
-import json
+import zlib
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -14,7 +14,12 @@ from typing import Any, Literal
 from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from modelguard.core.hashing import HashRecord, canonical_json_hash, sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import (
+    StrictArtifactModel,
+    canonical_json_bytes,
+    parse_strict_json_bytes,
+    validate_strict_json_model,
+)
 from modelguard.inference.events import PredictionEventV1
 from modelguard.monitoring.config import MonitoringConfig
 from modelguard.monitoring.state import ensure_utc
@@ -33,7 +38,9 @@ class EventIdentity(StrictArtifactModel):
 class BaselineIdentity(StrictArtifactModel):
     """Baseline identity derived only from an exactly verified target manifest."""
 
-    baseline_contract_version: Literal["modelguard.baseline-profile.v1"]
+    baseline_contract_version: Literal[
+        "modelguard.baseline-profile.v1", "modelguard.baseline-profile.v2"
+    ]
     baseline_profile_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     input_schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     training_membership_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -170,27 +177,10 @@ class SnapshotReadError(RuntimeError):
     """A frozen local input could not be safely enumerated or read."""
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
-
-
-def _reject_non_finite(value: str) -> None:
-    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
-
-
 def parse_strict_json_record(raw: bytes) -> Any:
     """Parse one UTF-8 JSON value while rejecting duplicate keys and non-finite extensions."""
 
-    return json.loads(
-        raw.decode("utf-8"),
-        object_pairs_hook=_reject_duplicate_keys,
-        parse_constant=_reject_non_finite,
-    )
+    return parse_strict_json_bytes(raw)
 
 
 def _semantic_record_digest(raw: bytes) -> str:
@@ -249,7 +239,7 @@ def freeze_local_raw_snapshot(directory: Path) -> FrozenRawSnapshot:
                 payload = path.read_bytes()
                 if path.name.endswith(".gz"):
                     payload = gzip.decompress(payload)
-            except (OSError, gzip.BadGzipFile, EOFError) as error:
+            except (OSError, gzip.BadGzipFile, EOFError, zlib.error) as error:
                 raise SnapshotReadError("could not freeze an input object") from error
             payloads.append(payload)
     return freeze_raw_payloads(payloads)
@@ -374,7 +364,7 @@ def classify_snapshot(
             classified_digests.append(f"rejected:{raw_digest}")
             continue
         try:
-            event = PredictionEventV1.model_validate_json(canonical_json_bytes(parsed))
+            event = validate_strict_json_model(canonical_json_bytes(parsed), PredictionEventV1)
         except ValueError:
             rejected += 1
             parse_failures += 1

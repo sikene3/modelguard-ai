@@ -77,9 +77,43 @@
     "deliberately_broken_deployment_active": false
   },
   "phase_12": {
-    "status": "not_started",
-    "commit": null,
-    "report": null
+    "status": "completed",
+    "commit": "recorded-by-final-phase-12-git-commit",
+    "report": "reports/phase-12-final-audit.md",
+    "release_verdict": "passed_with_documented_accepted_risks",
+    "critical_findings": 0,
+    "high_findings": 6,
+    "open_high_findings": 0,
+    "medium_findings": 8,
+    "low_findings": 9,
+    "repair_batch_a": "passed",
+    "repair_batch_b": "passed",
+    "final_ultra_audit_ready": true,
+    "final_ultra_audit": "passed",
+    "medium_dispositions": {
+      "fixed": 0,
+      "accepted_risk": 8,
+      "not_applicable": 0
+    },
+    "low_dispositions": {
+      "fixed": 3,
+      "accepted_risk": 6,
+      "not_applicable": 0
+    },
+    "canonical_release_gate_tests": 604,
+    "canonical_release_gate_coverage_percent": 83.56,
+    "report_bearing_release_gate": "not_invoked_preserved_exact_once_evidence",
+    "batch_a_release_gate_invocations": 1,
+    "batch_a_release_gate_result": "failed_stale_suppression_count_repaired_focused",
+    "batch_a_remaining_gate_components": "passed",
+    "batch_b_release_gate_invocations": 0,
+    "final_audit_accidental_release_gate_attempts": 1,
+    "final_audit_accidental_release_gate_result": "terminated_not_evidence",
+    "preserved_canonical_receipt_unchanged": true,
+    "batch_b_full_tests": 618,
+    "batch_b_full_coverage_percent": 83.70,
+    "batch_b_permitted_noncanonical_gates": "passed",
+    "aws_github_terraform_mutations": 0
   },
   "phase_13": {
     "status": "completed",
@@ -116,6 +150,6 @@
     "closure_blocker": null,
     "formal_commit": "recorded-by-final-phase-13-git-commit",
     "publication": "completed-via-protected-pull-request",
-    "phase_12_status": "not_started"
+    "phase_12_status": "completed"
   }
 }

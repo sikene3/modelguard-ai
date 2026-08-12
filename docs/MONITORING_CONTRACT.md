@@ -14,12 +14,13 @@ performance into a misleading overall status.
   `.jsonl.gz` files before analysis. Active `.jsonl.open` writers are excluded.
 - Firehose explicitly writes GZIP objects with the `.jsonl.gz` extension. AWS monitoring accepts
   exactly that suffix; local `.jsonl` compatibility does not widen the AWS object-name contract.
-- AWS helpers verify all three bucket Regions, enumerate S3 once with explicit `MaxKeys`, page,
-  total-entry, recognized-object, compressed-byte, and decoded-byte bounds, and reject every key
-  outside the exact prefix. They pin every object by VersionId, or by ETag with `If-Match` when a
-  VersionId is unavailable, before reading it. A changed identity, partial length, invalid or
-  cycling pagination token, missing truncation marker, excessive irrelevant entries, corrupt GZIP
-  body, or aggregate overflow fails the cycle.
+- AWS helpers verify all three bucket Regions, derive only the finite physical UTC arrival-hour
+  prefixes from the event window start through `end + finalization grace`, and enumerate them with
+  one shared `MaxKeys`, page, total-entry, deduplicated-object, compressed-byte, and decoded-byte
+  budget. They reject every key outside its requested hour prefix and pin every object by VersionId,
+  or by ETag with `If-Match` when a VersionId is unavailable, before reading it. A changed identity,
+  partial length, invalid or cycling pagination token, missing truncation marker, excessive
+  irrelevant entries, corrupt GZIP body, or aggregate overflow fails the cycle.
 - Tests and evidence always pass explicit `--window-end` and `--as-of`; no test depends on wall
   clock time.
 
@@ -100,6 +101,9 @@ sum((current_i - baseline_i) * ln(current_i / baseline_i))
 
 PSI is warning at `>= 0.10` and degraded at `>= 0.25`.
 
+The strict boolean `is_new_device` feature uses an explicit ordered `false`/`true` baseline and
+Jensen-Shannon distance. It is never collapsed into one inclusive numeric interval.
+
 Categorical features and locked decisions use Jensen-Shannon distance: the square root of base-2
 Jensen-Shannon divergence over the full baseline universe plus `__OTHER__` and `__MISSING__`. It is
 bounded in `[0,1]`, warning at `>= 0.10`, and degraded at `>= 0.20`.
@@ -108,8 +112,15 @@ A constant baseline that is unchanged has a null metric with a healthy reason. A
 has a null metric with a degraded reason. Empty, non-finite, or otherwise unevaluable input is
 unknown. KS is intentionally omitted.
 
-Missingness is evaluated separately as the absolute current-minus-baseline rate difference. It
-warns at `>= 0.02` and invalidates data quality at `>= 0.05`; it is never hidden inside PSI.
+Missingness among accepted events is evaluated separately as the absolute
+current-minus-baseline rate difference. Under the strict v1 event schema every required feature is
+present and non-null before acceptance, so a missing required field is counted as a schema-rejected
+record rather than attributed to a per-feature missingness signal. Rejected-fraction thresholds
+still warn or invalidate data quality. The per-feature voter is retained for a future explicitly
+nullable event contract; this MVP does not claim raw-field attribution for rejected records.
+
+All external JSON artifacts reject duplicate keys, non-finite constants, excessive nesting, extra
+fields, and type coercion before their Pydantic contracts are accepted.
 
 ## Independent states and precedence
 
@@ -146,6 +157,12 @@ Extra fields, coercion, non-UTC text, and labels outside `{0,1}` are rejected. C
 labels deduplicate; differing rows for one event ID conflict. Orphans are reported and excluded.
 Coverage is unique valid joined labels divided by accepted target events.
 
+The local-only label adapter validates timestamp syntax but does not enforce the logical ordering
+`event_timestamp <= labeled_at <= evaluation_cutoff`. A label source is therefore trusted to supply
+temporally eligible synthetic labels. This is an accepted MVP limitation: online/AWS label
+collection is out of scope, results describe only the supplied synthetic subset, and they are never
+presented as real-world or causal performance evidence.
+
 Adequacy requires all of:
 
 - coverage `>= 0.80`;
@@ -173,7 +190,8 @@ synthetic reference.” Partial-label selection bias remains an explicit limitat
 
 ## Report identity, publication, and alerts
 
-`report_id` is a SHA-256 over the report schema version, window/grace, target/baseline/config
+`report_id` is a semantic-input identity, not a content-authentication digest. It is a SHA-256 over
+the report schema version, window/grace, target/baseline/config
 identities, the sorted known-non-target registry, whether a label source was configured, sorted
 canonical record/classification digests, and sorted label/classification digests. Including the
 registry and source-presence bit prevents two different report bodies from colliding when either
@@ -195,6 +213,12 @@ strictly newer window. AWS history/markers use `If-None-Match: *`, and latest us
 `If-None-Match` conditional writes. Five unresolved conditional conflicts fail persistence rather
 than silently reporting success. The conditional run-status object keeps the newest attempt and
 preserves the last successful timestamp/report identity when a later attempt fails.
+
+Local report publication locks `latest`, but the local run-status adapter is a single-writer
+developer/demo boundary and does not support concurrent monitor processes. The AWS adapter uses
+conditional object writes and is the process-safe deployment boundary. Generated evidence records
+the JSON file SHA-256 (and AWS object identity where applicable); `report_id` alone must not be used
+to authenticate persisted report bytes.
 
 After a successful newer report, a conditional marker is claimed before SNS on entry into exactly
 three states: data-quality invalid, drift degraded, and performance degraded. The marker then stores

@@ -117,6 +117,93 @@ locals {
   billing_view_arns  = "arn:${local.partition}:billing::${var.aws_account_id}:billingview/*"
   certificate_arns   = "arn:${local.partition}:acm:${var.aws_region}:${var.aws_account_id}:certificate/*"
   parameter_root_arn = "arn:${local.partition}:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.project_name}/demo"
+
+  ec2_network_resource_arns = {
+    elastic_ip          = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:elastic-ip/*"
+    internet_gateway    = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:internet-gateway/*"
+    nat_gateway         = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:natgateway/*"
+    route_table         = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:route-table/*"
+    security_group      = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:security-group/*"
+    security_group_rule = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:security-group-rule/*"
+    subnet              = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:subnet/*"
+    vpc                 = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:vpc/*"
+    vpc_endpoint        = "arn:${local.partition}:ec2:${var.aws_region}:${var.aws_account_id}:vpc-endpoint/*"
+  }
+  ec2_network_resource_arn_list = values(local.ec2_network_resource_arns)
+  ec2_network_create_actions = [
+    "ec2:AllocateAddress",
+    "ec2:CreateInternetGateway",
+    "ec2:CreateNatGateway",
+    "ec2:CreateRouteTable",
+    "ec2:CreateSecurityGroup",
+    "ec2:CreateSubnet",
+    "ec2:CreateVpc",
+    "ec2:CreateVpcEndpoint",
+  ]
+  ec2_network_association_actions = [
+    "ec2:AssociateRouteTable",
+    "ec2:AttachInternetGateway",
+    "ec2:DetachInternetGateway",
+    "ec2:DisassociateRouteTable",
+  ]
+  ec2_network_mutation_actions = [
+    "ec2:AuthorizeSecurityGroupEgress",
+    "ec2:AuthorizeSecurityGroupIngress",
+    "ec2:CreateRoute",
+    "ec2:ModifySubnetAttribute",
+    "ec2:ModifyVpcAttribute",
+    "ec2:ModifyVpcEndpoint",
+    "ec2:RevokeSecurityGroupEgress",
+    "ec2:RevokeSecurityGroupIngress",
+  ]
+  ec2_network_delete_actions = [
+    "ec2:DeleteInternetGateway",
+    "ec2:DeleteNatGateway",
+    "ec2:DeleteRoute",
+    "ec2:DeleteRouteTable",
+    "ec2:DeleteSecurityGroup",
+    "ec2:DeleteSubnet",
+    "ec2:DeleteTags",
+    "ec2:DeleteVpc",
+    "ec2:DeleteVpcEndpoints",
+    "ec2:ReleaseAddress",
+  ]
+  ec2_network_lifecycle_actions = concat(
+    local.ec2_network_association_actions,
+    local.ec2_network_mutation_actions,
+    local.ec2_network_delete_actions,
+  )
+  ec2_network_boundary_tagged_actions = concat(
+    local.ec2_network_association_actions,
+    [
+      "ec2:CreateRoute",
+      "ec2:DeleteInternetGateway",
+      "ec2:DeleteNatGateway",
+      "ec2:DeleteRoute",
+      "ec2:DeleteRouteTable",
+      "ec2:DeleteSecurityGroup",
+      "ec2:DeleteSubnet",
+      "ec2:DeleteTags",
+      "ec2:DeleteVpc",
+      "ec2:DeleteVpcEndpoints",
+      "ec2:ModifySubnetAttribute",
+      "ec2:ModifyVpcAttribute",
+      "ec2:ModifyVpcEndpoint",
+      "ec2:ReleaseAddress",
+      "ec2:RevokeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress",
+    ],
+  )
+  ec2_network_allowed_tag_keys = [
+    "AutoDestroyDate",
+    "Environment",
+    "ManagedBy",
+    "Name",
+    "Owner",
+    "Ownership",
+    "Project",
+    "Tier",
+  ]
 }
 
 data "aws_iam_policy_document" "workload_boundary" {
@@ -367,6 +454,7 @@ resource "aws_iam_role" "ci_deploy" {
   path                 = local.bootstrap_path
   assume_role_policy   = data.aws_iam_policy_document.github_deploy_trust.json
   max_session_duration = 3600
+  permissions_boundary = aws_iam_policy.ci_deploy_boundary.arn
 
   tags = merge(local.common_tags, { Name = "${var.project_name}-ci-deploy" })
 
@@ -702,50 +790,8 @@ data "aws_iam_policy_document" "ci_plan_read" {
 }
 
 data "aws_iam_policy_document" "ci_deploy_compute" {
-  # checkov:skip=CKV_AWS_111:The enumerated EC2 lifecycle calls operate on generated and association IDs that cannot all be known before creation; exact account, Region, state, plan, and tag guards compensate. [owner=modelguard-maintainers; expires=2026-10-31]
-  # checkov:skip=CKV_AWS_356:Only enumerated EC2 lifecycle calls and tagged ECS CreateCluster use Resource="*"; all resource-addressable compute actions use exact demo ARNs. [owner=modelguard-maintainers; expires=2026-10-31]
-
-  # EC2 lifecycle APIs span newly generated VPC/subnet/route/SG/NAT IDs and several association
-  # resources that cannot all be predicted before create. This is the sole mutation statement with
-  # Resource="*"; account/Region, exact Terraform state, saved-plan, and tag guards compensate.
-  statement {
-    sid    = "ManageGuardedDemoNetwork"
-    effect = "Allow"
-    actions = [
-      "ec2:AllocateAddress",
-      "ec2:AuthorizeSecurityGroupEgress",
-      "ec2:AuthorizeSecurityGroupIngress",
-      "ec2:AssociateRouteTable",
-      "ec2:AttachInternetGateway",
-      "ec2:CreateInternetGateway",
-      "ec2:CreateNatGateway",
-      "ec2:CreateRoute",
-      "ec2:CreateRouteTable",
-      "ec2:CreateSecurityGroup",
-      "ec2:CreateSubnet",
-      "ec2:CreateTags",
-      "ec2:CreateVpc",
-      "ec2:CreateVpcEndpoint",
-      "ec2:DeleteInternetGateway",
-      "ec2:DeleteNatGateway",
-      "ec2:DeleteRoute",
-      "ec2:DeleteRouteTable",
-      "ec2:DeleteSecurityGroup",
-      "ec2:DeleteSubnet",
-      "ec2:DeleteTags",
-      "ec2:DeleteVpc",
-      "ec2:DeleteVpcEndpoints",
-      "ec2:DetachInternetGateway",
-      "ec2:DisassociateRouteTable",
-      "ec2:ModifySubnetAttribute",
-      "ec2:ModifyVpcAttribute",
-      "ec2:ModifyVpcEndpoint",
-      "ec2:ReleaseAddress",
-      "ec2:RevokeSecurityGroupEgress",
-      "ec2:RevokeSecurityGroupIngress",
-    ]
-    resources = ["*"]
-  }
+  # checkov:skip=CKV_AWS_111:ECS CreateCluster has no resource-level authorization; exact request tags constrain creation, while every addressable ECS/ALB operation uses exact demo ARNs. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_356:ECS CreateCluster requires Resource="*" and is constrained by exact request tags; all other compute resources are exact demo ARNs. [owner=modelguard-maintainers; expires=2026-10-31]
 
   statement {
     sid       = "CreateOnlyTaggedDemoCluster"
@@ -811,6 +857,712 @@ data "aws_iam_policy_document" "ci_deploy_compute" {
       "elasticloadbalancing:SetSubnets",
     ]
     resources = local.alb_resource_arns
+  }
+}
+
+data "aws_iam_policy_document" "ci_deploy_network_create" {
+  statement {
+    sid       = "CreateTaggedDemoVpc"
+    effect    = "Allow"
+    actions   = ["ec2:CreateVpc"]
+    resources = [local.ec2_network_resource_arns.vpc]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  statement {
+    sid    = "CreateTaggedDemoVpcChildren"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateRouteTable",
+      "ec2:CreateSecurityGroup",
+      "ec2:CreateSubnet",
+    ]
+    resources = [
+      local.ec2_network_resource_arns.route_table,
+      local.ec2_network_resource_arns.security_group,
+      local.ec2_network_resource_arns.subnet,
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  statement {
+    sid    = "CreateTaggedDemoInternetAndAddressResources"
+    effect = "Allow"
+    actions = [
+      "ec2:AllocateAddress",
+      "ec2:CreateInternetGateway",
+    ]
+    resources = [
+      local.ec2_network_resource_arns.elastic_ip,
+      local.ec2_network_resource_arns.internet_gateway,
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  # Child creation authorizes the new request-tagged object above and the already-tagged VPC here.
+  statement {
+    sid    = "UseTaggedDemoVpcForChildCreation"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateRouteTable",
+      "ec2:CreateSecurityGroup",
+      "ec2:CreateSubnet",
+    ]
+    resources = [local.ec2_network_resource_arns.vpc]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+
+  statement {
+    sid       = "TagDemoResourcesOnlyAtCreation"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values = [
+        "AllocateAddress",
+        "AuthorizeSecurityGroupEgress",
+        "AuthorizeSecurityGroupIngress",
+        "CreateInternetGateway",
+        "CreateNatGateway",
+        "CreateRouteTable",
+        "CreateSecurityGroup",
+        "CreateSubnet",
+        "CreateVpc",
+        "CreateVpcEndpoint",
+      ]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  # A VPC's generated default security group has no caller-selected ID or tags. This one narrowly
+  # scoped bootstrap exception can only attach the complete required demo tag set and exact name;
+  # the lifecycle policy below can subsequently revoke its default rules but cannot add rules.
+  statement {
+    sid       = "TagGuardedDefaultSecurityGroup"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = [local.ec2_network_resource_arns.security_group]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Name"
+      values   = ["${var.project_name}-demo-default-deny"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+}
+
+data "aws_iam_policy_document" "ci_deploy_network_dependencies" {
+  statement {
+    sid       = "CreateTaggedDemoNatGateway"
+    effect    = "Allow"
+    actions   = ["ec2:CreateNatGateway"]
+    resources = [local.ec2_network_resource_arns.nat_gateway]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  statement {
+    sid     = "UseTaggedDemoParentsForNatGateway"
+    effect  = "Allow"
+    actions = ["ec2:CreateNatGateway"]
+    resources = [
+      local.ec2_network_resource_arns.elastic_ip,
+      local.ec2_network_resource_arns.subnet,
+      local.ec2_network_resource_arns.vpc,
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+
+  statement {
+    sid       = "CreateTaggedDemoVpcEndpoint"
+    effect    = "Allow"
+    actions   = ["ec2:CreateVpcEndpoint"]
+    resources = [local.ec2_network_resource_arns.vpc_endpoint]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  statement {
+    sid     = "UseTaggedDemoParentsForVpcEndpoint"
+    effect  = "Allow"
+    actions = ["ec2:CreateVpcEndpoint"]
+    resources = [
+      local.ec2_network_resource_arns.route_table,
+      local.ec2_network_resource_arns.security_group,
+      local.ec2_network_resource_arns.subnet,
+      local.ec2_network_resource_arns.vpc,
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "ci_deploy_network_lifecycle" {
+  statement {
+    sid       = "CreateRulesOnlyOnTaggedDemoSecurityGroups"
+    effect    = "Allow"
+    actions   = ["ec2:AuthorizeSecurityGroupEgress", "ec2:AuthorizeSecurityGroupIngress"]
+    resources = [local.ec2_network_resource_arns.security_group_rule]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Ownership"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = local.ec2_network_allowed_tag_keys
+    }
+  }
+
+  statement {
+    sid       = "MutateTaggedDemoNetworkResources"
+    effect    = "Allow"
+    actions   = local.ec2_network_mutation_actions
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+
+  statement {
+    sid       = "AssociateTaggedDemoNetworkResources"
+    effect    = "Allow"
+    actions   = local.ec2_network_association_actions
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+
+  statement {
+    sid       = "DeleteTaggedDemoNetworkResources"
+    effect    = "Allow"
+    actions   = local.ec2_network_delete_actions
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["Terraform"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Ownership"
+      values   = ["demo"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "ci_deploy_boundary" {
+  # Checkov evaluates this maximum-permissions boundary as if it were an identity policy. A
+  # boundary never grants permissions: every request must still be allowed by the separately
+  # scanned least-privilege identity policies. These exact suppressions cover only that semantic
+  # mismatch; the EC2 Allow below is independently account/Region/resource constrained.
+  # checkov:skip=CKV_AWS_107:The non-EC2 NotAction boundary grant cannot expose credentials without a separate identity-policy Allow; existing identity policies remain the granting boundary. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_108:The non-EC2 NotAction boundary grant cannot exfiltrate data without a separate identity-policy Allow; existing identity policies remain the granting boundary. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_109:The non-EC2 NotAction boundary grant cannot expose resources without a separate identity-policy Allow; existing identity policies remain the granting boundary. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_110:The non-EC2 NotAction boundary grant cannot escalate privileges without a separate identity-policy Allow; existing identity policies remain the granting boundary. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_111:The only EC2 boundary Allow has exact regional ARN patterns and RequestedRegion; the non-EC2 NotAction statement preserves separately constrained identity policies and grants nothing itself. [owner=modelguard-maintainers; expires=2026-10-31]
+  # checkov:skip=CKV_AWS_356:The only wildcard Resource belongs to a non-EC2 maximum-permissions boundary statement that grants nothing; restrictable identity-policy actions retain exact resources. [owner=modelguard-maintainers; expires=2026-10-31]
+
+  statement {
+    sid         = "PreserveNonEc2LeastPrivilegeIdentityPolicies"
+    effect      = "Allow"
+    not_actions = ["ec2:*"]
+    resources   = ["*"]
+  }
+
+  statement {
+    sid    = "AllowOnlyGuardedEc2NetworkCandidates"
+    effect = "Allow"
+    actions = concat(
+      local.ec2_network_create_actions,
+      local.ec2_network_lifecycle_actions,
+      ["ec2:CreateTags"],
+    )
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+  }
+
+  statement {
+    sid    = "DenyDemoNetworkOutsideApprovedRegion"
+    effect = "Deny"
+    actions = concat(
+      local.ec2_network_create_actions,
+      local.ec2_network_lifecycle_actions,
+      ["ec2:CreateTags"],
+    )
+    resources = ["*"]
+
+    condition {
+      test     = "StringNotEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+  }
+
+  statement {
+    sid       = "DenyForeignProjectNetworkLifecycle"
+    effect    = "Deny"
+    actions   = local.ec2_network_boundary_tagged_actions
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringNotEqualsIfExists"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_name]
+    }
+  }
+
+  statement {
+    sid       = "DenyForeignEnvironmentNetworkLifecycle"
+    effect    = "Deny"
+    actions   = local.ec2_network_boundary_tagged_actions
+    resources = local.ec2_network_resource_arn_list
+
+    condition {
+      test     = "StringNotEqualsIfExists"
+      variable = "aws:ResourceTag/Environment"
+      values   = ["demo"]
+    }
   }
 }
 
@@ -1144,6 +1896,58 @@ resource "aws_iam_policy" "ci_deploy_compute" {
   }
 }
 
+resource "aws_iam_policy" "ci_deploy_network_create" {
+  name        = "${var.project_name}-ci-deploy-network-create"
+  path        = local.bootstrap_path
+  description = "Region-bound request-tagged creation of disposable demo network resources"
+  policy      = data.aws_iam_policy_document.ci_deploy_network_create.json
+
+  tags = merge(local.common_tags, { Name = "${var.project_name}-ci-deploy-network-create" })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_iam_policy" "ci_deploy_network_dependencies" {
+  name        = "${var.project_name}-ci-deploy-network-dependencies"
+  path        = local.bootstrap_path
+  description = "Tagged parent-resource authorization for demo NAT and VPC endpoint creation"
+  policy      = data.aws_iam_policy_document.ci_deploy_network_dependencies.json
+
+  tags = merge(local.common_tags, { Name = "${var.project_name}-ci-deploy-network-dependencies" })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_iam_policy" "ci_deploy_network_lifecycle" {
+  name        = "${var.project_name}-ci-deploy-network-lifecycle"
+  path        = local.bootstrap_path
+  description = "Region-bound lifecycle limited to tagged disposable demo network resources"
+  policy      = data.aws_iam_policy_document.ci_deploy_network_lifecycle.json
+
+  tags = merge(local.common_tags, { Name = "${var.project_name}-ci-deploy-network-lifecycle" })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_iam_policy" "ci_deploy_boundary" {
+  name        = "${var.project_name}-ci-deploy-boundary"
+  path        = local.bootstrap_path
+  description = "Defense-in-depth maximum permissions for the GitHub deploy role"
+  policy      = data.aws_iam_policy_document.ci_deploy_boundary.json
+
+  tags = merge(local.common_tags, { Name = "${var.project_name}-ci-deploy-boundary" })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "aws_iam_policy" "ci_deploy_data" {
   name        = "${var.project_name}-ci-deploy-data"
   path        = local.bootstrap_path
@@ -1172,9 +1976,12 @@ resource "aws_iam_policy" "ci_deploy_operations" {
 
 locals {
   ci_deploy_managed_policy_arns = {
-    compute    = aws_iam_policy.ci_deploy_compute.arn
-    data       = aws_iam_policy.ci_deploy_data.arn
-    operations = aws_iam_policy.ci_deploy_operations.arn
+    compute              = aws_iam_policy.ci_deploy_compute.arn
+    data                 = aws_iam_policy.ci_deploy_data.arn
+    network_create       = aws_iam_policy.ci_deploy_network_create.arn
+    network_dependencies = aws_iam_policy.ci_deploy_network_dependencies.arn
+    network_lifecycle    = aws_iam_policy.ci_deploy_network_lifecycle.arn
+    operations           = aws_iam_policy.ci_deploy_operations.arn
   }
 }
 

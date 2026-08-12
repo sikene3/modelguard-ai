@@ -14,7 +14,11 @@ from typing import Literal, Protocol
 from pydantic import AwareDatetime, Field, model_validator
 
 from modelguard.core.hashing import sha256_bytes
-from modelguard.core.serialization import StrictArtifactModel, canonical_json_bytes
+from modelguard.core.serialization import (
+    StrictArtifactModel,
+    canonical_json_bytes,
+    validate_strict_json_model,
+)
 from modelguard.monitoring.config import MonitoringConfig
 from modelguard.monitoring.report import MonitoringReport, render_offline_html
 from modelguard.monitoring.state import RunState, determine_run_state, ensure_utc
@@ -164,7 +168,7 @@ def _read_report(path: Path) -> MonitoringReport | None:
         return None
     if path.is_symlink() or not path.is_file():
         raise OSError("latest report path must be a regular file")
-    return MonitoringReport.model_validate_json(path.read_bytes())
+    return validate_strict_json_model(path.read_bytes(), MonitoringReport)
 
 
 def _dimension_states(report: MonitoringReport) -> dict[AlertDimension, tuple[str, str]]:
@@ -306,7 +310,7 @@ class LocalRunStateStore:
             return None
         if self._path.is_symlink() or not self._path.is_file():
             raise OSError("run status path must be a regular file")
-        return RunStatusArtifact.model_validate_json(self._path.read_bytes())
+        return validate_strict_json_model(self._path.read_bytes(), RunStatusArtifact)
 
     def _write_if_current(self, status: RunStatusArtifact) -> bool:
         self._root.mkdir(parents=True, exist_ok=True)

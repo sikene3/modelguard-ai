@@ -186,6 +186,7 @@ reports/phase-09-1.md
 reports/phase-09.md
 reports/phase-10.md
 reports/phase-11.md
+reports/phase-12-final-audit.md
 reports/phase-13.md
 scripts/__init__.py
 scripts/aws_readiness_preflight.py

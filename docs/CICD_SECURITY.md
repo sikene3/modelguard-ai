@@ -208,7 +208,9 @@ The separately protected browser-authenticated human operator needs only `sts:Ge
 list/subscribe for
 `arn:aws:sns:<region>:<account>:modelguard-ai-demo-alerts`. Do not grant this enrollment operation to
 an untrusted workflow or a long-lived user. The deployment workflow executes only read-only
-notification checks; it does not receive the address or perform enrollment.
+notification checks and does not accept the address as an input or perform enrollment. Its verifier
+transiently reads the single SNS endpoint in memory to validate protocol/confirmation, then emits
+and persists only a value-free subscriber count.
 
 The deployment verifier calls SSM metadata APIs for the bearer-token parameter; it does not fetch
 token bytes. In `http_cidr_only` mode, omit the ACM/token variables and bearer secret.

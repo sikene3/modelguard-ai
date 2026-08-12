@@ -106,9 +106,10 @@ daemonize, fit, select a threshold, mutate a model, or infer performance from dr
    `edd3177bc4a692262858b6ec2e60a991cdce1bc844ef7eb0becac6846df56c73`; `aws-run`
    accepts no policy-path override;
 2. snapshots the target once, hydrates the exact bundle, and enumerates only Firehose's explicit
-   `.jsonl.gz` object contract. Enumeration sets `MaxKeys`, bounds pages and all entries (including
-   ignored entries), rejects malformed/truncated/token-cycling pages and out-of-prefix keys, and
-   pins every accepted object by VersionId or ETag before bounded reads/decompression;
+   `.jsonl.gz` contract under the finite UTC arrival-hour prefixes overlapping the event window and
+   finalization grace. Enumeration shares one global page/entry/object/byte budget across prefixes,
+   deduplicates object keys, rejects malformed/truncated/token-cycling pages and out-of-prefix keys,
+   and pins every accepted object by VersionId or ETag before bounded reads/decompression;
 3. evaluates the existing deterministic UTC half-open-window contract with performance `unknown`
    because online AWS labels are out of scope;
 4. publishes immutable JSON/HTML history, updates `latest.json` only for a newer window, claims
